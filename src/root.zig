@@ -1,5 +1,8 @@
 const std = @import("std");
 
+/// Build-time toggle for internal SIMD fast paths.
+pub const enable_simd_fast_paths = true;
+
 pub const ga = @import("ga.zig");
 pub const vga = @import("vga.zig");
 
