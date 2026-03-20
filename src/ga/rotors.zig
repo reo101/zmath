@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_options = @import("build_options");
 const multivector = @import("multivector.zig");
 const blades = @import("blades.zig");
 
@@ -16,6 +17,41 @@ fn defaultTolerance(comptime T: type) T {
 pub const RotorError = error{
     ZeroVector,
 };
+
+fn vectorLanes2(vector: anytype) @Vector(2, @TypeOf(vector).Coefficient) {
+    const T = @TypeOf(vector).Coefficient;
+    return @as(@Vector(2, T), .{ vector.coeff(0b01), vector.coeff(0b10) });
+}
+
+fn lanesToGAVector2(comptime T: type, lanes: @Vector(2, T)) multivector.GAVector(T, 2) {
+    return multivector.GAVector(T, 2).init(@bitCast(lanes));
+}
+
+fn lanesToVectorLike2(comptime Vector: type, lanes: @Vector(2, Vector.Coefficient)) Vector {
+    var result = Vector.zero();
+    const lane_array: [2]Vector.Coefficient = @bitCast(lanes);
+
+    inline for (Vector.blades, 0..) |mask, index| {
+        result.coeffs[index] = switch (mask) {
+            0b01 => lane_array[0],
+            0b10 => lane_array[1],
+            else => @compileError("expected a 2D grade-1 blade set"),
+        };
+    }
+
+    return result;
+}
+
+fn useRotorSimdFastPath(comptime T: type) bool {
+    return build_options.enable_simd_fast_paths and switch (@typeInfo(T)) {
+        .float, .comptime_float => true,
+        else => false,
+    };
+}
+
+fn rotorParts2(rotor: anytype) struct { scalar: @TypeOf(rotor).Coefficient, bivector: @TypeOf(rotor).Coefficient } {
+    return .{ .scalar = rotor.coeff(0), .bivector = rotor.coeff(e12_mask) };
+}
 
 fn assertFloatVector2(comptime M: type) void {
     if (!@hasDecl(M, "dimensions") or !@hasDecl(M, "Coefficient") or !@hasDecl(M, "blades")) {
@@ -58,7 +94,13 @@ pub fn radiansFromDegrees(angle_degrees: anytype) f64 {
 pub fn normSquared(vector: anytype) @TypeOf(vector).Coefficient {
     const Vector = @TypeOf(vector);
     comptime assertFloatVector2(Vector);
-    return vector.scalarProduct(vector);
+
+    if (comptime !useRotorSimdFastPath(Vector.Coefficient)) {
+        return vector.scalarProduct(vector);
+    }
+
+    const lanes = vectorLanes2(vector);
+    return @reduce(.Add, lanes * lanes);
 }
 
 /// Returns the Euclidean norm of a 2D grade-1 vector.
@@ -82,7 +124,14 @@ pub fn normalize(vector: anytype) RotorError!@TypeOf(vector) {
     if (nearlyEqual(magnitude, 0, defaultTolerance(Vector.Coefficient))) {
         return error.ZeroVector;
     }
-    return vector.divide(magnitude);
+
+    if (comptime !useRotorSimdFastPath(Vector.Coefficient)) {
+        return vector.divide(magnitude);
+    }
+
+    const inv_magnitude = 1 / magnitude;
+    const lanes = vectorLanes2(vector) * @as(@Vector(2, Vector.Coefficient), @splat(inv_magnitude));
+    return lanesToVectorLike2(Vector, lanes);
 }
 
 /// Returns whether two scalars differ by at most `epsilon`.
@@ -102,15 +151,21 @@ pub fn debugAssertRotor(rotor: anytype, epsilon: @TypeOf(rotor).Coefficient) voi
 
     if (@import("builtin").mode != .Debug) return;
 
-    const identity = rotor.gp(rotor.reverse());
-    inline for (RotorType.blades) |mask| {
-        const coeff = identity.coeff(mask);
-        if (mask == 0) {
-            std.debug.assert(nearlyEqual(coeff, 1, epsilon));
-        } else {
-            std.debug.assert(nearlyEqual(coeff, 0, epsilon));
+    if (comptime !useRotorSimdFastPath(RotorType.Coefficient)) {
+        const identity = rotor.gp(rotor.reverse());
+        inline for (RotorType.blades) |mask| {
+            const coeff = identity.coeff(mask);
+            if (mask == 0) {
+                std.debug.assert(nearlyEqual(coeff, 1, epsilon));
+            } else {
+                std.debug.assert(nearlyEqual(coeff, 0, epsilon));
+            }
         }
+        return;
     }
+
+    const parts = rotorParts2(rotor);
+    std.debug.assert(nearlyEqual(parts.scalar * parts.scalar + parts.bivector * parts.bivector, 1, epsilon));
 }
 
 /// Returns the unit rotor for a counter-clockwise 2D rotation.
@@ -143,11 +198,33 @@ pub fn tryRotorFromTo(from: anytype, to: anytype) RotorError!multivector.Rotor(@
     const T = Vector.Coefficient;
     const epsilon = defaultTolerance(T);
 
+    if (comptime !useRotorSimdFastPath(T)) {
+        const from_unit = try normalize(from);
+        const to_unit = try normalize(to);
+        const raw = multivector.Scalar(T, 2).init(.{1}).add(to_unit.gp(from_unit));
+        const scalar = raw.scalarPart();
+        const bivector = raw.coeff(e12_mask);
+        const magnitude = @sqrt(scalar * scalar + bivector * bivector);
+
+        if (nearlyEqual(magnitude, 0, epsilon)) {
+            return multivector.Rotor(T, 2).init(.{ 0, 1 });
+        }
+
+        const rotor = multivector.Rotor(T, 2).init(.{
+            scalar / magnitude,
+            bivector / magnitude,
+        });
+        debugAssertRotor(rotor, epsilon);
+        return rotor;
+    }
+
     const from_unit = try normalize(from);
     const to_unit = try normalize(to);
-    const raw = multivector.Scalar(T, 2).init(.{1}).add(to_unit.gp(from_unit));
-    const scalar = raw.scalarPart();
-    const bivector = raw.coeff(e12_mask);
+    const from_lanes = vectorLanes2(from_unit);
+    const to_lanes = vectorLanes2(to_unit);
+    const dot = @reduce(.Add, to_lanes * from_lanes);
+    const scalar = 1 + dot;
+    const bivector = to_lanes[0] * from_lanes[1] - to_lanes[1] * from_lanes[0];
     const magnitude = @sqrt(scalar * scalar + bivector * bivector);
 
     if (nearlyEqual(magnitude, 0, epsilon)) {
@@ -172,7 +249,19 @@ pub fn rotated(vector: anytype, rotor: anytype) multivector.GAVector(@TypeOf(vec
     comptime assertFloatRotor2(RotorType);
 
     debugAssertRotor(rotor, defaultTolerance(RotorType.Coefficient));
-    return rotor.gp(vector).gp(rotor.reverse()).gradePart(1);
+
+    if (comptime !useRotorSimdFastPath(RotorType.Coefficient)) {
+        return rotor.gp(vector).gp(rotor.reverse()).gradePart(1);
+    }
+
+    const parts = rotorParts2(rotor);
+    const scalar = parts.scalar;
+    const bivector = parts.bivector;
+    const twice_sb = 2 * scalar * bivector;
+    const scale = scalar * scalar - bivector * bivector;
+    const lanes = vectorLanes2(vector);
+    const perpendicular = @as(@Vector(2, RotorType.Coefficient), .{ lanes[1], -lanes[0] });
+    return lanesToGAVector2(Vector.Coefficient, lanes * @as(@Vector(2, RotorType.Coefficient), @splat(scale)) + perpendicular * @as(@Vector(2, RotorType.Coefficient), @splat(twice_sb)));
 }
 
 /// Rotates a vector by an angle in radians using a planar rotor.

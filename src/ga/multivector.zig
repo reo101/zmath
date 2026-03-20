@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_options = @import("build_options");
 const blade_parsing = @import("blade_parsing.zig");
 const blade_ops = @import("blades.zig");
 
@@ -13,12 +14,8 @@ pub const SignedBladeParseError = blade_parsing.SignedBladeParseError;
 pub const SignedBladeSpec = blade_ops.SignedBladeSpec;
 pub const MetricSignature = blade_ops.MetricSignature;
 
-fn maskWithinDimensions(comptime mask: BladeMask, comptime dimension: usize) bool {
-    return mask < blade_ops.bladeCount(dimension);
-}
-
 fn assertMaskWithinDimensions(comptime mask: BladeMask, comptime dimension: usize) void {
-    if (!maskWithinDimensions(mask, dimension)) {
+    if (mask >= blade_ops.bladeCount(dimension)) {
         @compileError("blade mask has bits set outside the algebra dimensions");
     }
 }
@@ -61,6 +58,37 @@ fn isSignedIntType(comptime T: type) bool {
 
 fn isMultivectorType(comptime T: type) bool {
     return @hasDecl(T, "dimensions") and @hasDecl(T, "Coefficient") and @hasDecl(T, "blades") and @hasField(T, "coeffs");
+}
+
+fn isSimdCoeffType(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .float => true,
+        else => false,
+    };
+}
+
+fn canUseLaneWiseSimd(comptime T: type, comptime lane_count: usize) bool {
+    return build_options.enable_simd_fast_paths and isSimdCoeffType(T) and lane_count >= 2 and lane_count <= 4;
+}
+
+fn coeffsToSimd(comptime T: type, comptime lane_count: usize, coeffs: [lane_count]T) @Vector(lane_count, T) {
+    return @bitCast(coeffs);
+}
+
+fn simdToCoeffs(comptime T: type, comptime lane_count: usize, vector: @Vector(lane_count, T)) [lane_count]T {
+    return @bitCast(vector);
+}
+
+fn scalarProductSigns(
+    comptime T: type,
+    comptime masks: []const BladeMask,
+    comptime signature: MetricSignature,
+) [masks.len]T {
+    var signs: [masks.len]T = undefined;
+    inline for (masks, 0..) |mask, index| {
+        signs[index] = @as(T, blade_ops.geometricProductSignWithSignature(mask, mask, signature));
+    }
+    return signs;
 }
 
 fn assertCompatibleMultivector(comptime Lhs: type, comptime Rhs: type) void {
@@ -279,6 +307,11 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
 
         /// Returns `-self`.
         pub fn negate(self: Self) Self {
+            if (comptime canUseLaneWiseSimd(T, Self.stored_blade_count)) {
+                const lanes = coeffsToSimd(T, Self.stored_blade_count, self.coeffs);
+                return .init(simdToCoeffs(T, Self.stored_blade_count, -lanes));
+            }
+
             var result = Self.zero();
             inline for (blade_masks, 0..) |_, index| {
                 result.coeffs[index] = -self.coeffs[index];
@@ -288,6 +321,11 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
 
         /// Returns `self` scaled by `scalar`.
         pub fn scale(self: Self, scalar: T) Self {
+            if (comptime canUseLaneWiseSimd(T, Self.stored_blade_count)) {
+                const lanes = coeffsToSimd(T, Self.stored_blade_count, self.coeffs);
+                return .init(simdToCoeffs(T, Self.stored_blade_count, lanes * @as(@Vector(Self.stored_blade_count, T), @splat(scalar))));
+            }
+
             var result = Self.zero();
             inline for (blade_masks, 0..) |_, index| {
                 result.coeffs[index] = self.coeffs[index] * scalar;
@@ -297,7 +335,12 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
 
         /// Returns `self / scalar`.
         pub fn divide(self: Self, scalar: T) Self {
-            var result = Self.zero();
+            if (comptime canUseLaneWiseSimd(T, Self.stored_blade_count)) {
+                const lanes = coeffsToSimd(T, Self.stored_blade_count, self.coeffs);
+                return .init(simdToCoeffs(T, Self.stored_blade_count, lanes / @as(@Vector(Self.stored_blade_count, T), @splat(scalar))));
+            }
+
+            var result: Self = .zero();
             inline for (blade_masks, 0..) |_, index| {
                 result.coeffs[index] = self.coeffs[index] / scalar;
             }
@@ -310,7 +353,13 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
             comptime assertCompatibleMultivector(Self, Rhs);
 
             const Result = AddResultType(T, dimension, blade_masks, Rhs.blades);
-            var result = Result.zero();
+            if (comptime blade_ops.sameBladeSet(blade_masks, Rhs.blades) and canUseLaneWiseSimd(T, Self.stored_blade_count)) {
+                const lhs_lanes = coeffsToSimd(T, Self.stored_blade_count, self.coeffs);
+                const rhs_lanes = coeffsToSimd(T, Self.stored_blade_count, rhs.coeffs);
+                return Result.init(simdToCoeffs(T, Self.stored_blade_count, lhs_lanes + rhs_lanes));
+            }
+
+            var result: Result = .zero();
 
             inline for (Result.blades, 0..) |mask, index| {
                 result.coeffs[index] = self.coefficient(mask) + rhs.coefficient(mask);
@@ -325,6 +374,12 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
             comptime assertCompatibleMultivector(Self, Rhs);
 
             const Result = AddResultType(T, dimension, blade_masks, Rhs.blades);
+            if (comptime blade_ops.sameBladeSet(blade_masks, Rhs.blades) and canUseLaneWiseSimd(T, Self.stored_blade_count)) {
+                const lhs_lanes = coeffsToSimd(T, Self.stored_blade_count, self.coeffs);
+                const rhs_lanes = coeffsToSimd(T, Self.stored_blade_count, rhs.coeffs);
+                return Result.init(simdToCoeffs(T, Self.stored_blade_count, lhs_lanes - rhs_lanes));
+            }
+
             var result = Result.zero();
 
             inline for (Result.blades, 0..) |mask, index| {
@@ -404,6 +459,14 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
             comptime assertCompatibleMultivector(Self, Rhs);
             comptime assertMatchesDimension(signature, dimension);
 
+            if (comptime blade_ops.sameBladeSet(blade_masks, Rhs.blades) and canUseLaneWiseSimd(T, Self.stored_blade_count)) {
+                const signs = comptime scalarProductSigns(T, blade_masks, signature);
+                const lhs_lanes = coeffsToSimd(T, Self.stored_blade_count, self.coeffs);
+                const rhs_lanes = coeffsToSimd(T, Self.stored_blade_count, rhs.coeffs);
+                const sign_lanes = coeffsToSimd(T, Self.stored_blade_count, signs);
+                return @reduce(.Add, lhs_lanes * rhs_lanes * sign_lanes);
+            }
+
             var result: T = coeffZero(T);
             inline for (blade_masks, 0..) |lhs_mask, lhs_index| {
                 const rhs_index = Rhs.blade_index_by_mask[lhs_mask];
@@ -417,7 +480,7 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
 
         /// Returns the reverse involution.
         pub fn reverse(self: Self) Self {
-            var result = Self.zero();
+            var result: Self = .zero();
             inline for (blade_masks, 0..) |mask, index| {
                 const sign = reverseSignForGrade(T, blade_ops.bladeGrade(mask));
                 result.coeffs[index] = self.coeffs[index] * sign;
@@ -427,7 +490,7 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
 
         /// Returns the grade involution.
         pub fn gradeInvolution(self: Self) Self {
-            var result = Self.zero();
+            var result: Self = .zero();
             inline for (blade_masks, 0..) |mask, index| {
                 const sign: T = if ((blade_ops.bladeGrade(mask) % 2) == 0) 1 else -1;
                 result.coeffs[index] = self.coeffs[index] * sign;
@@ -465,6 +528,12 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
             comptime assertCompatibleMultivector(Self, Rhs);
 
             if (comptime blade_ops.sameBladeSet(blade_masks, Rhs.blades)) {
+                if (comptime canUseLaneWiseSimd(T, Self.stored_blade_count)) {
+                    const lhs_lanes = coeffsToSimd(T, Self.stored_blade_count, self.coeffs);
+                    const rhs_lanes = coeffsToSimd(T, Self.stored_blade_count, rhs.coeffs);
+                    return @reduce(.And, lhs_lanes == rhs_lanes);
+                }
+
                 inline for (blade_masks, 0..) |_, index| {
                     if (self.coeffs[index] != rhs.coeffs[index]) return false;
                 }
