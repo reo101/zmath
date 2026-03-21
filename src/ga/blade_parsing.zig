@@ -46,6 +46,47 @@ fn parseBasisIndex(
     return value;
 }
 
+fn applyParsedIndex(
+    spec: *SignedBladeSpec,
+    one_based_index: usize,
+    comptime dimension: usize,
+) void {
+    blades.applyBasisIndex(spec, one_based_index, dimension);
+}
+
+const SeparatedBladeSyntax = struct {
+    start: usize,
+    end: usize,
+    separator: u8,
+    allow_leading_separator: bool,
+    trailing_separator_error: SignedBladeParseError,
+};
+
+fn parseSeparatedSignedBlade(
+    comptime name: []const u8,
+    comptime dimension: usize,
+    comptime syntax: SeparatedBladeSyntax,
+) SignedBladeParseError!SignedBladeSpec {
+    var spec = SignedBladeSpec{ .sign = .positive, .mask = 0 };
+    var position = syntax.start;
+
+    if (syntax.allow_leading_separator and position < syntax.end and name[position] == syntax.separator) {
+        position += 1;
+    }
+    if (position >= syntax.end) return error.EmptySignedBlade;
+
+    while (true) {
+        const one_based_index = try parseBasisIndex(name, &position, dimension);
+        applyParsedIndex(&spec, one_based_index, dimension);
+
+        if (position == syntax.end) return spec;
+        if (name[position] != syntax.separator) return error.InvalidBasisSeparator;
+
+        position += 1;
+        if (position == syntax.end) return syntax.trailing_separator_error;
+    }
+}
+
 fn hasUnderscoreSyntax(comptime name: []const u8) bool {
     return if (name.len <= 1) false else std.mem.indexOfScalar(u8, name[1..], '_') != null;
 }
@@ -81,7 +122,7 @@ fn parseCompactSignedBlade(
         };
         if (one_based_index > dimension) return error.InvalidBasisIndex;
 
-        blades.applyBasisIndex(&spec, one_based_index, dimension);
+        applyParsedIndex(&spec, one_based_index, dimension);
     }
 
     return spec;
@@ -94,22 +135,13 @@ fn parseUnderscoreSignedBlade(
 ) SignedBladeParseError!SignedBladeSpec {
     if (name.len < 3) return error.EmptySignedBlade;
 
-    var spec = SignedBladeSpec{ .sign = .positive, .mask = 0 };
-    var position: usize = 1;
-    if (name[position] == '_') position += 1;
-
-    const first_index = try parseBasisIndex(name, &position, dimension);
-    blades.applyBasisIndex(&spec, first_index, dimension);
-
-    while (position < name.len) {
-        if (name[position] != '_') return error.InvalidBasisSeparator;
-        position += 1;
-
-        const one_based_index = try parseBasisIndex(name, &position, dimension);
-        blades.applyBasisIndex(&spec, one_based_index, dimension);
-    }
-
-    return spec;
+    return parseSeparatedSignedBlade(name, dimension, .{
+        .start = 1,
+        .end = name.len,
+        .separator = '_',
+        .allow_leading_separator = true,
+        .trailing_separator_error = error.InvalidBasisIndex,
+    });
 }
 
 /// Parses delimited signed blades such as `e(1,2)` or `e[10,2]`.
@@ -123,20 +155,13 @@ fn parseDelimitedSignedBlade(
     if (name.len < 5) return error.EmptySignedBlade;
     if (name[1] != open or name[name.len - 1] != close) return error.InvalidBasisDelimiter;
 
-    var spec = SignedBladeSpec{ .sign = .positive, .mask = 0 };
-    const end = name.len - 1;
-    var position: usize = 2;
-
-    while (true) {
-        const one_based_index = try parseBasisIndex(name, &position, dimension);
-        blades.applyBasisIndex(&spec, one_based_index, dimension);
-
-        if (position == end) return spec;
-        if (name[position] != separator) return error.InvalidBasisSeparator;
-
-        position += 1;
-        if (position == end) return error.TrailingBasisSeparator;
-    }
+    return parseSeparatedSignedBlade(name, dimension, .{
+        .start = 2,
+        .end = name.len - 1,
+        .separator = separator,
+        .allow_leading_separator = false,
+        .trailing_separator_error = error.TrailingBasisSeparator,
+    });
 }
 
 /// Returns whether `name` is a valid signed-blade spelling for the algebra.
