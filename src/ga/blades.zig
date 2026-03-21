@@ -217,14 +217,18 @@ pub fn gradeBladeMasks(comptime dimension: usize, comptime grade: usize) [choose
     return masks;
 }
 
+fn countParityBladeMasks(comptime dimension: usize, comptime even: bool) usize {
+    return if (dimension == 0) (if (even) 1 else 0) else bladeCount(dimension) / 2;
+}
+
 fn parityBladeMasks(
     comptime dimension: usize,
     comptime even: bool,
-) [if (dimension == 0) (if (even) 1 else 0) else bladeCount(dimension) / 2]BladeMask {
+) [countParityBladeMasks(dimension, even)]BladeMask {
     validateDimension(dimension);
     @setEvalBranchQuota(1_000_000);
 
-    const count = if (dimension == 0) (if (even) 1 else 0) else bladeCount(dimension) / 2;
+    const count = countParityBladeMasks(dimension, even);
     var masks: [count]BladeMask = undefined;
     var next_index: usize = 0;
 
@@ -241,12 +245,12 @@ fn parityBladeMasks(
 }
 
 /// Returns every even-grade blade mask in canonical order.
-pub fn evenBladeMasks(comptime dimension: usize) [if (dimension == 0) 1 else bladeCount(dimension) / 2]BladeMask {
+pub fn evenBladeMasks(comptime dimension: usize) [countParityBladeMasks(dimension, true)]BladeMask {
     return parityBladeMasks(dimension, true);
 }
 
 /// Returns every odd-grade blade mask in canonical order.
-pub fn oddBladeMasks(comptime dimension: usize) [if (dimension == 0) 0 else bladeCount(dimension) / 2]BladeMask {
+pub fn oddBladeMasks(comptime dimension: usize) [countParityBladeMasks(dimension, false)]BladeMask {
     return parityBladeMasks(dimension, false);
 }
 
