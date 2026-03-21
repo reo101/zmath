@@ -256,8 +256,8 @@ pub fn oddBladeMasks(comptime dimension: usize) [countParityBladeMasks(dimension
 
 fn countMarkedMasks(comptime dimension: usize, comptime marked: [bladeCount(dimension)]bool) usize {
     var count: usize = 0;
-    inline for (marked) |is_marked| {
-        if (is_marked) count += 1;
+    for (marked) |is_marked| {
+        count += @intFromBool(is_marked);
     }
     return count;
 }
