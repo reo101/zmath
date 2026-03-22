@@ -716,7 +716,7 @@ pub fn fullSignedBladeFromIndicesWithSignature(
 
     var spec = SignedBladeSpec{ .sign = .positive, .mask = 0 };
     for (indices) |one_based_index| {
-        std.debug.assert(one_based_index >= 1 and one_based_index <= dimension);
+        std.debug.assert(1 <= one_based_index and one_based_index <= dimension);
         blade_ops.applyBasisIndexWithSignature(&spec, one_based_index, sig);
     }
 
