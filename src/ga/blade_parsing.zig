@@ -91,10 +91,10 @@ fn hasUnderscoreSyntax(comptime name: []const u8) bool {
     return if (name.len <= 1) false else std.mem.indexOfScalar(u8, name[1..], '_') != null;
 }
 
-fn invalidSignedBladeCompileError(comptime name: []const u8, _: SignedBladeParseError) noreturn {
+fn invalidSignedBladeCompileError(comptime name: []const u8, comptime dimension: usize, comptime err: SignedBladeParseError) noreturn {
     @compileError(std.fmt.comptimePrint(
-        "invalid signed blade `{s}` for this algebra",
-        .{name},
+        "invalid signed blade `{s}` for this algebra of dimension {d}: {s}",
+        .{ name, dimension, @errorName(err) },
     ));
 }
 
@@ -187,7 +187,7 @@ pub fn parseSignedBlade(comptime name: []const u8, comptime dimension: usize) Si
 
 /// Parses a signed blade or emits a compile error if the spelling is invalid.
 pub fn expectSignedBlade(comptime name: []const u8, comptime dimension: usize) SignedBladeSpec {
-    return parseSignedBlade(name, dimension) catch |err| invalidSignedBladeCompileError(name, err);
+    return comptime parseSignedBlade(name, dimension) catch |err| invalidSignedBladeCompileError(name, dimension, err);
 }
 
 test "signed blades keep compact and multi-digit forms distinct" {
