@@ -253,6 +253,52 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         /// Sentinel used in `blade_index_by_mask` for masks this carrier does not store.
         pub const missing_blade_index = blade_masks.len;
 
+        /// Returns the multivector type for the same coefficient type and signature
+        /// but with a different set of stored blade masks.
+        pub fn Rebind(comptime new_masks: []const BladeMask) type {
+            return Multivector(T, new_masks, sig);
+        }
+
+        /// Returns the related carrier type for a single blade mask.
+        pub fn BasisBladeType(comptime mask: BladeMask) type {
+            return Rebind(&.{mask});
+        }
+
+        /// Returns the related carrier type storing every blade in the algebra.
+        pub fn FullType() type {
+            return FullMultivector(T, sig);
+        }
+
+        /// Returns the related carrier type restricted to one grade.
+        pub fn GradeType(comptime target_grade: usize) type {
+            return KVector(T, target_grade, sig);
+        }
+
+        /// Returns the related carrier type restricted to even grades.
+        pub fn EvenType() type {
+            return EvenMultivector(T, sig);
+        }
+
+        /// Returns the related carrier type restricted to odd grades.
+        pub fn OddType() type {
+            return OddMultivector(T, sig);
+        }
+
+        /// Returns the related scalar carrier type.
+        pub fn ScalarType() type {
+            return GradeType(0);
+        }
+
+        /// Returns the related grade-1 vector carrier type.
+        pub fn GAVectorType() type {
+            return GradeType(1);
+        }
+
+        /// Returns the related grade-2 bivector carrier type.
+        pub fn BivectorType() type {
+            return GradeType(2);
+        }
+
         coeffs: [blade_masks.len]T = std.mem.zeroes([blade_masks.len]T),
 
         /// Initializes the multivector from coefficients in `blades` order.
@@ -304,7 +350,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         }
 
         /// Returns the scalar coefficient.
-        pub fn scalarPart(self: Self) T {
+        pub fn scalarCoeff(self: Self) T {
             return self.coefficient(0);
         }
 
@@ -600,12 +646,12 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         }
 
         /// Projects onto one grade and returns the corresponding `KVector`.
-        pub fn gradePart(self: Self, comptime target_grade: usize) KVector(T, target_grade, sig) {
+        pub fn gradePart(self: Self, comptime target_grade: usize) GradeType(target_grade) {
             if (target_grade > dimension) {
                 @compileError("grade must not exceed the ambient dimension");
             }
 
-            const Result = KVector(T, target_grade, sig);
+            const Result = GradeType(target_grade);
             var result = Result.zero();
 
             inline for (blade_masks, 0..) |mask, index| {
@@ -616,6 +662,11 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
             }
 
             return result;
+        }
+
+        /// Returns the scalar part as a Scalar multivector.
+        pub fn scalarPart(self: Self) ScalarType() {
+            return self.gradePart(0);
         }
 
         /// Returns whether two multivectors are coefficient-wise equal.
@@ -805,30 +856,22 @@ pub fn writeMultivector(writer: *std.Io.Writer, value: anytype) std.Io.Writer.Er
 
 /// Carrier type storing every blade in the algebra.
 pub fn FullMultivector(comptime T: type, comptime sig: MetricSignature) type {
-    const dimension = comptime sig.dimension();
-    const masks = blade_ops.allBladeMasks(dimension);
-    return Multivector(T, masks[0..], sig);
+    return Multivector(T, &blade_ops.allBladeMasks(sig.dimension()), sig);
 }
 
 /// Carrier type restricted to one grade.
 pub fn KVector(comptime T: type, comptime grade: usize, comptime sig: MetricSignature) type {
-    const dimension = comptime sig.dimension();
-    const masks = blade_ops.gradeBladeMasks(dimension, grade);
-    return Multivector(T, masks[0..], sig);
+    return Multivector(T, &blade_ops.gradeBladeMasks(sig.dimension(), grade), sig);
 }
 
 /// Carrier type restricted to even grades.
 pub fn EvenMultivector(comptime T: type, comptime sig: MetricSignature) type {
-    const dimension = comptime sig.dimension();
-    const masks = blade_ops.evenBladeMasks(dimension);
-    return Multivector(T, masks[0..], sig);
+    return Multivector(T, &blade_ops.evenBladeMasks(sig.dimension()), sig);
 }
 
 /// Carrier type restricted to odd grades.
 pub fn OddMultivector(comptime T: type, comptime sig: MetricSignature) type {
-    const dimension = comptime sig.dimension();
-    const masks = blade_ops.oddBladeMasks(dimension);
-    return Multivector(T, masks[0..], sig);
+    return Multivector(T, &blade_ops.oddBladeMasks(sig.dimension()), sig);
 }
 
 /// Scalar carrier type.
@@ -853,8 +896,7 @@ pub fn Trivector(comptime T: type, comptime sig: MetricSignature) type {
 
 /// Highest-grade pseudoscalar carrier type.
 pub fn Pseudoscalar(comptime T: type, comptime sig: MetricSignature) type {
-    const dimension = comptime sig.dimension();
-    return KVector(T, dimension, sig);
+    return KVector(T, sig.dimension(), sig);
 }
 
 /// Even multivector carrier commonly used for rotors.
@@ -866,8 +908,17 @@ pub fn Rotor(comptime T: type, comptime sig: MetricSignature) type {
 pub fn Basis(comptime T: type, comptime sig: MetricSignature) type {
     const dimension = comptime sig.dimension();
     return struct {
+        /// The corresponding carrier type for the full algebra.
+        pub const Full = FullMultivector(T, sig);
+
+        /// The corresponding scalar carrier.
+        pub const Scalar = Full.ScalarType();
+
         /// The corresponding grade-1 vector carrier.
-        pub const Vector = GAVector(T, sig);
+        pub const Vector = Full.VectorType();
+
+        /// The corresponding grade-2 bivector carrier.
+        pub const Bivector = Full.BivectorType();
 
         /// Returns the one-based basis vector `e{one_based_index}`.
         pub fn e(

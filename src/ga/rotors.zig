@@ -204,7 +204,7 @@ pub fn tryRotorFromTo(from: anytype, to: anytype) RotorError!multivector.Rotor(@
         const from_unit = try normalize(from);
         const to_unit = try normalize(to);
         const raw = multivector.Scalar(T, euclidean2).init(.{1}).add(to_unit.gp(from_unit));
-        const scalar = raw.scalarPart();
+        const scalar = raw.scalarCoeff();
         const bivector = raw.coeff(e12_mask);
         const magnitude = @sqrt(scalar * scalar + bivector * bivector);
 
