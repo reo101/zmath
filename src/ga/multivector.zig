@@ -21,7 +21,7 @@ fn assertMaskWithinDimensions(comptime mask: BladeMask, comptime dimension: usiz
 }
 
 fn assertMatchesDimension(comptime signature: MetricSignature, comptime dimension: usize) void {
-    if (signature.p + signature.q != dimension) {
+    if (signature.p + signature.q + signature.r != dimension) {
         @compileError("metric signature dimension must match multivector dimension");
     }
 }
@@ -394,7 +394,7 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
             return self.gpWithSignature(rhs, .{ .p = dimension, .q = 0 });
         }
 
-        /// Returns the geometric product under an arbitrary `Cl(p, q)` signature.
+        /// Returns the geometric product under an arbitrary `Cl(p, q, r)` signature.
         pub fn gpWithSignature(
             self: Self,
             rhs: anytype,
@@ -449,7 +449,7 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
             return self.scalarProductWithSignature(rhs, .{ .p = dimension, .q = 0 });
         }
 
-        /// Returns the scalar product under an arbitrary `Cl(p, q)` signature.
+        /// Returns the scalar product under an arbitrary `Cl(p, q, r)` signature.
         pub fn scalarProductWithSignature(
             self: Self,
             rhs: anytype,
@@ -560,7 +560,7 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
     };
 }
 
-/// Runtime signed-blade construction under an arbitrary `Cl(p, q)` signature.
+/// Runtime signed-blade construction under an arbitrary `Cl(p, q, r)` signature.
 pub fn fullSignedBladeFromIndicesWithSignature(
     comptime T: type,
     comptime signature: MetricSignature,
