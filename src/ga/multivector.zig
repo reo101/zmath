@@ -154,44 +154,14 @@ fn writeBlade(writer: *std.Io.Writer, comptime dimension: usize, mask: BladeMask
     }
 }
 
-fn writeMultivectorImpl(
-    writer: *std.Io.Writer,
-    value: anytype,
-) std.Io.Writer.Error!void {
-    const M = @TypeOf(value);
+/// Writes any multivector value through a std.Io writer interface.
+pub fn renderMultivector(writer: *std.Io.Writer, value: anytype) std.Io.Writer.Error!void {
     comptime {
-        if (!isMultivectorType(M)) {
+        if (!isMultivectorType(@TypeOf(value))) {
             @compileError("expected a multivector value");
         }
     }
-
-    var wrote_any = false;
-
-    for (M.blades, value.coeffs) |mask, coeff| {
-        if (coeff == coeffZero(M.Coefficient)) continue;
-
-        if (wrote_any) {
-            try writer.writeAll(if (isNegative(coeff)) " - " else " + ");
-        } else if (isNegative(coeff)) {
-            try writer.writeByte('-');
-        }
-
-        const magnitude = absValue(coeff);
-        if (mask == 0) {
-            try writer.print("{}", .{magnitude});
-        } else {
-            if (magnitude != coeffOne(M.Coefficient)) {
-                try writer.print("{}*", .{magnitude});
-            }
-            try writeBlade(writer, M.dimensions, mask);
-        }
-
-        wrote_any = true;
-    }
-
-    if (!wrote_any) {
-        try writer.writeByte('0');
-    }
+    try value.write(writer);
 }
 
 /// Returns the compact multivector type for a named signed blade.
@@ -305,9 +275,8 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
             return .{ .coeffs = if (use_simd) coeffsToSimd(T, blade_masks.len, coeffs) else coeffs };
         }
 
-
         /// Returns the additive identity for this carrier type.
-        pub fn zero() Self {
+        pub inline fn zero() Self {
             return .{};
         }
 
@@ -319,6 +288,39 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         /// Constructs a signed blade from runtime basis-vector indices.
         pub fn fromIndices(indices: []const usize) FullMultivector(T, sig) {
             return fullSignedBladeFromIndicesWithSignature(T, sig, indices);
+        }
+
+        /// Writes this multivector value through a `std.Io.Writer` interface.
+        pub fn format(self: Self, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            var wrote_any = false;
+            const coeffs: [stored_blade_count]T = if (comptime use_simd) @bitCast(self.coeffs) else self.coeffs;
+
+            for (blades, 0..) |mask, index| {
+                const coeff_value = coeffs[index];
+                if (coeff_value == coeffZero(T)) continue;
+
+                if (wrote_any) {
+                    try writer.writeAll(if (isNegative(coeff_value)) " - " else " + ");
+                } else if (isNegative(coeff_value)) {
+                    try writer.writeByte('-');
+                }
+
+                const magnitude = absValue(coeff_value);
+                if (mask == 0) {
+                    try writer.print("{}", .{magnitude});
+                } else {
+                    if (magnitude != coeffOne(T)) {
+                        try writer.print("{}*", .{magnitude});
+                    }
+                    try writeBlade(writer, dimensions, mask);
+                }
+
+                wrote_any = true;
+            }
+
+            if (!wrote_any) {
+                try writer.writeByte('0');
+            }
         }
 
         /// Returns the coefficient of a compile-time blade mask.
@@ -696,16 +698,6 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                 return true;
             }
         }
-
-        /// Writes the multivector through a std.Io writer interface.
-        pub fn write(self: Self, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            try writeMultivectorImpl(writer, self);
-        }
-
-        /// Formats the multivector as a sum of scaled basis blades.
-        pub fn format(self: Self, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            try self.write(writer);
-        }
     };
 }
 
@@ -851,11 +843,6 @@ pub fn signedBlade(comptime T: type, comptime name: []const u8, comptime sig: Me
     return signedBladeImpl(T, name, sig);
 }
 
-/// Writes any multivector value through a std.Io writer interface.
-pub fn writeMultivector(writer: *std.Io.Writer, value: anytype) std.Io.Writer.Error!void {
-    try writeMultivectorImpl(writer, value);
-}
-
 /// Carrier type storing every blade in the algebra.
 pub fn FullMultivector(comptime T: type, comptime sig: MetricSignature) type {
     return Multivector(T, &blade_ops.allBladeMasks(sig.dimension()), sig);
@@ -990,7 +977,7 @@ test "writeMultivector renders through std.Io.Writer" {
     defer out.deinit();
 
     const value = FullMultivector(i32, .euclidean(2)).init(.{ 2, -3, 0, 1 });
-    try writeMultivector(&out.writer, value);
+    try value.format(&out.writer);
     try std.testing.expectEqualSlices(u8, "2 - 3*e1 + e12", out.written());
 }
 
@@ -999,7 +986,7 @@ test "multivector.write matches format output path" {
     defer out.deinit();
 
     const value = GAVector(i32, .euclidean(2)).init(.{ 1, -2 });
-    try value.write(&out.writer);
+    try value.format(&out.writer);
     try std.testing.expectEqualSlices(u8, "e1 - 2*e2", out.written());
 }
 
