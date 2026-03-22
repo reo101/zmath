@@ -123,8 +123,8 @@ test "ga facade exposes core and specialized modules" {
     try std.testing.expect(bladeCount(3) == blades.bladeCount(3));
     try std.testing.expect(isSignedBlade("e(1,2)", 2));
 
-    const signature: MetricSignature = .{ .p = 1, .q = 1 };
-    const value = fullSignedBladeFromIndicesWithSignature(i32, signature, &.{ 2, 2 });
+    const sig: MetricSignature = .{ .p = 1, .q = 1 };
+    const value = fullSignedBladeFromIndicesWithSignature(i32, sig, &.{ 2, 2 });
     try std.testing.expectEqual(@as(i32, -1), value.coeff(0));
 
     const E2 = Algebra(.euclidean(2)).Basis(f64);

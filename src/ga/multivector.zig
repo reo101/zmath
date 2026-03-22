@@ -76,11 +76,11 @@ fn simdToCoeffs(comptime T: type, comptime lane_count: usize, vector: @Vector(la
 fn scalarProductSigns(
     comptime T: type,
     comptime masks: []const BladeMask,
-    comptime signature: MetricSignature,
+    comptime sig: MetricSignature,
 ) [masks.len]T {
     var signs: [masks.len]T = undefined;
     inline for (masks, 0..) |mask, index| {
-        signs[index] = @as(T, blade_ops.geometricProductSignWithSignature(mask, mask, signature));
+        signs[index] = @as(T, blade_ops.geometricProductSignWithSignature(mask, mask, sig));
     }
     return signs;
 }
@@ -403,24 +403,24 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         pub fn gpWithSignature(
             self: Self,
             rhs: anytype,
-            comptime signature: MetricSignature,
-        ) GeometricProductResultType(T, blade_masks, @TypeOf(rhs).blades, signature) {
+            comptime override_sig: MetricSignature,
+        ) GeometricProductResultType(T, blade_masks, @TypeOf(rhs).blades, override_sig) {
             const Rhs = @TypeOf(rhs);
             comptime assertCompatibleMultivector(Self, Rhs);
             comptime {
-                if (signature.dimension() != dimension) {
+                if (override_sig.dimension() != dimension) {
                     @compileError("metric signature dimension must match multivector dimension");
                 }
             }
 
-            const Result = GeometricProductResultType(T, blade_masks, Rhs.blades, signature);
+            const Result = GeometricProductResultType(T, blade_masks, Rhs.blades, override_sig);
             var result = Result.zero();
 
             inline for (blade_masks, 0..) |lhs_mask, lhs_index| {
                 inline for (Rhs.blades, 0..) |rhs_mask, rhs_index| {
                     const result_mask = lhs_mask ^ rhs_mask;
                     const result_index = Result.blade_index_by_mask[result_mask];
-                    const sign = blade_ops.geometricProductSignWithSignature(lhs_mask, rhs_mask, signature);
+                    const sign = blade_ops.geometricProductSignWithSignature(lhs_mask, rhs_mask, override_sig);
 
                     std.debug.assert(result_index < Result.stored_blade_count);
                     result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @as(T, sign);
@@ -545,18 +545,18 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         pub fn scalarProductWithSignature(
             self: Self,
             rhs: anytype,
-            comptime signature: MetricSignature,
+            comptime override_sig: MetricSignature,
         ) T {
             const Rhs = @TypeOf(rhs);
             comptime assertCompatibleMultivector(Self, Rhs);
             comptime {
-                if (signature.dimension() != dimension) {
+                if (override_sig.dimension() != dimension) {
                     @compileError("metric signature dimension must match multivector dimension");
                 }
             }
 
             if (comptime blade_ops.sameBladeSet(blade_masks, Rhs.blades) and canUseLaneWiseSimd(T, Self.stored_blade_count)) {
-                const signs = comptime scalarProductSigns(T, blade_masks, signature);
+                const signs = comptime scalarProductSigns(T, blade_masks, override_sig);
                 const lhs_lanes = coeffsToSimd(T, Self.stored_blade_count, self.coeffs);
                 const rhs_lanes = coeffsToSimd(T, Self.stored_blade_count, rhs.coeffs);
                 const sign_lanes = coeffsToSimd(T, Self.stored_blade_count, signs);
@@ -568,7 +568,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                 const rhs_index = Rhs.blade_index_by_mask[lhs_mask];
                 if (rhs_index == Rhs.missing_blade_index) continue;
 
-                result += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @as(T, blade_ops.geometricProductSignWithSignature(lhs_mask, lhs_mask, signature));
+                result += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @as(T, blade_ops.geometricProductSignWithSignature(lhs_mask, lhs_mask, override_sig));
             }
 
             return result;
@@ -659,11 +659,11 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
 /// Runtime signed-blade construction under an arbitrary `Cl(p, q, r)` signature.
 pub fn fullSignedBladeFromIndicesWithSignature(
     comptime T: type,
-    comptime signature: MetricSignature,
+    comptime sig: MetricSignature,
     indices: []const usize,
-) FullMultivector(T, signature) {
+) FullMultivector(T, sig) {
     ensureNumeric(T);
-    const dimension = comptime signature.dimension();
+    const dimension = comptime sig.dimension();
 
     if (comptime !supportsNegativeCoefficients(T)) {
         @compileError("runtime signed-blade construction requires signed or floating-point coefficients");
@@ -672,10 +672,10 @@ pub fn fullSignedBladeFromIndicesWithSignature(
     var spec = SignedBladeSpec{ .sign = .positive, .mask = 0 };
     for (indices) |one_based_index| {
         std.debug.assert(one_based_index >= 1 and one_based_index <= dimension);
-        blade_ops.applyBasisIndexWithSignature(&spec, one_based_index, signature);
+        blade_ops.applyBasisIndexWithSignature(&spec, one_based_index, sig);
     }
 
-    var result = FullMultivector(T, signature).zero();
+    var result = FullMultivector(T, sig).zero();
     result.coeffs[@intCast(spec.mask)] = signedUnit(T, spec.sign);
     return result;
 }
@@ -951,14 +951,14 @@ test "multivector.write matches format output path" {
 }
 
 test "signature-aware products support Cl(1,1)" {
-    const signature: MetricSignature = .{ .p = 1, .q = 1 };
-    const Vec = GAVector(f64, signature);
+    const sig: MetricSignature = .{ .p = 1, .q = 1 };
+    const Vec = GAVector(f64, sig);
     const e1 = Vec.init(.{ 1.0, 0.0 });
     const e2 = Vec.init(.{ 0.0, 1.0 });
 
-    try std.testing.expect(e1.gpWithSignature(e1, signature).eql(Scalar(f64, signature).init(.{1.0})));
-    try std.testing.expect(e2.gpWithSignature(e2, signature).eql(Scalar(f64, signature).init(.{-1.0})));
-    try std.testing.expectEqual(@as(f64, -1.0), e2.scalarProductWithSignature(e2, signature));
+    try std.testing.expect(e1.gpWithSignature(e1, sig).eql(Scalar(f64, sig).init(.{1.0})));
+    try std.testing.expect(e2.gpWithSignature(e2, sig).eql(Scalar(f64, sig).init(.{-1.0})));
+    try std.testing.expectEqual(@as(f64, -1.0), e2.scalarProductWithSignature(e2, sig));
 }
 
 test "sparse coefficient lookup and equality across carrier sets" {
