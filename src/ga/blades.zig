@@ -35,10 +35,22 @@ pub const SignedBladeSpec = struct {
     mask: BladeMask,
 };
 
-/// Compile-time metric signature for `Cl(p, q)`.
+/// Compile-time metric signature for `Cl(p, q, r)`.
+///
+/// In the Clifford algebra `Cl(p, q, r)`:
+/// - `p` = number of basis vectors that square to **+1** (positive signature)
+/// - `q` = number of basis vectors that square to **-1** (negative signature)
+/// - `r` = number of basis vectors that square to **0** (degenerate/null signature)
+///
+/// The algebra has dimension `p + q + r`. Common examples:
+/// - `Cl(3, 0, 0)` = standard 3D Euclidean GA
+/// - `Cl(4, 1, 0)` = conformal geometric algebra (VGA)
+/// - `Cl(3, 0, 1)` = projective geometric algebra (PGA)
+/// - `Cl(1, 1, 0)` = Minkowski spacetime
 pub const MetricSignature = struct {
     p: usize,
     q: usize,
+    r: usize = 0,
 };
 
 /// Largest ambient dimension that fits inside `BladeMask`.
@@ -53,27 +65,32 @@ fn validateDimension(comptime dimension: usize) void {
     }
 }
 
-/// Returns `p + q` for a metric signature.
+/// Returns `p + q + r` for a metric signature.
 pub fn metricDimension(comptime signature: MetricSignature) usize {
-    const dimension = signature.p + signature.q;
+    const dimension = signature.p + signature.q + signature.r;
     validateDimension(dimension);
     return dimension;
 }
 
-/// Returns the Euclidean metric signature `Cl(dimension, 0)`.
+/// Returns the Euclidean metric signature `Cl(dimension, 0, 0)`.
 pub fn euclideanSignature(comptime dimension: usize) MetricSignature {
     validateDimension(dimension);
     return .{ .p = dimension, .q = 0 };
 }
 
 /// Returns the square sign of a one-based basis vector in `signature`.
+/// - Returns `1` for basis vectors in the positive signature (first `p` vectors)
+/// - Returns `-1` for basis vectors in the negative signature (next `q` vectors)
+/// - Returns `0` for basis vectors in the degenerate signature (last `r` vectors)
 pub fn basisSquareSign(comptime signature: MetricSignature, one_based_index: usize) i8 {
     const dimension = metricDimension(signature);
     std.debug.assert(one_based_index >= 1 and one_based_index <= dimension);
-    return if (one_based_index <= signature.p) 1 else -1;
+    if (one_based_index <= signature.p) return 1;
+    if (one_based_index <= signature.p + signature.q) return -1;
+    return 0;
 }
 
-/// Returns the number of basis blades in `Cl(dimension, 0)`.
+/// Returns the number of basis blades in `Cl(dimension, 0, 0)`.
 pub fn bladeCount(comptime dimension: usize) usize {
     validateDimension(dimension);
     return @as(usize, 1) << @intCast(dimension);
@@ -390,7 +407,7 @@ pub fn geometricProductSign(lhs_mask: BladeMask, rhs_mask: BladeMask) i8 {
     return sign;
 }
 
-/// Returns the sign produced by the `Cl(p, q)` geometric product of two blade masks.
+/// Returns the sign produced by the `Cl(p, q, r)` geometric product of two blade masks.
 pub fn geometricProductSignWithSignature(
     lhs_mask: BladeMask,
     rhs_mask: BladeMask,

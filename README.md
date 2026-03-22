@@ -24,7 +24,7 @@ Right now the repo implements a GA-first core with:
 1. Blade masks and canonical ordering.
 2. Signed blade parsing (compact, underscore, and delimited syntaxes).
 3. Sparse multivector carrier types with typed operations.
-4. Euclidean defaults plus signature-aware `Cl(p, q)` operations.
+4. Euclidean defaults plus signature-aware `Cl(p, q, r)` operations.
 5. A specialized 2D rotor helper module.
 
 ## Layout
