@@ -54,9 +54,9 @@ pub const MetricSignature = struct {
 
     /// Constructs `Cl(p, q, r)` and validates that the dimension fits `BladeMask`.
     pub fn init(comptime p: usize, comptime q: usize, comptime r: usize) MetricSignature {
-        const signature: MetricSignature = .{ .p = p, .q = q, .r = r };
-        _ = signature.dimension();
-        return signature;
+        const sig: MetricSignature = .{ .p = p, .q = q, .r = r };
+        _ = sig.dimension();
+        return sig;
     }
 
     /// Constructs the Euclidean signature `Cl(d, 0, 0)`.
@@ -92,8 +92,8 @@ fn validateDimension(dimension: usize) void {
 }
 
 /// Returns `p + q + r` for a metric signature.
-pub fn metricDimension(comptime signature: MetricSignature) usize {
-    return signature.dimension();
+pub fn metricDimension(comptime sig: MetricSignature) usize {
+    return sig.dimension();
 }
 
 /// Returns the Euclidean metric signature `Cl(dimension, 0, 0)`.
@@ -101,15 +101,15 @@ pub fn euclideanSignature(comptime dimension: usize) MetricSignature {
     return MetricSignature.euclidean(dimension);
 }
 
-/// Returns the square sign of a one-based basis vector in `signature`.
+/// Returns the square sign of a one-based basis vector in `sig`.
 /// - Returns `1` for basis vectors in the positive signature (first `p` vectors)
 /// - Returns `-1` for basis vectors in the negative signature (next `q` vectors)
 /// - Returns `0` for basis vectors in the degenerate signature (last `r` vectors)
-pub fn basisSquareSign(comptime signature: MetricSignature, one_based_index: usize) i8 {
-    const dimension = signature.dimension();
+pub fn basisSquareSign(comptime sig: MetricSignature, one_based_index: usize) i8 {
+    const dimension = sig.dimension();
     std.debug.assert(one_based_index >= 1 and one_based_index <= dimension);
-    if (one_based_index <= signature.p) return 1;
-    if (one_based_index <= signature.p + signature.q) return -1;
+    if (one_based_index <= sig.p) return 1;
+    if (one_based_index <= sig.p + sig.q) return -1;
     return 0;
 }
 
@@ -182,12 +182,12 @@ pub fn applyBasisIndex(spec: *SignedBladeSpec, one_based_index: usize, comptime 
     applyBasisIndexWithSignature(spec, one_based_index, euclideanSignature(dimension));
 }
 
-/// Folds one basis vector into an in-progress canonical signed blade under `signature`.
-pub fn applyBasisIndexWithSignature(spec: *SignedBladeSpec, one_based_index: usize, comptime signature: MetricSignature) void {
-    const dimension = signature.dimension();
+/// Folds one basis vector into an in-progress canonical signed blade under `sig`.
+pub fn applyBasisIndexWithSignature(spec: *SignedBladeSpec, one_based_index: usize, comptime sig: MetricSignature) void {
+    const dimension = sig.dimension();
     std.debug.assert(one_based_index >= 1 and one_based_index <= dimension);
     const bit = @as(BladeMask, 1) << @intCast(one_based_index - 1);
-    if (geometricProductSignWithSignature(spec.mask, bit, signature) < 0) {
+    if (geometricProductSignWithSignature(spec.mask, bit, sig) < 0) {
         spec.sign.flip();
     }
     spec.mask ^= bit;
@@ -490,14 +490,14 @@ pub fn geometricProductSign(lhs_mask: BladeMask, rhs_mask: BladeMask) i8 {
 pub fn geometricProductSignWithSignature(
     lhs_mask: BladeMask,
     rhs_mask: BladeMask,
-    comptime signature: MetricSignature,
+    comptime sig: MetricSignature,
 ) i8 {
     var sign = geometricProductSign(lhs_mask, rhs_mask);
     var overlap = lhs_mask & rhs_mask;
     while (overlap != 0) {
         const bit_index = @ctz(overlap);
         overlap &= overlap - 1;
-        sign *= basisSquareSign(signature, bit_index + 1);
+        sign *= basisSquareSign(sig, bit_index + 1);
     }
 
     return sign;

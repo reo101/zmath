@@ -6,12 +6,12 @@ pub const MetricSignature = ga.MetricSignature;
 
 /// PGA signature `Cl(3, 0, 1)`: three positive basis vectors and one
 /// degenerate (null) basis vector `e0` that squares to zero.
-const signature: MetricSignature = .{ .p = 3, .q = 0, .r = 1 };
-pub const metric_signature = signature;
+const sig: MetricSignature = .{ .p = 3, .q = 0, .r = 1 };
+pub const metric_signature = sig;
 
 /// Ambient dimension of the PGA algebra (4).
-pub const dimension = signature.p + signature.q + signature.r;
-const algebra = ga.Algebra(signature);
+pub const dimension = sig.dimension();
+const algebra = ga.Algebra(sig);
 
 pub fn Multivector(comptime T: type, comptime blade_masks: []const ga.BladeMask) type {
     return algebra.Multivector(T, blade_masks);
@@ -63,12 +63,12 @@ pub fn Rotor(comptime T: type) type {
 
 test "pga signature has correct dimension and basis-vector squares" {
     // e1² = e2² = e3² = +1 (positive)
-    try std.testing.expectEqual(@as(i8, 1), ga.blades.basisSquareSign(signature, 1));
-    try std.testing.expectEqual(@as(i8, 1), ga.blades.basisSquareSign(signature, 2));
-    try std.testing.expectEqual(@as(i8, 1), ga.blades.basisSquareSign(signature, 3));
+    try std.testing.expectEqual(@as(i8, 1), ga.blades.basisSquareSign(sig, 1));
+    try std.testing.expectEqual(@as(i8, 1), ga.blades.basisSquareSign(sig, 2));
+    try std.testing.expectEqual(@as(i8, 1), ga.blades.basisSquareSign(sig, 3));
 
     // e4 (a.k.a. e0) squares to 0 (degenerate)
-    try std.testing.expectEqual(@as(i8, 0), ga.blades.basisSquareSign(signature, 4));
+    try std.testing.expectEqual(@as(i8, 0), ga.blades.basisSquareSign(sig, 4));
 
     try std.testing.expectEqual(@as(usize, 4), dimension);
 }
@@ -142,7 +142,7 @@ test "euclidean point representation and join" {
 
 test "fullSignedBladeFromIndicesWithSignature respects degenerate square" {
     // Repeated degenerate index should give zero
-    const result = ga.fullSignedBladeFromIndicesWithSignature(f64, signature, &.{ 4, 4 });
+    const result = ga.fullSignedBladeFromIndicesWithSignature(f64, sig, &.{ 4, 4 });
     // e0*e0 = 0, so the scalar part must be zero
     try std.testing.expectEqual(@as(f64, 0.0), result.coeff(0));
 }
