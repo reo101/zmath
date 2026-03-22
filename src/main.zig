@@ -1,6 +1,7 @@
 const std = @import("std");
 const zmath = @import("zmath");
 const ga = zmath.ga;
+const Cl3 = ga.Algebra(.euclidean(3));
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -17,8 +18,8 @@ pub fn main(init: std.process.Init) !void {
     }
     try stdout.writeAll("]\n");
 
-    const Vec3 = ga.GAVector(f64, 3);
-    const E3 = ga.Basis(f64, 3);
+    const Vec3 = Cl3.GAVector(f64);
+    const E3 = Cl3.Basis(f64);
     const v = Vec3.init(.{ 1.0, 2.0, 3.0 });
     const e2 = E3.e(2);
     const e12 = E3.signedBlade("e12");
@@ -31,8 +32,8 @@ pub fn main(init: std.process.Init) !void {
 }
 
 test "example wiring compiles" {
-    const Vec3 = ga.GAVector(f64, 3);
+    const Vec3 = Cl3.GAVector(f64);
     const v = Vec3.init(.{ 1.0, 2.0, 3.0 });
     try std.testing.expectEqual(@as(f64, 3.0), v.coeff(0b100));
-    try std.testing.expect(ga.Basis(f64, 3).signedBlade("e21").eql(ga.Bivector(f64, 3).init(.{ -1, 0, 0 })));
+    try std.testing.expect(Cl3.Basis(f64).signedBlade("e21").eql(Cl3.Bivector(f64).init(.{ -1, 0, 0 })));
 }
