@@ -13,7 +13,7 @@ fn elapsedNanos(start: std.Io.Timestamp, end: std.Io.Timestamp) u64 {
     return @intCast(duration.toNanoseconds());
 }
 
-fn benchmarkVector3(io: std.Io, iterations: usize) u64 {
+fn benchmarkGAVector3(io: std.Io, iterations: usize) u64 {
     const Vec3 = Cl3.GAVector(f32);
     var a = Vec3.init(.{ 1.0, 2.0, 3.0 });
     var b = Vec3.init(.{ 4.0, 5.0, 6.0 });
@@ -25,6 +25,29 @@ fn benchmarkVector3(io: std.Io, iterations: usize) u64 {
         a = a.add(b).scale(0.99991);
         b = b.sub(a).scale(1.00003);
         sink += a.scalarProduct(b);
+    }
+    const end = timestampNow(io);
+
+    std.mem.doNotOptimizeAway(sink);
+    return elapsedNanos(start, end);
+}
+
+fn benchmarkRawVector3(io: std.Io, iterations: usize) u64 {
+    var a: @Vector(3, f32) = .{ 1.0, 2.0, 3.0 };
+    var b: @Vector(3, f32) = .{ 4.0, 5.0, 6.0 };
+    var sink: f32 = 0;
+
+    const mul_a: @Vector(3, f32) = @splat(0.99991);
+    const mul_b: @Vector(3, f32) = @splat(1.00003);
+
+    const start = timestampNow(io);
+    var i: usize = 0;
+    while (i < iterations) : (i += 1) {
+        a = (a + b) * mul_a;
+        b = (b - a) * mul_b;
+
+        const prod = a * b;
+        sink += prod[0] + prod[1] + prod[2];
     }
     const end = timestampNow(io);
 
@@ -60,15 +83,24 @@ pub fn run(init: std.process.Init, backend_name: []const u8) !void {
     const vector_iterations: usize = 30_000_000;
     const rotor_iterations: usize = 20_000_000;
 
-    const vec_ns = benchmarkVector3(io, vector_iterations);
+    const ga_vec_ns = benchmarkGAVector3(io, vector_iterations);
+    const raw_vec_ns = benchmarkRawVector3(io, vector_iterations);
     const rotor_ns = benchmarkRotor2(io, rotor_iterations);
 
     try stdout.print("backend: {s}\n", .{backend_name});
 
-    try stdout.print("Vec3 add/sub/scale/dot: {} iters in {} ns ({d:.3} ns/iter)\n", .{
+    try stdout.print("GA Vec3 add/sub/scale/dot: {} iters in {} ns ({d:.3} ns/iter)\n", .{
         vector_iterations,
-        vec_ns,
-        @as(f64, @floatFromInt(vec_ns)) / @as(f64, @floatFromInt(vector_iterations)),
+        ga_vec_ns,
+        @as(f64, @floatFromInt(ga_vec_ns)) / @as(f64, @floatFromInt(vector_iterations)),
+    });
+    try stdout.print("Raw @Vector(3,f32): {} iters in {} ns ({d:.3} ns/iter)\n", .{
+        vector_iterations,
+        raw_vec_ns,
+        @as(f64, @floatFromInt(raw_vec_ns)) / @as(f64, @floatFromInt(vector_iterations)),
+    });
+    try stdout.print("GA/raw ratio: {d:.3}x\n", .{
+        @as(f64, @floatFromInt(ga_vec_ns)) / @as(f64, @floatFromInt(raw_vec_ns)),
     });
     try stdout.print("2D rotor rotate: {} iters in {} ns ({d:.3} ns/iter)\n", .{
         rotor_iterations,

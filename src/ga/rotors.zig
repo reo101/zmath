@@ -6,7 +6,7 @@ const blades = @import("blades.zig");
 const euclidean2 = blades.euclideanSignature(2);
 
 /// Canonical mask for the oriented 2D bivector `e12`.
-const e12_mask: blades.BladeMask = 0b11;
+const e12_mask: blades.BladeMask = blades.Mask.init(0b11);
 
 fn defaultTolerance(comptime T: type) T {
     return switch (T) {
@@ -22,7 +22,7 @@ pub const RotorError = error{
 
 fn vectorLanes2(vector: anytype) @Vector(2, @TypeOf(vector).Coefficient) {
     const T = @TypeOf(vector).Coefficient;
-    return @as(@Vector(2, T), .{ vector.coeff(0b01), vector.coeff(0b10) });
+    return @as(@Vector(2, T), .{ vector.coeff(blades.Mask.init(0b01)), vector.coeff(blades.Mask.init(0b10)) });
 }
 
 fn lanesToGAVector2(comptime T: type, lanes: @Vector(2, T)) multivector.GAVector(T, euclidean2) {
@@ -34,11 +34,14 @@ fn lanesToVectorLike2(comptime Vector: type, lanes: @Vector(2, Vector.Coefficien
     const lane_array: [2]Vector.Coefficient = @bitCast(lanes);
 
     inline for (Vector.blades, 0..) |mask, index| {
-        result.coeffs[index] = switch (mask) {
-            0b01 => lane_array[0],
-            0b10 => lane_array[1],
-            else => @compileError("expected a 2D grade-1 blade set"),
-        };
+        const raw = comptime blades.Mask.toInt(mask);
+        if (raw == 0b01) {
+            result.coeffs[index] = lane_array[0];
+        } else if (raw == 0b10) {
+            result.coeffs[index] = lane_array[1];
+        } else {
+            @compileError("expected a 2D grade-1 blade set");
+        }
     }
 
     return result;
@@ -52,7 +55,7 @@ fn useRotorSimdFastPath(comptime T: type) bool {
 }
 
 fn rotorParts2(rotor: anytype) struct { scalar: @TypeOf(rotor).Coefficient, bivector: @TypeOf(rotor).Coefficient } {
-    return .{ .scalar = rotor.coeff(0), .bivector = rotor.coeff(e12_mask) };
+    return .{ .scalar = rotor.coeff(blades.Mask.init(0)), .bivector = rotor.coeff(e12_mask) };
 }
 
 fn assertFloatVector2(comptime M: type) void {
@@ -157,7 +160,7 @@ pub fn debugAssertRotor(rotor: anytype, epsilon: @TypeOf(rotor).Coefficient) voi
         const identity = rotor.gp(rotor.reverse());
         inline for (RotorType.blades) |mask| {
             const coeff = identity.coeff(mask);
-            if (mask == 0) {
+            if (comptime blades.Mask.toInt(mask) == 0) {
                 std.debug.assert(nearlyEqual(coeff, 1, epsilon));
             } else {
                 std.debug.assert(nearlyEqual(coeff, 0, epsilon));
@@ -279,13 +282,13 @@ test "2D rotors rotate vectors in the expected orientation" {
     const e2 = E2.e(2);
 
     const quarter_turn = rotatedByAngle(e1, radiansFromDegrees(90.0));
-    try std.testing.expect(nearlyEqual(quarter_turn.coeff(0b01), 0, 1e-12));
-    try std.testing.expect(nearlyEqual(quarter_turn.coeff(0b10), e2.coeff(0b10), 1e-12));
+    try std.testing.expect(nearlyEqual(quarter_turn.coeff(blades.Mask.init(0b01)), 0, 1e-12));
+    try std.testing.expect(nearlyEqual(quarter_turn.coeff(blades.Mask.init(0b10)), e2.coeff(blades.Mask.init(0b10)), 1e-12));
 
     const diagonal = rotorFromTo(e1.add(e2.scale(5)), e2);
     const diagonal_result = rotated(e1.add(e2.scale(5)), diagonal);
-    try std.testing.expect(nearlyEqual(diagonal_result.coeff(0b01), 0, 1e-12));
-    try std.testing.expect(nearlyEqual(diagonal_result.coeff(0b10), @sqrt(26.0), 1e-12));
+    try std.testing.expect(nearlyEqual(diagonal_result.coeff(blades.Mask.init(0b01)), 0, 1e-12));
+    try std.testing.expect(nearlyEqual(diagonal_result.coeff(blades.Mask.init(0b10)), @sqrt(26.0), 1e-12));
 }
 
 test "rotorFromTo handles antiparallel vectors" {
@@ -295,8 +298,8 @@ test "rotorFromTo handles antiparallel vectors" {
     const rotor = rotorFromTo(e1, e1.negate());
     const rotated_e1 = rotated(e1, rotor);
 
-    try std.testing.expect(nearlyEqual(rotated_e1.coeff(0b01), -1.0, 1e-12));
-    try std.testing.expect(nearlyEqual(rotated_e1.coeff(0b10), 0.0, 1e-12));
+    try std.testing.expect(nearlyEqual(rotated_e1.coeff(blades.Mask.init(0b01)), -1.0, 1e-12));
+    try std.testing.expect(nearlyEqual(rotated_e1.coeff(blades.Mask.init(0b10)), 0.0, 1e-12));
 }
 
 test "safe rotor helpers return ZeroVector on invalid input" {
@@ -313,8 +316,8 @@ test "planar rotor stays normalized for multiple angles" {
     inline for ([_]f64{ 0.0, std.math.pi / 3.0, -std.math.pi / 2.0, std.math.pi }) |angle| {
         const rotor = planarRotor(f64, angle);
         const identity = rotor.gp(rotor.reverse());
-        try std.testing.expect(nearlyEqual(identity.coeff(0), 1.0, 1e-12));
-        try std.testing.expect(nearlyEqual(identity.coeff(0b11), 0.0, 1e-12));
+        try std.testing.expect(nearlyEqual(identity.coeff(blades.Mask.init(0)), 1.0, 1e-12));
+        try std.testing.expect(nearlyEqual(identity.coeff(blades.Mask.init(0b11)), 0.0, 1e-12));
     }
 }
 
@@ -330,7 +333,29 @@ test "rotorFromTo maps normalized direction and preserves norm" {
     const rotated_unit = try normalize(rotated_from);
 
     try std.testing.expect(nearlyEqual(rotated_from.scalarProduct(rotated_from), from.scalarProduct(from), 1e-12));
-    try std.testing.expect(nearlyEqual(rotated_unit.coeff(0b01), to_unit.coeff(0b01), 1e-12));
-    try std.testing.expect(nearlyEqual(rotated_unit.coeff(0b10), to_unit.coeff(0b10), 1e-12));
+    try std.testing.expect(nearlyEqual(rotated_unit.coeff(blades.Mask.init(0b01)), to_unit.coeff(blades.Mask.init(0b01)), 1e-12));
+    try std.testing.expect(nearlyEqual(rotated_unit.coeff(blades.Mask.init(0b10)), to_unit.coeff(blades.Mask.init(0b10)), 1e-12));
     try std.testing.expect(nearlyEqual(from_unit.scalarProduct(from_unit), 1.0, 1e-12));
+}
+
+test "simd-backed VGA helper lanes are native vectors under fast-path conditions" {
+    if (comptime !useRotorSimdFastPath(f64)) return;
+
+    const E2 = multivector.Basis(f64, euclidean2);
+    const e1 = E2.e(1);
+
+    const lanes = vectorLanes2(e1);
+    try std.testing.expect(@typeInfo(@TypeOf(lanes)) == .vector);
+
+    const lane_info = @typeInfo(@TypeOf(lanes)).vector;
+    try std.testing.expectEqual(@as(usize, 2), lane_info.len);
+    try std.testing.expect(lane_info.child == f64);
+
+    const doubled = lanes * @as(@Vector(2, f64), @splat(@as(f64, 2.0)));
+    const doubled_like = lanesToVectorLike2(@TypeOf(e1), doubled);
+    try std.testing.expect(nearlyEqual(doubled_like.coeff(blades.Mask.init(0b01)), 2.0, 1e-12));
+    try std.testing.expect(nearlyEqual(doubled_like.coeff(blades.Mask.init(0b10)), 0.0, 1e-12));
+
+    const round_tripped = lanesToGAVector2(f64, lanes);
+    try std.testing.expect(round_tripped.eql(e1));
 }

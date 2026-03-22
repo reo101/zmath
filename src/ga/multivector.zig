@@ -5,6 +5,7 @@ const blade_ops = @import("blades.zig");
 
 /// Bitset representation of a basis blade.
 pub const BladeMask = blade_ops.BladeMask;
+pub const Mask = blade_ops.Mask;
 
 /// Orientation sign attached to a canonicalized signed blade.
 pub const OrientationSign = blade_ops.OrientationSign;
@@ -14,8 +15,16 @@ pub const SignedBladeParseError = blade_parsing.SignedBladeParseError;
 pub const SignedBladeSpec = blade_ops.SignedBladeSpec;
 pub const MetricSignature = blade_ops.MetricSignature;
 
+inline fn maskInt(mask: BladeMask) u64 {
+    return Mask.toInt(mask);
+}
+
+inline fn maskIndex(mask: BladeMask) usize {
+    return Mask.index(mask);
+}
+
 fn assertMaskWithinDimensions(comptime mask: BladeMask, comptime dimension: usize) void {
-    if (mask >= blade_ops.bladeCount(dimension)) {
+    if (maskInt(mask) >= blade_ops.bladeCount(dimension)) {
         @compileError("blade mask has bits set outside the algebra dimensions");
     }
 }
@@ -158,17 +167,16 @@ fn writeMultivectorImpl(
 
     var wrote_any = false;
 
-    for (M.blades, 0..) |mask, index| {
-        const coeff_value = value.coeffs[index];
-        if (coeff_value == coeffZero(M.Coefficient)) continue;
+    for (M.blades, value.coeffs) |mask, coeff| {
+        if (coeff == coeffZero(M.Coefficient)) continue;
 
         if (wrote_any) {
-            try writer.writeAll(if (isNegative(coeff_value)) " - " else " + ");
-        } else if (isNegative(coeff_value)) {
+            try writer.writeAll(if (isNegative(coeff)) " - " else " + ");
+        } else if (isNegative(coeff)) {
             try writer.writeByte('-');
         }
 
-        const magnitude = absValue(coeff_value);
+        const magnitude = absValue(coeff);
         if (mask == 0) {
             try writer.print("{}", .{magnitude});
         } else {
@@ -236,7 +244,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         assertMaskWithinDimensions(mask, dimension);
     }
 
-    return struct {
+    return extern struct {
         pub const Self = @This();
         pub const Coefficient = T;
         pub const dimensions = dimension;
@@ -285,14 +293,18 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         pub const GAVectorType = KVector(T, 1, sig);
 
         /// Related grade-2 bivector carrier type.
-        pub const BivectorType = KVector(T, 2, sig);
+        pub const BivectorType = GradeType(2);
 
-        coeffs: [blade_masks.len]T = std.mem.zeroes([blade_masks.len]T),
+        pub const use_simd = canUseLaneWiseSimd(T, blade_masks.len);
+        pub const Storage = if (use_simd) @Vector(blade_masks.len, T) else [blade_masks.len]T;
+
+        coeffs: Storage = if (use_simd) @as(Storage, @splat(0)) else std.mem.zeroes(Storage),
 
         /// Initializes the multivector from coefficients in `blades` order.
-        pub fn init(coeffs: [blade_masks.len]T) Self {
-            return .{ .coeffs = coeffs };
+        pub inline fn init(coeffs: [blade_masks.len]T) Self {
+            return .{ .coeffs = if (use_simd) coeffsToSimd(T, blade_masks.len, coeffs) else coeffs };
         }
+
 
         /// Returns the additive identity for this carrier type.
         pub fn zero() Self {
@@ -321,21 +333,30 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                 return self.coeffs[mask];
             }
 
-            const index = Self.blade_index_by_mask[mask];
+            const index = comptime Self.blade_index_by_mask[mask];
             return if (index < Self.stored_blade_count) self.coeffs[index] else coeffZero(T);
         }
 
         /// Returns the coefficient of a runtime blade mask.
         pub fn coefficient(self: Self, mask: BladeMask) T {
-            std.debug.assert(mask < blade_ops.bladeCount(dimension));
+            const mask_idx = maskInt(mask);
+            std.debug.assert(mask_idx < blade_ops.bladeCount(dimension));
 
             if (Self.has_all_blades) {
-                return self.coeffs[mask];
+                return self.coeffs[mask_idx];
             }
 
-            const index = Self.blade_index_by_mask[mask];
-            return if (index < Self.stored_blade_count) self.coeffs[index] else coeffZero(T);
+            const index = Self.blade_index_by_mask[mask_idx];
+            if (index >= Self.stored_blade_count) return coeffZero(T);
+
+            if (comptime use_simd) {
+                const array: [blade_masks.len]T = self.coeffs;
+                return array[index];
+            } else {
+                return self.coeffs[index];
+            }
         }
+
 
         /// Returns the scalar coefficient.
         pub fn scalarCoeff(self: Self) T {
@@ -344,9 +365,8 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
 
         /// Returns `-self`.
         pub fn negate(self: Self) Self {
-            if (comptime canUseLaneWiseSimd(T, Self.stored_blade_count)) {
-                const lanes = coeffsToSimd(T, Self.stored_blade_count, self.coeffs);
-                return .init(simdToCoeffs(T, Self.stored_blade_count, -lanes));
+            if (comptime use_simd) {
+                return .{ .coeffs = -self.coeffs };
             }
 
             var result = Self.zero();
@@ -358,9 +378,8 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
 
         /// Returns `self` scaled by `scalar`.
         pub fn scale(self: Self, scalar: T) Self {
-            if (comptime canUseLaneWiseSimd(T, Self.stored_blade_count)) {
-                const lanes = coeffsToSimd(T, Self.stored_blade_count, self.coeffs);
-                return .init(simdToCoeffs(T, Self.stored_blade_count, lanes * @as(@Vector(Self.stored_blade_count, T), @splat(scalar))));
+            if (comptime use_simd) {
+                return .{ .coeffs = self.coeffs * @as(Storage, @splat(scalar)) };
             }
 
             var result = Self.zero();
@@ -372,9 +391,8 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
 
         /// Returns `self / scalar`.
         pub fn divide(self: Self, scalar: T) Self {
-            if (comptime canUseLaneWiseSimd(T, Self.stored_blade_count)) {
-                const lanes = coeffsToSimd(T, Self.stored_blade_count, self.coeffs);
-                return .init(simdToCoeffs(T, Self.stored_blade_count, lanes / @as(@Vector(Self.stored_blade_count, T), @splat(scalar))));
+            if (comptime use_simd) {
+                return .{ .coeffs = self.coeffs / @as(Storage, @splat(scalar)) };
             }
 
             var result: Self = .zero();
@@ -390,10 +408,8 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
             comptime assertCompatibleMultivector(Self, Rhs);
 
             const Result = AddResultType(T, blade_masks, Rhs.blades, sig);
-            if (comptime blade_ops.sameBladeSet(blade_masks, Rhs.blades) and canUseLaneWiseSimd(T, Self.stored_blade_count)) {
-                const lhs_lanes = coeffsToSimd(T, Self.stored_blade_count, self.coeffs);
-                const rhs_lanes = coeffsToSimd(T, Self.stored_blade_count, rhs.coeffs);
-                return Result.init(simdToCoeffs(T, Self.stored_blade_count, lhs_lanes + rhs_lanes));
+            if (comptime blade_ops.sameBladeSet(blade_masks, Rhs.blades) and use_simd) {
+                return Result{ .coeffs = self.coeffs + rhs.coeffs };
             }
 
             var result: Result = .zero();
@@ -411,10 +427,8 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
             comptime assertCompatibleMultivector(Self, Rhs);
 
             const Result = AddResultType(T, blade_masks, Rhs.blades, sig);
-            if (comptime blade_ops.sameBladeSet(blade_masks, Rhs.blades) and canUseLaneWiseSimd(T, Self.stored_blade_count)) {
-                const lhs_lanes = coeffsToSimd(T, Self.stored_blade_count, self.coeffs);
-                const rhs_lanes = coeffsToSimd(T, Self.stored_blade_count, rhs.coeffs);
-                return Result.init(simdToCoeffs(T, Self.stored_blade_count, lhs_lanes - rhs_lanes));
+            if (comptime blade_ops.sameBladeSet(blade_masks, Rhs.blades) and use_simd) {
+                return Result{ .coeffs = self.coeffs - rhs.coeffs };
             }
 
             var result = Result.zero();
@@ -1034,4 +1048,22 @@ test "large-dimension full multivector geometric product with scalar identity" {
 
     try std.testing.expect(left.eql(value));
     try std.testing.expect(right.eql(value));
+}
+
+test "vga helpers use SIMD storage when appropriate" {
+    if (comptime !build_options.enable_simd_fast_paths) return;
+
+    const Vec2 = GAVector(f32, .euclidean(2));
+    const v = Vec2.init(.{ 1.0, 2.0 });
+
+    // Check that the underlying storage is a @Vector of the correct size and type.
+    switch (@typeInfo(@TypeOf(v.coeffs))) {
+        .vector => |info| {
+            try std.testing.expectEqual(@as(usize, 2), info.len);
+            try std.testing.expect(info.child == f32);
+        },
+        else => {
+            try std.testing.expect(false);
+        },
+    }
 }
