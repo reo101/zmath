@@ -150,10 +150,14 @@ pub fn euclideanSignature(comptime dimension: usize) MetricSignature {
 /// - Returns `0` for basis vectors in the degenerate signature (last `r` vectors)
 pub fn basisSquareSign(comptime sig: MetricSignature, one_based_index: usize) i8 {
     const dimension = sig.dimension();
-    std.debug.assert(one_based_index >= 1 and one_based_index <= dimension);
-    if (one_based_index <= sig.p) return 1;
-    if (one_based_index <= sig.p + sig.q) return -1;
-    return 0;
+    std.debug.assert(1 <= one_based_index and one_based_index <= dimension);
+
+    return if (one_based_index <= sig.p)
+        1
+    else if (one_based_index <= sig.p + sig.q)
+        -1
+    else
+        0;
 }
 
 /// Returns the number of basis blades in `Cl(dimension, 0, 0)`.
@@ -199,7 +203,7 @@ pub fn areStrictlyAscendingUnique(comptime masks: []const BladeMask) bool {
 /// Returns the mask for the one-based basis vector `e{one_based_index}`.
 pub fn basisVectorMask(comptime dimension: usize, one_based_index: usize) BladeMask {
     validateDimension(dimension);
-    std.debug.assert(one_based_index >= 1 and one_based_index <= dimension);
+    std.debug.assert(1 <= one_based_index and one_based_index <= dimension);
 
     return @as(u64, 1) << @intCast(one_based_index - 1);
 }
@@ -228,7 +232,7 @@ pub fn applyBasisIndex(spec: *SignedBladeSpec, one_based_index: usize, comptime 
 /// Folds one basis vector into an in-progress canonical signed blade under `sig`.
 pub fn applyBasisIndexWithSignature(spec: *SignedBladeSpec, one_based_index: usize, comptime sig: MetricSignature) void {
     const dimension = sig.dimension();
-    std.debug.assert(one_based_index >= 1 and one_based_index <= dimension);
+    std.debug.assert(1 <= one_based_index and one_based_index <= dimension);
     const bit = @as(u64, 1) << @intCast(one_based_index - 1);
     if (geometricProductSignWithSignature(spec.mask, bit, sig) < 0) {
         spec.sign.flip();
