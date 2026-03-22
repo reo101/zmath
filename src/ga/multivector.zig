@@ -259,45 +259,33 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
             return Multivector(T, new_masks, sig);
         }
 
-        /// Returns the related carrier type for a single blade mask.
+        /// Related carrier type for a single blade mask.
         pub fn BasisBladeType(comptime mask: BladeMask) type {
             return Rebind(&.{mask});
         }
 
-        /// Returns the related carrier type storing every blade in the algebra.
-        pub fn FullType() type {
-            return FullMultivector(T, sig);
-        }
+        /// Related carrier type storing every blade in the algebra.
+        pub const FullType = FullMultivector(T, sig);
 
-        /// Returns the related carrier type restricted to one grade.
+        /// Related carrier type restricted to one grade.
         pub fn GradeType(comptime target_grade: usize) type {
             return KVector(T, target_grade, sig);
         }
 
-        /// Returns the related carrier type restricted to even grades.
-        pub fn EvenType() type {
-            return EvenMultivector(T, sig);
-        }
+        /// Related carrier type restricted to even grades.
+        pub const EvenType = EvenMultivector(T, sig);
 
-        /// Returns the related carrier type restricted to odd grades.
-        pub fn OddType() type {
-            return OddMultivector(T, sig);
-        }
+        /// Related carrier type restricted to odd grades.
+        pub const OddType = OddMultivector(T, sig);
 
-        /// Returns the related scalar carrier type.
-        pub fn ScalarType() type {
-            return GradeType(0);
-        }
+        /// Related scalar carrier type.
+        pub const ScalarType = KVector(T, 0, sig);
 
-        /// Returns the related grade-1 vector carrier type.
-        pub fn GAVectorType() type {
-            return GradeType(1);
-        }
+        /// Related grade-1 vector carrier type.
+        pub const GAVectorType = KVector(T, 1, sig);
 
-        /// Returns the related grade-2 bivector carrier type.
-        pub fn BivectorType() type {
-            return GradeType(2);
-        }
+        /// Related grade-2 bivector carrier type.
+        pub const BivectorType = KVector(T, 2, sig);
 
         coeffs: [blade_masks.len]T = std.mem.zeroes([blade_masks.len]T),
 
@@ -665,7 +653,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         }
 
         /// Returns the scalar part as a Scalar multivector.
-        pub fn scalarPart(self: Self) ScalarType() {
+        pub fn scalarPart(self: Self) ScalarType {
             return self.gradePart(0);
         }
 
@@ -912,13 +900,13 @@ pub fn Basis(comptime T: type, comptime sig: MetricSignature) type {
         pub const Full = FullMultivector(T, sig);
 
         /// The corresponding scalar carrier.
-        pub const Scalar = Full.ScalarType();
+        pub const Scalar = Full.ScalarType;
 
         /// The corresponding grade-1 vector carrier.
-        pub const Vector = Full.VectorType();
+        pub const Vector = Full.VectorType;
 
         /// The corresponding grade-2 bivector carrier.
-        pub const Bivector = Full.BivectorType();
+        pub const Bivector = Full.BivectorType;
 
         /// Returns the one-based basis vector `e{one_based_index}`.
         pub fn e(
@@ -965,22 +953,22 @@ test "geometric products and involutions follow Euclidean VGA relations" {
     const e2 = E3.e(2);
     const e3 = E3.e(3);
 
-    try std.testing.expect(e1.gp(e1).eql(Scalar(f64, .euclidean(3)).init(.{1})));
-    try std.testing.expect(e1.gp(e2).gradePart(2).eql(Bivector(f64, .euclidean(3)).init(.{ 1, 0, 0 })));
-    try std.testing.expect(e2.gp(e1).gradePart(2).eql(Bivector(f64, .euclidean(3)).init(.{ -1, 0, 0 })));
-    try std.testing.expect(e1.outerProduct(e2).eql(Bivector(f64, .euclidean(3)).init(.{ 1, 0, 0 })));
-    try std.testing.expect(e1.outerProduct(e3).eql(Bivector(f64, .euclidean(3)).init(.{ 0, 1, 0 })));
+    try std.testing.expect(e1.gp(e1).eql(E3.Scalar.init(.{1})));
+    try std.testing.expect(e1.gp(e2).gradePart(2).eql(E3.Bivector.init(.{ 1, 0, 0 })));
+    try std.testing.expect(e2.gp(e1).gradePart(2).eql(E3.Bivector.init(.{ -1, 0, 0 })));
+    try std.testing.expect(e1.outerProduct(e2).eql(E3.Bivector.init(.{ 1, 0, 0 })));
+    try std.testing.expect(e1.outerProduct(e3).eql(E3.Bivector.init(.{ 0, 1, 0 })));
 
     const mv = FullMultivector(i32, .euclidean(3)).init(.{ 1, 2, 3, 4, 5, 6, 7, 8 });
-    try std.testing.expect(mv.gradePart(0).eql(Scalar(i32, .euclidean(3)).init(.{1})));
-    try std.testing.expect(mv.gradePart(1).eql(GAVector(i32, .euclidean(3)).init(.{ 2, 3, 5 })));
-    try std.testing.expect(mv.reverse().eql(FullMultivector(i32, .euclidean(3)).init(.{ 1, 2, 3, -4, 5, -6, -7, -8 })));
-    try std.testing.expect(mv.cliffordConjugate().eql(FullMultivector(i32, .euclidean(3)).init(.{ 1, -2, -3, -4, -5, -6, -7, 8 })));
+    try std.testing.expect(mv.gradePart(0).eql(@TypeOf(mv).ScalarType.init(.{1})));
+    try std.testing.expect(mv.gradePart(1).eql(@TypeOf(mv).GAVectorType.init(.{ 2, 3, 5 })));
+    try std.testing.expect(mv.reverse().eql(@TypeOf(mv).FullType.init(.{ 1, 2, 3, -4, 5, -6, -7, -8 })));
+    try std.testing.expect(mv.cliffordConjugate().eql(@TypeOf(mv).FullType.init(.{ 1, -2, -3, -4, -5, -6, -7, 8 })));
 
     const e12 = e1.outerProduct(e2);
     try std.testing.expect(e1.leftContraction(e12).eql(e2));
     try std.testing.expect(e12.rightContraction(e2).eql(e1));
-    try std.testing.expect(e12.leftContraction(e1).eql(Scalar(f64, .euclidean(3)).zero()));
+    try std.testing.expect(e12.leftContraction(e1).eql(@TypeOf(e1).ScalarType.zero()));
 }
 
 test "writeMultivector renders through std.Io.Writer" {
@@ -1007,22 +995,21 @@ test "signature-aware products support Cl(1,1)" {
     const e1 = Vec.init(.{ 1.0, 0.0 });
     const e2 = Vec.init(.{ 0.0, 1.0 });
 
-    try std.testing.expect(e1.gpWithSignature(e1, sig).eql(Scalar(f64, sig).init(.{1.0})));
-    try std.testing.expect(e2.gpWithSignature(e2, sig).eql(Scalar(f64, sig).init(.{-1.0})));
+    try std.testing.expect(e1.gpWithSignature(e1, sig).eql(@TypeOf(e1).ScalarType.init(.{1.0})));
+    try std.testing.expect(e2.gpWithSignature(e2, sig).eql(@TypeOf(e2).ScalarType.init(.{-1.0})));
     try std.testing.expectEqual(@as(f64, -1.0), e2.scalarProductWithSignature(e2, sig));
 }
 
 test "sparse coefficient lookup and equality across carrier sets" {
     const Scalar2 = Scalar(i32, .euclidean(2));
-    const Bivec2 = Bivector(i32, .euclidean(2));
+    const biv = Scalar2.BivectorType.init(.{-2});
     const scalar = Scalar2.init(.{5});
-    const biv = Bivec2.init(.{-2});
     const sum = scalar.add(biv);
 
     try std.testing.expectEqual(@as(i32, 5), sum.coeff(0));
     try std.testing.expectEqual(@as(i32, -2), sum.coeff(0b11));
     try std.testing.expectEqual(@as(i32, 0), sum.coefficient(0b01));
-    try std.testing.expect(sum.eql(FullMultivector(i32, .euclidean(2)).init(.{ 5, 0, 0, -2 })));
+    try std.testing.expect(sum.eql(@TypeOf(sum).FullType.init(.{ 5, 0, 0, -2 })));
 }
 
 test "basis namespace mask and blade helpers agree" {
@@ -1033,7 +1020,7 @@ test "basis namespace mask and blade helpers agree" {
 
 test "large-dimension full multivector geometric product with scalar identity" {
     const M8 = FullMultivector(f64, .euclidean(8));
-    const scalar_one = Scalar(f64, .euclidean(8)).init(.{1.0});
+    const scalar_one = M8.ScalarType.init(.{1.0});
     var coeffs = std.mem.zeroes([M8.blades.len]f64);
 
     inline for (M8.blades, 0..) |mask, index| {
