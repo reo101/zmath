@@ -17,13 +17,18 @@ pub extern var out_color: Vec(3) addrspace(.output);
 // pub const gl_position = gpu.position_out;
 pub const gl_position = @extern(*addrspace(.output) Vec(4), .{ .name = "position" });
 
-
-const e1: ga.BladeMask = ga.Mask.init(0b01);
-const e2: ga.BladeMask = ga.Mask.init(0b10);
+// BUG: causes a `SEGV` signal when compiling to `SPIR-V`
+// const e1: ga.BladeMask = ga.Mask.parsePanicking("e0");
+// const e2: ga.BladeMask = ga.Mask.parsePanicking("e1");
+// comptime {
+//     @compileLog(e1, e2);
+// }
 
 export fn main() callconv(.spirv_vertex) void {
-    const x = in_pos.coeff(e1);
-    const y = in_pos.coeff(e2);
+    // const x = in_pos.coeff(e1);
+    // const y = in_pos.coeff(e2);
+    const x = in_pos.coeffs[0];
+    const y = in_pos.coeffs[1];
     gl_position.* = .init(.{ x, y, 0.0, 1.0 });
 
     const radial = @min(@sqrt(x * x + y * y), 1.0);
