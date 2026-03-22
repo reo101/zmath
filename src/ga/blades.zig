@@ -557,6 +557,38 @@ test "blade helpers match basic Euclidean tables" {
     try std.testing.expectEqualSlices(BladeMask, &.{ 0b0011, 0b0101, 0b0110, 0b1001, 0b1010, 0b1100 }, gradeBladeMasks(4, 2)[0..]);
 }
 
+test "advanceFixedPopcountMask follows canonical fixed-popcount order" {
+    var mask: BladeMask = 0b00111;
+    const expected = [_]BladeMask{
+        0b01011,
+        0b01101,
+        0b01110,
+        0b10011,
+        0b10101,
+        0b10110,
+        0b11001,
+        0b11010,
+        0b11100,
+    };
+
+    inline for (expected) |next_mask| {
+        try std.testing.expect(advanceFixedPopcountMask(&mask));
+        try std.testing.expectEqual(next_mask, mask);
+        try std.testing.expectEqual(@as(usize, 3), bladeGrade(mask));
+    }
+}
+
+test "advanceFixedPopcountMask reports zero and high-bit transition behavior" {
+    var zero: BladeMask = 0;
+    try std.testing.expect(!advanceFixedPopcountMask(&zero));
+    try std.testing.expectEqual(@as(BladeMask, 0), zero);
+
+    var crossing_high_bit: BladeMask = (@as(BladeMask, 1) << (@bitSizeOf(BladeMask) - 2)) | 0b1;
+    try std.testing.expect(advanceFixedPopcountMask(&crossing_high_bit));
+    try std.testing.expectEqual((@as(BladeMask, 1) << (@bitSizeOf(BladeMask) - 2)) | 0b10, crossing_high_bit);
+    try std.testing.expectEqual(@as(usize, 2), bladeGrade(crossing_high_bit));
+}
+
 test "writeBladeMask renders fixed-width binary through std.Io.Writer" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
