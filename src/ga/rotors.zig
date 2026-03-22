@@ -3,6 +3,8 @@ const build_options = @import("build_options");
 const multivector = @import("multivector.zig");
 const blades = @import("blades.zig");
 
+const euclidean2 = blades.euclideanSignature(2);
+
 /// Canonical mask for the oriented 2D bivector `e12`.
 const e12_mask: blades.BladeMask = 0b11;
 
@@ -23,8 +25,8 @@ fn vectorLanes2(vector: anytype) @Vector(2, @TypeOf(vector).Coefficient) {
     return @as(@Vector(2, T), .{ vector.coeff(0b01), vector.coeff(0b10) });
 }
 
-fn lanesToGAVector2(comptime T: type, lanes: @Vector(2, T)) multivector.GAVector(T, 2) {
-    return multivector.GAVector(T, 2).init(@bitCast(lanes));
+fn lanesToGAVector2(comptime T: type, lanes: @Vector(2, T)) multivector.GAVector(T, euclidean2) {
+    return multivector.GAVector(T, euclidean2).init(@bitCast(lanes));
 }
 
 fn lanesToVectorLike2(comptime Vector: type, lanes: @Vector(2, Vector.Coefficient)) Vector {
@@ -169,9 +171,9 @@ pub fn debugAssertRotor(rotor: anytype, epsilon: @TypeOf(rotor).Coefficient) voi
 }
 
 /// Returns the unit rotor for a counter-clockwise 2D rotation.
-pub fn planarRotor(comptime T: type, angle_radians: T) multivector.Rotor(T, 2) {
+pub fn planarRotor(comptime T: type, angle_radians: T) multivector.Rotor(T, euclidean2) {
     const half_angle = angle_radians / 2;
-    const rotor = multivector.Rotor(T, 2).init(.{
+    const rotor = multivector.Rotor(T, euclidean2).init(.{
         @cos(half_angle),
         -@sin(half_angle),
     });
@@ -180,12 +182,12 @@ pub fn planarRotor(comptime T: type, angle_radians: T) multivector.Rotor(T, 2) {
 }
 
 /// Returns the rotor that takes `from` onto `to` in 2D VGA.
-pub fn rotorFromTo(from: anytype, to: anytype) multivector.Rotor(@TypeOf(from).Coefficient, 2) {
+pub fn rotorFromTo(from: anytype, to: anytype) multivector.Rotor(@TypeOf(from).Coefficient, euclidean2) {
     return tryRotorFromTo(from, to) catch unreachable;
 }
 
 /// Returns the rotor that takes `from` onto `to` in 2D VGA, or `error.ZeroVector`.
-pub fn tryRotorFromTo(from: anytype, to: anytype) RotorError!multivector.Rotor(@TypeOf(from).Coefficient, 2) {
+pub fn tryRotorFromTo(from: anytype, to: anytype) RotorError!multivector.Rotor(@TypeOf(from).Coefficient, euclidean2) {
     const Vector = @TypeOf(from);
     const ToVector = @TypeOf(to);
     comptime assertFloatVector2(Vector);
@@ -201,16 +203,16 @@ pub fn tryRotorFromTo(from: anytype, to: anytype) RotorError!multivector.Rotor(@
     if (comptime !useRotorSimdFastPath(T)) {
         const from_unit = try normalize(from);
         const to_unit = try normalize(to);
-        const raw = multivector.Scalar(T, 2).init(.{1}).add(to_unit.gp(from_unit));
+        const raw = multivector.Scalar(T, euclidean2).init(.{1}).add(to_unit.gp(from_unit));
         const scalar = raw.scalarPart();
         const bivector = raw.coeff(e12_mask);
         const magnitude = @sqrt(scalar * scalar + bivector * bivector);
 
         if (nearlyEqual(magnitude, 0, epsilon)) {
-            return multivector.Rotor(T, 2).init(.{ 0, 1 });
+            return multivector.Rotor(T, euclidean2).init(.{ 0, 1 });
         }
 
-        const rotor = multivector.Rotor(T, 2).init(.{
+        const rotor = multivector.Rotor(T, euclidean2).init(.{
             scalar / magnitude,
             bivector / magnitude,
         });
@@ -230,10 +232,10 @@ pub fn tryRotorFromTo(from: anytype, to: anytype) RotorError!multivector.Rotor(@
     if (nearlyEqual(magnitude, 0, epsilon)) {
         // Antiparallel vectors admit infinitely many 180° rotors in 2D.
         // Pick the canonical +e12 rotor to produce a deterministic result.
-        return multivector.Rotor(T, 2).init(.{ 0, 1 });
+        return multivector.Rotor(T, euclidean2).init(.{ 0, 1 });
     }
 
-    const rotor = multivector.Rotor(T, 2).init(.{
+    const rotor = multivector.Rotor(T, euclidean2).init(.{
         scalar / magnitude,
         bivector / magnitude,
     });
@@ -242,7 +244,7 @@ pub fn tryRotorFromTo(from: anytype, to: anytype) RotorError!multivector.Rotor(@
 }
 
 /// Applies the sandwich product `R v ~R` and returns the rotated vector.
-pub fn rotated(vector: anytype, rotor: anytype) multivector.GAVector(@TypeOf(vector).Coefficient, 2) {
+pub fn rotated(vector: anytype, rotor: anytype) multivector.GAVector(@TypeOf(vector).Coefficient, euclidean2) {
     const Vector = @TypeOf(vector);
     const RotorType = @TypeOf(rotor);
     comptime assertFloatVector2(Vector);
@@ -265,14 +267,14 @@ pub fn rotated(vector: anytype, rotor: anytype) multivector.GAVector(@TypeOf(vec
 }
 
 /// Rotates a vector by an angle in radians using a planar rotor.
-pub fn rotatedByAngle(vector: anytype, angle_radians: @TypeOf(vector).Coefficient) multivector.GAVector(@TypeOf(vector).Coefficient, 2) {
+pub fn rotatedByAngle(vector: anytype, angle_radians: @TypeOf(vector).Coefficient) multivector.GAVector(@TypeOf(vector).Coefficient, euclidean2) {
     const Vector = @TypeOf(vector);
     comptime assertFloatVector2(Vector);
     return rotated(vector, planarRotor(Vector.Coefficient, angle_radians));
 }
 
 test "2D rotors rotate vectors in the expected orientation" {
-    const E2 = multivector.Basis(f64, 2);
+    const E2 = multivector.Basis(f64, euclidean2);
     const e1 = E2.e(1);
     const e2 = E2.e(2);
 
@@ -287,7 +289,7 @@ test "2D rotors rotate vectors in the expected orientation" {
 }
 
 test "rotorFromTo handles antiparallel vectors" {
-    const E2 = multivector.Basis(f64, 2);
+    const E2 = multivector.Basis(f64, euclidean2);
     const e1 = E2.e(1);
 
     const rotor = rotorFromTo(e1, e1.negate());
@@ -298,9 +300,9 @@ test "rotorFromTo handles antiparallel vectors" {
 }
 
 test "safe rotor helpers return ZeroVector on invalid input" {
-    const Vec2 = multivector.GAVector(f64, 2);
+    const Vec2 = multivector.GAVector(f64, euclidean2);
     const zero = Vec2.zero();
-    const e1 = multivector.Basis(f64, 2).e(1);
+    const e1 = multivector.Basis(f64, euclidean2).e(1);
 
     try std.testing.expectError(error.ZeroVector, normalize(zero));
     try std.testing.expectError(error.ZeroVector, tryRotorFromTo(zero, e1));
@@ -317,7 +319,7 @@ test "planar rotor stays normalized for multiple angles" {
 }
 
 test "rotorFromTo maps normalized direction and preserves norm" {
-    const E2 = multivector.Basis(f64, 2);
+    const E2 = multivector.Basis(f64, euclidean2);
     const from = E2.e(1).add(E2.e(2));
     const to = E2.e(2).sub(E2.e(1));
 

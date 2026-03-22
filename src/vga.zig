@@ -2,6 +2,56 @@ const std = @import("std");
 
 pub const ga = @import("ga.zig");
 
+const signature = ga.euclideanSignature(2);
+
+pub const MetricSignature = ga.MetricSignature;
+pub const dimension: usize = 2;
+const algebra = ga.Algebra(signature);
+
+pub fn Multivector(comptime T: type, comptime blade_masks: []const ga.BladeMask) type {
+    return algebra.Multivector(T, blade_masks);
+}
+
+pub fn Basis(comptime T: type) type {
+    return algebra.Basis(T);
+}
+
+pub fn FullMultivector(comptime T: type) type {
+    return algebra.FullMultivector(T);
+}
+
+pub fn KVector(comptime T: type, comptime grade: usize) type {
+    return algebra.KVector(T, grade);
+}
+
+pub fn EvenMultivector(comptime T: type) type {
+    return algebra.EvenMultivector(T);
+}
+
+pub fn OddMultivector(comptime T: type) type {
+    return algebra.OddMultivector(T);
+}
+
+pub fn Scalar(comptime T: type) type {
+    return algebra.Scalar(T);
+}
+
+pub fn GAVector(comptime T: type) type {
+    return algebra.GAVector(T);
+}
+
+pub fn Bivector(comptime T: type) type {
+    return algebra.Bivector(T);
+}
+
+pub fn Pseudoscalar(comptime T: type) type {
+    return algebra.Pseudoscalar(T);
+}
+
+pub fn Rotor(comptime T: type) type {
+    return algebra.Rotor(T);
+}
+
 pub const rotors2d = ga.rotors2d;
 pub const rotors = rotors2d;
 
@@ -21,7 +71,7 @@ pub const rotatedByAngle = rotors2d.rotatedByAngle;
 test "vga facade keeps ga parity and rotor aliases" {
     try std.testing.expect(rotors == ga.rotors2d);
 
-    const E2 = ga.Basis(f64, 2);
+    const E2 = Basis(f64);
     const e1 = E2.e(1);
     const e2 = E2.e(2);
     const r = planarRotor(f64, radiansFromDegrees(90.0));

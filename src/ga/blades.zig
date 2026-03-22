@@ -51,6 +51,25 @@ pub const MetricSignature = struct {
     p: usize,
     q: usize,
     r: usize = 0,
+
+    /// Constructs `Cl(p, q, r)` and validates that the dimension fits `BladeMask`.
+    pub fn init(comptime p: usize, comptime q: usize, comptime r: usize) MetricSignature {
+        const signature: MetricSignature = .{ .p = p, .q = q, .r = r };
+        _ = signature.dimension();
+        return signature;
+    }
+
+    /// Constructs the Euclidean signature `Cl(d, 0, 0)`.
+    pub fn euclidean(comptime d: usize) MetricSignature {
+        return init(d, 0, 0);
+    }
+
+    /// Returns `p + q + r` for this metric signature.
+    pub fn dimension(self: MetricSignature) usize {
+        const total_dimension = self.p + self.q + self.r;
+        validateDimension(total_dimension);
+        return total_dimension;
+    }
 };
 
 /// Largest ambient dimension that fits inside `BladeMask`.
@@ -59,23 +78,23 @@ pub const max_supported_basis_vectors = @bitSizeOf(BladeMask) - 1;
 /// Errors that can arise while rendering a blade mask through a writer interface.
 pub const WriteBladeMaskError = std.Io.Writer.Error || error{DimensionTooLarge};
 
-fn validateDimension(comptime dimension: usize) void {
+fn validateDimension(dimension: usize) void {
     if (dimension > max_supported_basis_vectors) {
-        @compileError("dimensions up to 63 are currently supported");
+        if (@inComptime()) {
+            @compileError("dimensions up to 63 are currently supported");
+        }
+        std.debug.panic("dimensions up to 63 are currently supported", .{});
     }
 }
 
 /// Returns `p + q + r` for a metric signature.
 pub fn metricDimension(comptime signature: MetricSignature) usize {
-    const dimension = signature.p + signature.q + signature.r;
-    validateDimension(dimension);
-    return dimension;
+    return signature.dimension();
 }
 
 /// Returns the Euclidean metric signature `Cl(dimension, 0, 0)`.
 pub fn euclideanSignature(comptime dimension: usize) MetricSignature {
-    validateDimension(dimension);
-    return .{ .p = dimension, .q = 0 };
+    return MetricSignature.euclidean(dimension);
 }
 
 /// Returns the square sign of a one-based basis vector in `signature`.
@@ -83,7 +102,7 @@ pub fn euclideanSignature(comptime dimension: usize) MetricSignature {
 /// - Returns `-1` for basis vectors in the negative signature (next `q` vectors)
 /// - Returns `0` for basis vectors in the degenerate signature (last `r` vectors)
 pub fn basisSquareSign(comptime signature: MetricSignature, one_based_index: usize) i8 {
-    const dimension = metricDimension(signature);
+    const dimension = signature.dimension();
     std.debug.assert(one_based_index >= 1 and one_based_index <= dimension);
     if (one_based_index <= signature.p) return 1;
     if (one_based_index <= signature.p + signature.q) return -1;
@@ -161,7 +180,7 @@ pub fn applyBasisIndex(spec: *SignedBladeSpec, one_based_index: usize, comptime 
 
 /// Folds one basis vector into an in-progress canonical signed blade under `signature`.
 pub fn applyBasisIndexWithSignature(spec: *SignedBladeSpec, one_based_index: usize, comptime signature: MetricSignature) void {
-    const dimension = metricDimension(signature);
+    const dimension = signature.dimension();
     std.debug.assert(one_based_index >= 1 and one_based_index <= dimension);
     const bit = @as(BladeMask, 1) << @intCast(one_based_index - 1);
     if (geometricProductSignWithSignature(spec.mask, bit, signature) < 0) {
@@ -370,6 +389,62 @@ fn outerProductMaskTable(
     return marked;
 }
 
+/// Returns every blade that can appear in the left contraction of two blade sets.
+pub fn leftContractionMasks(
+    comptime dimension: usize,
+    comptime lhs_masks: []const BladeMask,
+    comptime rhs_masks: []const BladeMask,
+) [countMarkedMasks(dimension, leftContractionMaskTable(dimension, lhs_masks, rhs_masks))]BladeMask {
+    return collectMarkedMasks(dimension, leftContractionMaskTable(dimension, lhs_masks, rhs_masks));
+}
+
+fn leftContractionMaskTable(
+    comptime dimension: usize,
+    comptime lhs_masks: []const BladeMask,
+    comptime rhs_masks: []const BladeMask,
+) [bladeCount(dimension)]bool {
+    @setEvalBranchQuota(1_000_000);
+    var marked = std.mem.zeroes([bladeCount(dimension)]bool);
+
+    inline for (lhs_masks) |lhs_mask| {
+        inline for (rhs_masks) |rhs_mask| {
+            // Left contraction B_M \rfloor B_N is non-zero only if M \subseteq N.
+            if ((lhs_mask & rhs_mask) != lhs_mask) continue;
+            marked[lhs_mask ^ rhs_mask] = true;
+        }
+    }
+
+    return marked;
+}
+
+/// Returns every blade that can appear in the right contraction of two blade sets.
+pub fn rightContractionMasks(
+    comptime dimension: usize,
+    comptime lhs_masks: []const BladeMask,
+    comptime rhs_masks: []const BladeMask,
+) [countMarkedMasks(dimension, rightContractionMaskTable(dimension, lhs_masks, rhs_masks))]BladeMask {
+    return collectMarkedMasks(dimension, rightContractionMaskTable(dimension, lhs_masks, rhs_masks));
+}
+
+fn rightContractionMaskTable(
+    comptime dimension: usize,
+    comptime lhs_masks: []const BladeMask,
+    comptime rhs_masks: []const BladeMask,
+) [bladeCount(dimension)]bool {
+    @setEvalBranchQuota(1_000_000);
+    var marked = std.mem.zeroes([bladeCount(dimension)]bool);
+
+    inline for (lhs_masks) |lhs_mask| {
+        inline for (rhs_masks) |rhs_mask| {
+            // Right contraction B_M \lfloor B_N is non-zero only if N \subseteq M.
+            if ((lhs_mask & rhs_mask) != rhs_mask) continue;
+            marked[lhs_mask ^ rhs_mask] = true;
+        }
+    }
+
+    return marked;
+}
+
 /// Returns a dense lookup table from blade mask to index within `blade_masks`.
 pub fn bladeIndexByMask(
     comptime dimension: usize,
@@ -418,9 +493,7 @@ pub fn geometricProductSignWithSignature(
     while (overlap != 0) {
         const bit_index = @ctz(overlap);
         overlap &= overlap - 1;
-        if (basisSquareSign(signature, bit_index + 1) < 0) {
-            sign = -sign;
-        }
+        sign *= basisSquareSign(signature, bit_index + 1);
     }
 
     return sign;
@@ -492,6 +565,10 @@ test "geometricProductSignWithSignature applies negative basis-vector squares" {
     const Minkowski11: MetricSignature = .{ .p = 1, .q = 1 };
     try std.testing.expectEqual(@as(i8, 1), geometricProductSignWithSignature(0b01, 0b01, Minkowski11));
     try std.testing.expectEqual(@as(i8, -1), geometricProductSignWithSignature(0b10, 0b10, Minkowski11));
+
+    const PGA: MetricSignature = .{ .p = 3, .q = 0, .r = 1 };
+    // e4 (0b1000) is degenerate
+    try std.testing.expectEqual(@as(i8, 0), geometricProductSignWithSignature(0b1000, 0b1000, PGA));
 }
 
 test "mask set helpers compute sorted unions and products" {
@@ -513,6 +590,17 @@ test "orientation sign helpers and parity predicates behave consistently" {
     try std.testing.expect(allMasksHaveGrade(&.{ 0b001, 0b010, 0b100 }, 1));
     try std.testing.expect(allMasksHaveParity(&.{ 0b000, 0b011, 0b101 }, true));
     try std.testing.expect(allMasksHaveParity(&.{ 0b001, 0b010, 0b111 }, false));
+}
+
+test "MetricSignature constructors expose dot-syntax helpers" {
+    const e3: MetricSignature = .euclidean(3);
+    const e2: MetricSignature = .euclidean(2);
+    const minkowski11: MetricSignature = .{ .p = 1, .q = 1 };
+
+    try std.testing.expectEqual(@as(usize, 3), e3.dimension());
+    try std.testing.expectEqual(@as(usize, 2), e2.dimension());
+    try std.testing.expectEqual(@as(usize, 2), minkowski11.dimension());
+    try std.testing.expectEqual(@as(i8, -1), basisSquareSign(minkowski11, 2));
 }
 
 test "ascending uniqueness helper handles short and invalid slices" {

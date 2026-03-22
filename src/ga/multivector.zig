@@ -20,12 +20,6 @@ fn assertMaskWithinDimensions(comptime mask: BladeMask, comptime dimension: usiz
     }
 }
 
-fn assertMatchesDimension(comptime signature: MetricSignature, comptime dimension: usize) void {
-    if (signature.p + signature.q + signature.r != dimension) {
-        @compileError("metric signature dimension must match multivector dimension");
-    }
-}
-
 fn ensureNumeric(comptime T: type) void {
     switch (@typeInfo(T)) {
         .int, .float, .comptime_int, .comptime_float => {},
@@ -57,7 +51,7 @@ fn isSignedIntType(comptime T: type) bool {
 }
 
 fn isMultivectorType(comptime T: type) bool {
-    return @hasDecl(T, "dimensions") and @hasDecl(T, "Coefficient") and @hasDecl(T, "blades") and @hasField(T, "coeffs");
+    return @hasDecl(T, "dimensions") and @hasDecl(T, "Coefficient") and @hasDecl(T, "blades") and @hasDecl(T, "metric_signature") and @hasField(T, "coeffs");
 }
 
 fn isSimdCoeffType(comptime T: type) bool {
@@ -193,38 +187,45 @@ fn writeMultivectorImpl(
 }
 
 /// Returns the compact multivector type for a named signed blade.
-pub fn SignedBladeType(comptime T: type, comptime dimension: usize, comptime name: []const u8) type {
+pub fn SignedBladeType(comptime T: type, comptime name: []const u8, comptime sig: MetricSignature) type {
     ensureNumeric(T);
+    const dimension = comptime sig.dimension();
     const spec = comptime blade_parsing.expectSignedBlade(name, dimension);
-    return BasisBladeType(T, dimension, spec.mask);
+    return BasisBladeType(T, spec.mask, sig);
 }
 
 /// Returns the compact multivector type for a single blade mask.
-pub fn BasisBladeType(comptime T: type, comptime dimension: usize, comptime mask: BladeMask) type {
+pub fn BasisBladeType(comptime T: type, comptime mask: BladeMask, comptime sig: MetricSignature) type {
     const masks = [_]BladeMask{mask};
-    return Multivector(T, dimension, masks[0..]);
+    return Multivector(T, masks[0..], sig);
 }
 
 fn signedBladeImpl(
     comptime T: type,
-    comptime dimension: usize,
     comptime name: []const u8,
-) SignedBladeType(T, dimension, name) {
+    comptime sig: MetricSignature,
+) SignedBladeType(T, name, sig) {
     ensureNumeric(T);
+
+    const dimension = comptime sig.dimension();
 
     const spec = comptime blade_parsing.expectSignedBlade(name, dimension);
     if (comptime spec.sign.isNegative() and !supportsNegativeCoefficients(T)) {
         @compileError("negative-oriented signed blades require a signed or floating-point coefficient type");
     }
 
-    var result = basisBlade(T, dimension, spec.mask);
+    var result = basisBlade(T, spec.mask, sig);
     result.coeffs[0] = signedUnit(T, spec.sign);
     return result;
 }
 
 /// Generic sparse multivector whose storage is restricted to `blade_masks`.
-pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_masks: []const BladeMask) type {
+///
+/// A concrete metric signature is baked in via `sig`. Metric-aware methods
+/// (`.gp()` and `.scalarProduct()`) use it by default.
+pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, comptime sig: MetricSignature) type {
     ensureNumeric(T);
+    const dimension = comptime sig.dimension();
     _ = blade_ops.bladeCount(dimension);
 
     if (!blade_ops.areStrictlyAscendingUnique(blade_masks)) {
@@ -239,6 +240,8 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
         pub const Self = @This();
         pub const Coefficient = T;
         pub const dimensions = dimension;
+        /// Baked-in metric signature used by metric-aware operations.
+        pub const metric_signature = sig;
         /// Canonical blade masks stored by this carrier type.
         pub const blades = blade_masks;
         /// Number of coefficient slots physically stored by this carrier type.
@@ -263,13 +266,13 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
         }
 
         /// Constructs a compile-time signed blade using this carrier's coefficient type.
-        pub fn signedBlade(comptime name: []const u8) SignedBladeType(T, dimension, name) {
-            return signedBladeImpl(T, dimension, name);
+        pub fn signedBlade(comptime name: []const u8) SignedBladeType(T, name, sig) {
+            return signedBladeImpl(T, name, sig);
         }
 
         /// Constructs a signed blade from runtime basis-vector indices.
-        pub fn fromIndices(indices: []const usize) FullMultivector(T, dimension) {
-            return fullSignedBladeFromIndices(T, dimension, indices);
+        pub fn fromIndices(indices: []const usize) FullMultivector(T, sig) {
+            return fullSignedBladeFromIndicesWithSignature(T, sig, indices);
         }
 
         /// Returns the coefficient of a compile-time blade mask.
@@ -348,11 +351,11 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
         }
 
         /// Returns the sum of two multivectors.
-        pub fn add(self: Self, rhs: anytype) AddResultType(T, dimension, blade_masks, @TypeOf(rhs).blades) {
+        pub fn add(self: Self, rhs: anytype) AddResultType(T, blade_masks, @TypeOf(rhs).blades, sig) {
             const Rhs = @TypeOf(rhs);
             comptime assertCompatibleMultivector(Self, Rhs);
 
-            const Result = AddResultType(T, dimension, blade_masks, Rhs.blades);
+            const Result = AddResultType(T, blade_masks, Rhs.blades, sig);
             if (comptime blade_ops.sameBladeSet(blade_masks, Rhs.blades) and canUseLaneWiseSimd(T, Self.stored_blade_count)) {
                 const lhs_lanes = coeffsToSimd(T, Self.stored_blade_count, self.coeffs);
                 const rhs_lanes = coeffsToSimd(T, Self.stored_blade_count, rhs.coeffs);
@@ -369,11 +372,11 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
         }
 
         /// Returns the difference of two multivectors.
-        pub fn sub(self: Self, rhs: anytype) AddResultType(T, dimension, blade_masks, @TypeOf(rhs).blades) {
+        pub fn sub(self: Self, rhs: anytype) AddResultType(T, blade_masks, @TypeOf(rhs).blades, sig) {
             const Rhs = @TypeOf(rhs);
             comptime assertCompatibleMultivector(Self, Rhs);
 
-            const Result = AddResultType(T, dimension, blade_masks, Rhs.blades);
+            const Result = AddResultType(T, blade_masks, Rhs.blades, sig);
             if (comptime blade_ops.sameBladeSet(blade_masks, Rhs.blades) and canUseLaneWiseSimd(T, Self.stored_blade_count)) {
                 const lhs_lanes = coeffsToSimd(T, Self.stored_blade_count, self.coeffs);
                 const rhs_lanes = coeffsToSimd(T, Self.stored_blade_count, rhs.coeffs);
@@ -390,8 +393,10 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
         }
 
         /// Returns the geometric product of two multivectors.
-        pub fn gp(self: Self, rhs: anytype) GeometricProductResultType(T, dimension, blade_masks, @TypeOf(rhs).blades) {
-            return self.gpWithSignature(rhs, .{ .p = dimension, .q = 0 });
+        pub fn gp(self: Self, rhs: anytype) GeometricProductResultType(T, blade_masks, @TypeOf(rhs).blades, sig) {
+            const Rhs = @TypeOf(rhs);
+            comptime assertCompatibleMultivector(Self, Rhs);
+            return self.gpWithSignature(rhs, sig);
         }
 
         /// Returns the geometric product under an arbitrary `Cl(p, q, r)` signature.
@@ -399,12 +404,16 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
             self: Self,
             rhs: anytype,
             comptime signature: MetricSignature,
-        ) GeometricProductResultType(T, dimension, blade_masks, @TypeOf(rhs).blades) {
+        ) GeometricProductResultType(T, blade_masks, @TypeOf(rhs).blades, signature) {
             const Rhs = @TypeOf(rhs);
             comptime assertCompatibleMultivector(Self, Rhs);
-            comptime assertMatchesDimension(signature, dimension);
+            comptime {
+                if (signature.dimension() != dimension) {
+                    @compileError("metric signature dimension must match multivector dimension");
+                }
+            }
 
-            const Result = GeometricProductResultType(T, dimension, blade_masks, Rhs.blades);
+            const Result = GeometricProductResultType(T, blade_masks, Rhs.blades, signature);
             var result = Result.zero();
 
             inline for (blade_masks, 0..) |lhs_mask, lhs_index| {
@@ -422,11 +431,11 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
         }
 
         /// Returns the outer product of two multivectors.
-        pub fn outerProduct(self: Self, rhs: anytype) OuterProductResultType(T, dimension, blade_masks, @TypeOf(rhs).blades) {
+        pub fn outerProduct(self: Self, rhs: anytype) OuterProductResultType(T, blade_masks, @TypeOf(rhs).blades, sig) {
             const Rhs = @TypeOf(rhs);
             comptime assertCompatibleMultivector(Self, Rhs);
 
-            const Result = OuterProductResultType(T, dimension, blade_masks, Rhs.blades);
+            const Result = OuterProductResultType(T, blade_masks, Rhs.blades, sig);
             var result = Result.zero();
 
             inline for (blade_masks, 0..) |lhs_mask, lhs_index| {
@@ -444,9 +453,92 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
             return result;
         }
 
+        /// Returns the left contraction (A \rfloor B) of two multivectors.
+        pub fn leftContraction(self: Self, rhs: anytype) LeftContractionResultType(T, blade_masks, @TypeOf(rhs).blades, sig) {
+            const Rhs = @TypeOf(rhs);
+            comptime assertCompatibleMultivector(Self, Rhs);
+
+            const Result = LeftContractionResultType(T, blade_masks, Rhs.blades, sig);
+            var result = Result.zero();
+
+            inline for (blade_masks, 0..) |lhs_mask, lhs_index| {
+                inline for (Rhs.blades, 0..) |rhs_mask, rhs_index| {
+                    if ((lhs_mask & rhs_mask) != lhs_mask) continue;
+
+                    const result_mask = lhs_mask ^ rhs_mask;
+                    const result_index = Result.blade_index_by_mask[result_mask];
+                    const sign = blade_ops.geometricProductSignWithSignature(lhs_mask, rhs_mask, sig);
+                    std.debug.assert(result_index < Result.stored_blade_count);
+                    result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @as(T, sign);
+                }
+            }
+
+            return result;
+        }
+
+        /// Returns the right contraction (A \lfloor B) of two multivectors.
+        pub fn rightContraction(self: Self, rhs: anytype) RightContractionResultType(T, blade_masks, @TypeOf(rhs).blades, sig) {
+            const Rhs = @TypeOf(rhs);
+            comptime assertCompatibleMultivector(Self, Rhs);
+
+            const Result = RightContractionResultType(T, blade_masks, Rhs.blades, sig);
+            var result = Result.zero();
+
+            inline for (blade_masks, 0..) |lhs_mask, lhs_index| {
+                inline for (Rhs.blades, 0..) |rhs_mask, rhs_index| {
+                    if ((lhs_mask & rhs_mask) != rhs_mask) continue;
+
+                    const result_mask = lhs_mask ^ rhs_mask;
+                    const result_index = Result.blade_index_by_mask[result_mask];
+                    const sign = blade_ops.geometricProductSignWithSignature(lhs_mask, rhs_mask, sig);
+                    std.debug.assert(result_index < Result.stored_blade_count);
+                    result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @as(T, sign);
+                }
+            }
+
+            return result;
+        }
+
+        /// Returns the Hestenes dot product (A \cdot B) of two multivectors.
+        ///
+        /// The Hestenes dot product is defined as the grade |r - s| part of the
+        /// geometric product of a grade-r blade and a grade-s blade. If either
+        /// input is a scalar, the result is zero.
+        pub fn dot(self: Self, rhs: anytype) DotProductResultType(T, blade_masks, @TypeOf(rhs).blades, sig) {
+            const Rhs = @TypeOf(rhs);
+            comptime assertCompatibleMultivector(Self, Rhs);
+
+            const Result = DotProductResultType(T, blade_masks, Rhs.blades, sig);
+            var result = Result.zero();
+
+            inline for (blade_masks, 0..) |lhs_mask, lhs_index| {
+                if (lhs_mask == 0) continue; // scalar dot anything is 0
+
+                inline for (Rhs.blades, 0..) |rhs_mask, rhs_index| {
+                    if (rhs_mask == 0) continue; // anything dot scalar is 0
+
+                    const lhs_grade = blade_ops.bladeGrade(lhs_mask);
+                    const rhs_grade = blade_ops.bladeGrade(rhs_mask);
+                    const target_grade = if (lhs_grade > rhs_grade) lhs_grade - rhs_grade else rhs_grade - lhs_grade;
+
+                    const result_mask = lhs_mask ^ rhs_mask;
+                    if (blade_ops.bladeGrade(result_mask) != target_grade) continue;
+
+                    const result_index = Result.blade_index_by_mask[result_mask];
+                    const sign = blade_ops.geometricProductSignWithSignature(lhs_mask, rhs_mask, sig);
+                    std.debug.assert(result_index < Result.stored_blade_count);
+                    result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @as(T, sign);
+                }
+            }
+
+            return result;
+        }
+
         /// Returns the scalar product between two multivectors.
         pub fn scalarProduct(self: Self, rhs: anytype) T {
-            return self.scalarProductWithSignature(rhs, .{ .p = dimension, .q = 0 });
+            const Rhs = @TypeOf(rhs);
+            comptime assertCompatibleMultivector(Self, Rhs);
+            return self.scalarProductWithSignature(rhs, sig);
         }
 
         /// Returns the scalar product under an arbitrary `Cl(p, q, r)` signature.
@@ -457,7 +549,11 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
         ) T {
             const Rhs = @TypeOf(rhs);
             comptime assertCompatibleMultivector(Self, Rhs);
-            comptime assertMatchesDimension(signature, dimension);
+            comptime {
+                if (signature.dimension() != dimension) {
+                    @compileError("metric signature dimension must match multivector dimension");
+                }
+            }
 
             if (comptime blade_ops.sameBladeSet(blade_masks, Rhs.blades) and canUseLaneWiseSimd(T, Self.stored_blade_count)) {
                 const signs = comptime scalarProductSigns(T, blade_masks, signature);
@@ -504,12 +600,12 @@ pub fn Multivector(comptime T: type, comptime dimension: usize, comptime blade_m
         }
 
         /// Projects onto one grade and returns the corresponding `KVector`.
-        pub fn gradePart(self: Self, comptime target_grade: usize) KVector(T, dimension, target_grade) {
+        pub fn gradePart(self: Self, comptime target_grade: usize) KVector(T, target_grade, sig) {
             if (target_grade > dimension) {
                 @compileError("grade must not exceed the ambient dimension");
             }
 
-            const Result = KVector(T, dimension, target_grade);
+            const Result = KVector(T, target_grade, sig);
             var result = Result.zero();
 
             inline for (blade_masks, 0..) |mask, index| {
@@ -565,9 +661,9 @@ pub fn fullSignedBladeFromIndicesWithSignature(
     comptime T: type,
     comptime signature: MetricSignature,
     indices: []const usize,
-) FullMultivector(T, blade_ops.metricDimension(signature)) {
+) FullMultivector(T, signature) {
     ensureNumeric(T);
-    const dimension = comptime blade_ops.metricDimension(signature);
+    const dimension = comptime signature.dimension();
 
     if (comptime !supportsNegativeCoefficients(T)) {
         @compileError("runtime signed-blade construction requires signed or floating-point coefficients");
@@ -579,7 +675,7 @@ pub fn fullSignedBladeFromIndicesWithSignature(
         blade_ops.applyBasisIndexWithSignature(&spec, one_based_index, signature);
     }
 
-    var result = FullMultivector(T, dimension).zero();
+    var result = FullMultivector(T, signature).zero();
     result.coeffs[@intCast(spec.mask)] = signedUnit(T, spec.sign);
     return result;
 }
@@ -587,43 +683,102 @@ pub fn fullSignedBladeFromIndicesWithSignature(
 /// Result carrier for addition or subtraction between two multivectors.
 pub fn AddResultType(
     comptime T: type,
-    comptime dimension: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
+    comptime sig: MetricSignature,
 ) type {
+    const dimension = comptime sig.dimension();
     const masks = blade_ops.unionBladeMasks(dimension, lhs_masks, rhs_masks);
-    return Multivector(T, dimension, masks[0..]);
+    return Multivector(T, masks[0..], sig);
 }
 
 /// Result carrier for a geometric product.
 pub fn GeometricProductResultType(
     comptime T: type,
-    comptime dimension: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
+    comptime sig: MetricSignature,
 ) type {
+    const dimension = comptime sig.dimension();
     const masks = blade_ops.geometricProductMasks(dimension, lhs_masks, rhs_masks);
-    return Multivector(T, dimension, masks[0..]);
+    return Multivector(T, masks[0..], sig);
 }
 
 /// Result carrier for an outer product.
 pub fn OuterProductResultType(
     comptime T: type,
-    comptime dimension: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
+    comptime sig: MetricSignature,
 ) type {
+    const dimension = comptime sig.dimension();
     const masks = blade_ops.outerProductMasks(dimension, lhs_masks, rhs_masks);
-    return Multivector(T, dimension, masks[0..]);
+    return Multivector(T, masks[0..], sig);
+}
+
+/// Result carrier for a left contraction.
+pub fn LeftContractionResultType(
+    comptime T: type,
+    comptime lhs_masks: []const BladeMask,
+    comptime rhs_masks: []const BladeMask,
+    comptime sig: MetricSignature,
+) type {
+    const dimension = comptime sig.dimension();
+    const masks = blade_ops.leftContractionMasks(dimension, lhs_masks, rhs_masks);
+    return Multivector(T, masks[0..], sig);
+}
+
+/// Result carrier for a right contraction.
+pub fn RightContractionResultType(
+    comptime T: type,
+    comptime lhs_masks: []const BladeMask,
+    comptime rhs_masks: []const BladeMask,
+    comptime sig: MetricSignature,
+) type {
+    const dimension = comptime sig.dimension();
+    const masks = blade_ops.rightContractionMasks(dimension, lhs_masks, rhs_masks);
+    return Multivector(T, masks[0..], sig);
+}
+
+/// Result carrier for a Hestenes dot product.
+pub fn DotProductResultType(
+    comptime T: type,
+    comptime lhs_masks: []const BladeMask,
+    comptime rhs_masks: []const BladeMask,
+    comptime sig: MetricSignature,
+) type {
+    const dimension = comptime sig.dimension();
+    @setEvalBranchQuota(1_000_000);
+    var marked = std.mem.zeroes([blade_ops.bladeCount(dimension)]bool);
+
+    inline for (lhs_masks) |lhs_mask| {
+        if (lhs_mask == 0) continue;
+        inline for (rhs_masks) |rhs_mask| {
+            if (rhs_mask == 0) continue;
+
+            const lhs_grade = blade_ops.bladeGrade(lhs_mask);
+            const rhs_grade = blade_ops.bladeGrade(rhs_mask);
+            const target_grade = if (lhs_grade > rhs_grade) lhs_grade - rhs_grade else rhs_grade - lhs_grade;
+
+            const result_mask = lhs_mask ^ rhs_mask;
+            if (blade_ops.bladeGrade(result_mask) == target_grade) {
+                marked[result_mask] = true;
+            }
+        }
+    }
+
+    const masks = blade_ops.collectMarkedMasks(dimension, marked);
+    return Multivector(T, masks[0..], sig);
 }
 
 /// Constructs a unit blade with coefficient `1`.
-pub fn basisBlade(comptime T: type, comptime dimension: usize, comptime mask: BladeMask) BasisBladeType(T, dimension, mask) {
+pub fn basisBlade(comptime T: type, comptime mask: BladeMask, comptime sig: MetricSignature) BasisBladeType(T, mask, sig) {
     ensureNumeric(T);
+    const dimension = comptime sig.dimension();
 
     comptime assertMaskWithinDimensions(mask, dimension);
 
-    var result = BasisBladeType(T, dimension, mask).zero();
+    var result = BasisBladeType(T, mask, sig).zero();
     result.coeffs[0] = coeffOne(T);
     return result;
 }
@@ -631,34 +786,16 @@ pub fn basisBlade(comptime T: type, comptime dimension: usize, comptime mask: Bl
 /// Constructs the one-based basis vector `e{one_based_index}`.
 pub fn basisVector(
     comptime T: type,
-    comptime dimension: usize,
     comptime one_based_index: usize,
-) BasisBladeType(T, dimension, blade_ops.basisVectorMask(dimension, one_based_index)) {
-    return basisBlade(T, dimension, blade_ops.basisVectorMask(dimension, one_based_index));
+    comptime sig: MetricSignature,
+) BasisBladeType(T, blade_ops.basisVectorMask(sig.dimension(), one_based_index), sig) {
+    const dimension = comptime sig.dimension();
+    return basisBlade(T, blade_ops.basisVectorMask(dimension, one_based_index), sig);
 }
 
 /// Constructs a compile-time signed blade such as `e12` or `e_10_2`.
-pub fn signedBlade(comptime T: type, comptime dimension: usize, comptime name: []const u8) SignedBladeType(T, dimension, name) {
-    return signedBladeImpl(T, dimension, name);
-}
-
-/// Constructs a runtime signed blade from one-based basis-vector indices.
-pub fn fullSignedBladeFromIndices(comptime T: type, comptime dimension: usize, indices: []const usize) FullMultivector(T, dimension) {
-    ensureNumeric(T);
-
-    if (comptime !supportsNegativeCoefficients(T)) {
-        @compileError("runtime signed-blade construction requires signed or floating-point coefficients");
-    }
-
-    var spec = SignedBladeSpec{ .sign = .positive, .mask = 0 };
-    for (indices) |one_based_index| {
-        std.debug.assert(one_based_index >= 1 and one_based_index <= dimension);
-        blade_ops.applyBasisIndex(&spec, one_based_index, dimension);
-    }
-
-    var result = FullMultivector(T, dimension).zero();
-    result.coeffs[@intCast(spec.mask)] = signedUnit(T, spec.sign);
-    return result;
+pub fn signedBlade(comptime T: type, comptime name: []const u8, comptime sig: MetricSignature) SignedBladeType(T, name, sig) {
+    return signedBladeImpl(T, name, sig);
 }
 
 /// Writes any multivector value through a std.Io writer interface.
@@ -667,70 +804,76 @@ pub fn writeMultivector(writer: *std.Io.Writer, value: anytype) std.Io.Writer.Er
 }
 
 /// Carrier type storing every blade in the algebra.
-pub fn FullMultivector(comptime T: type, comptime dimension: usize) type {
+pub fn FullMultivector(comptime T: type, comptime sig: MetricSignature) type {
+    const dimension = comptime sig.dimension();
     const masks = blade_ops.allBladeMasks(dimension);
-    return Multivector(T, dimension, masks[0..]);
+    return Multivector(T, masks[0..], sig);
 }
 
 /// Carrier type restricted to one grade.
-pub fn KVector(comptime T: type, comptime dimension: usize, comptime grade: usize) type {
+pub fn KVector(comptime T: type, comptime grade: usize, comptime sig: MetricSignature) type {
+    const dimension = comptime sig.dimension();
     const masks = blade_ops.gradeBladeMasks(dimension, grade);
-    return Multivector(T, dimension, masks[0..]);
+    return Multivector(T, masks[0..], sig);
 }
 
 /// Carrier type restricted to even grades.
-pub fn EvenMultivector(comptime T: type, comptime dimension: usize) type {
+pub fn EvenMultivector(comptime T: type, comptime sig: MetricSignature) type {
+    const dimension = comptime sig.dimension();
     const masks = blade_ops.evenBladeMasks(dimension);
-    return Multivector(T, dimension, masks[0..]);
+    return Multivector(T, masks[0..], sig);
 }
 
 /// Carrier type restricted to odd grades.
-pub fn OddMultivector(comptime T: type, comptime dimension: usize) type {
+pub fn OddMultivector(comptime T: type, comptime sig: MetricSignature) type {
+    const dimension = comptime sig.dimension();
     const masks = blade_ops.oddBladeMasks(dimension);
-    return Multivector(T, dimension, masks[0..]);
+    return Multivector(T, masks[0..], sig);
 }
 
 /// Scalar carrier type.
-pub fn Scalar(comptime T: type, comptime dimension: usize) type {
-    return KVector(T, dimension, 0);
+pub fn Scalar(comptime T: type, comptime sig: MetricSignature) type {
+    return KVector(T, 0, sig);
 }
 
 /// Grade-1 vector carrier type.
-pub fn GAVector(comptime T: type, comptime dimension: usize) type {
-    return KVector(T, dimension, 1);
+pub fn GAVector(comptime T: type, comptime sig: MetricSignature) type {
+    return KVector(T, 1, sig);
 }
 
 /// Grade-2 bivector carrier type.
-pub fn Bivector(comptime T: type, comptime dimension: usize) type {
-    return KVector(T, dimension, 2);
+pub fn Bivector(comptime T: type, comptime sig: MetricSignature) type {
+    return KVector(T, 2, sig);
 }
 
 /// Grade-3 trivector carrier type.
-pub fn Trivector(comptime T: type, comptime dimension: usize) type {
-    return KVector(T, dimension, 3);
+pub fn Trivector(comptime T: type, comptime sig: MetricSignature) type {
+    return KVector(T, 3, sig);
 }
 
 /// Highest-grade pseudoscalar carrier type.
-pub fn Pseudoscalar(comptime T: type, comptime dimension: usize) type {
-    return KVector(T, dimension, dimension);
+pub fn Pseudoscalar(comptime T: type, comptime sig: MetricSignature) type {
+    const dimension = comptime sig.dimension();
+    return KVector(T, dimension, sig);
 }
 
 /// Even multivector carrier commonly used for rotors.
-pub fn Rotor(comptime T: type, comptime dimension: usize) type {
-    return EvenMultivector(T, dimension);
+pub fn Rotor(comptime T: type, comptime sig: MetricSignature) type {
+    return EvenMultivector(T, sig);
 }
 
 /// Namespace for basis-vector and signed-blade helpers in one algebra.
-pub fn Basis(comptime T: type, comptime dimension: usize) type {
+pub fn Basis(comptime T: type, comptime sig: MetricSignature) type {
+    const dimension = comptime sig.dimension();
     return struct {
         /// The corresponding grade-1 vector carrier.
-        pub const Vector = GAVector(T, dimension);
+        pub const Vector = GAVector(T, sig);
 
         /// Returns the one-based basis vector `e{one_based_index}`.
         pub fn e(
             comptime one_based_index: usize,
-        ) BasisBladeType(T, dimension, blade_ops.basisVectorMask(dimension, one_based_index)) {
-            return basisVector(T, dimension, one_based_index);
+        ) BasisBladeType(T, blade_ops.basisVectorMask(dimension, one_based_index), sig) {
+            return basisVector(T, one_based_index, sig);
         }
 
         /// Returns the blade mask for one basis vector.
@@ -744,51 +887,56 @@ pub fn Basis(comptime T: type, comptime dimension: usize) type {
         }
 
         /// Returns a compile-time signed blade such as `e12` or `e_10_2`.
-        pub fn signedBlade(comptime name: []const u8) SignedBladeType(T, dimension, name) {
-            return signedBladeImpl(T, dimension, name);
+        pub fn signedBlade(comptime name: []const u8) SignedBladeType(T, name, sig) {
+            return signedBladeImpl(T, name, sig);
         }
 
         /// Returns a runtime signed blade from a list of indices.
-        pub fn fromIndices(indices: []const usize) FullMultivector(T, dimension) {
-            return fullSignedBladeFromIndices(T, dimension, indices);
+        pub fn fromIndices(indices: []const usize) FullMultivector(T, sig) {
+            return fullSignedBladeFromIndicesWithSignature(T, sig, indices);
         }
     };
 }
 
 test "aliases and signed blades expose more than just plain vectors" {
-    const E2 = Basis(i32, 2);
+    const E2 = Basis(i32, .euclidean(2));
 
-    try std.testing.expect(E2.e(1).eql(GAVector(i32, 2).init(.{ 1, 0 })));
-    try std.testing.expect(E2.e(2).eql(GAVector(i32, 2).init(.{ 0, 1 })));
-    try std.testing.expect(E2.signedBlade("e12").eql(Bivector(i32, 2).init(.{1})));
-    try std.testing.expect(E2.signedBlade("e21").eql(Bivector(i32, 2).init(.{-1})));
-    try std.testing.expect(E2.signedBlade("e11").eql(Scalar(i32, 2).init(.{1})));
+    try std.testing.expect(E2.e(1).eql(GAVector(i32, .euclidean(2)).init(.{ 1, 0 })));
+    try std.testing.expect(E2.e(2).eql(GAVector(i32, .euclidean(2)).init(.{ 0, 1 })));
+    try std.testing.expect(E2.signedBlade("e12").eql(Bivector(i32, .euclidean(2)).init(.{1})));
+    try std.testing.expect(E2.signedBlade("e21").eql(Bivector(i32, .euclidean(2)).init(.{-1})));
+    try std.testing.expect(E2.signedBlade("e11").eql(Scalar(i32, .euclidean(2)).init(.{1})));
 }
 
 test "geometric products and involutions follow Euclidean VGA relations" {
-    const E3 = Basis(f64, 3);
+    const E3 = Basis(f64, .euclidean(3));
     const e1 = E3.e(1);
     const e2 = E3.e(2);
     const e3 = E3.e(3);
 
-    try std.testing.expect(e1.gp(e1).eql(Scalar(f64, 3).init(.{1})));
-    try std.testing.expect(e1.gp(e2).gradePart(2).eql(Bivector(f64, 3).init(.{ 1, 0, 0 })));
-    try std.testing.expect(e2.gp(e1).gradePart(2).eql(Bivector(f64, 3).init(.{ -1, 0, 0 })));
-    try std.testing.expect(e1.outerProduct(e2).eql(Bivector(f64, 3).init(.{ 1, 0, 0 })));
-    try std.testing.expect(e1.outerProduct(e3).eql(Bivector(f64, 3).init(.{ 0, 1, 0 })));
+    try std.testing.expect(e1.gp(e1).eql(Scalar(f64, .euclidean(3)).init(.{1})));
+    try std.testing.expect(e1.gp(e2).gradePart(2).eql(Bivector(f64, .euclidean(3)).init(.{ 1, 0, 0 })));
+    try std.testing.expect(e2.gp(e1).gradePart(2).eql(Bivector(f64, .euclidean(3)).init(.{ -1, 0, 0 })));
+    try std.testing.expect(e1.outerProduct(e2).eql(Bivector(f64, .euclidean(3)).init(.{ 1, 0, 0 })));
+    try std.testing.expect(e1.outerProduct(e3).eql(Bivector(f64, .euclidean(3)).init(.{ 0, 1, 0 })));
 
-    const mv = FullMultivector(i32, 3).init(.{ 1, 2, 3, 4, 5, 6, 7, 8 });
-    try std.testing.expect(mv.gradePart(0).eql(Scalar(i32, 3).init(.{1})));
-    try std.testing.expect(mv.gradePart(1).eql(GAVector(i32, 3).init(.{ 2, 3, 5 })));
-    try std.testing.expect(mv.reverse().eql(FullMultivector(i32, 3).init(.{ 1, 2, 3, -4, 5, -6, -7, -8 })));
-    try std.testing.expect(mv.cliffordConjugate().eql(FullMultivector(i32, 3).init(.{ 1, -2, -3, -4, -5, -6, -7, 8 })));
+    const mv = FullMultivector(i32, .euclidean(3)).init(.{ 1, 2, 3, 4, 5, 6, 7, 8 });
+    try std.testing.expect(mv.gradePart(0).eql(Scalar(i32, .euclidean(3)).init(.{1})));
+    try std.testing.expect(mv.gradePart(1).eql(GAVector(i32, .euclidean(3)).init(.{ 2, 3, 5 })));
+    try std.testing.expect(mv.reverse().eql(FullMultivector(i32, .euclidean(3)).init(.{ 1, 2, 3, -4, 5, -6, -7, -8 })));
+    try std.testing.expect(mv.cliffordConjugate().eql(FullMultivector(i32, .euclidean(3)).init(.{ 1, -2, -3, -4, -5, -6, -7, 8 })));
+
+    const e12 = e1.outerProduct(e2);
+    try std.testing.expect(e1.leftContraction(e12).eql(e2));
+    try std.testing.expect(e12.rightContraction(e2).eql(e1));
+    try std.testing.expect(e12.leftContraction(e1).eql(Scalar(f64, .euclidean(3)).zero()));
 }
 
 test "writeMultivector renders through std.Io.Writer" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    const value = FullMultivector(i32, 2).init(.{ 2, -3, 0, 1 });
+    const value = FullMultivector(i32, .euclidean(2)).init(.{ 2, -3, 0, 1 });
     try writeMultivector(&out.writer, value);
     try std.testing.expectEqualSlices(u8, "2 - 3*e1 + e12", out.written());
 }
@@ -797,25 +945,25 @@ test "multivector.write matches format output path" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    const value = GAVector(i32, 2).init(.{ 1, -2 });
+    const value = GAVector(i32, .euclidean(2)).init(.{ 1, -2 });
     try value.write(&out.writer);
     try std.testing.expectEqualSlices(u8, "e1 - 2*e2", out.written());
 }
 
 test "signature-aware products support Cl(1,1)" {
     const signature: MetricSignature = .{ .p = 1, .q = 1 };
-    const Vec = GAVector(f64, 2);
+    const Vec = GAVector(f64, signature);
     const e1 = Vec.init(.{ 1.0, 0.0 });
     const e2 = Vec.init(.{ 0.0, 1.0 });
 
-    try std.testing.expect(e1.gpWithSignature(e1, signature).eql(Scalar(f64, 2).init(.{1.0})));
-    try std.testing.expect(e2.gpWithSignature(e2, signature).eql(Scalar(f64, 2).init(.{-1.0})));
+    try std.testing.expect(e1.gpWithSignature(e1, signature).eql(Scalar(f64, signature).init(.{1.0})));
+    try std.testing.expect(e2.gpWithSignature(e2, signature).eql(Scalar(f64, signature).init(.{-1.0})));
     try std.testing.expectEqual(@as(f64, -1.0), e2.scalarProductWithSignature(e2, signature));
 }
 
 test "sparse coefficient lookup and equality across carrier sets" {
-    const Scalar2 = Scalar(i32, 2);
-    const Bivec2 = Bivector(i32, 2);
+    const Scalar2 = Scalar(i32, .euclidean(2));
+    const Bivec2 = Bivector(i32, .euclidean(2));
     const scalar = Scalar2.init(.{5});
     const biv = Bivec2.init(.{-2});
     const sum = scalar.add(biv);
@@ -823,18 +971,18 @@ test "sparse coefficient lookup and equality across carrier sets" {
     try std.testing.expectEqual(@as(i32, 5), sum.coeff(0));
     try std.testing.expectEqual(@as(i32, -2), sum.coeff(0b11));
     try std.testing.expectEqual(@as(i32, 0), sum.coefficient(0b01));
-    try std.testing.expect(sum.eql(FullMultivector(i32, 2).init(.{ 5, 0, 0, -2 })));
+    try std.testing.expect(sum.eql(FullMultivector(i32, .euclidean(2)).init(.{ 5, 0, 0, -2 })));
 }
 
 test "basis namespace mask and blade helpers agree" {
-    const E4 = Basis(i32, 4);
+    const E4 = Basis(i32, .euclidean(4));
     try std.testing.expectEqual(@as(BladeMask, 0b0100), E4.mask(3));
-    try std.testing.expect(E4.fromIndices(&.{ 4, 1 }).eql(fullSignedBladeFromIndices(i32, 4, &.{ 4, 1 })));
+    try std.testing.expect(E4.fromIndices(&.{ 4, 1 }).eql(fullSignedBladeFromIndicesWithSignature(i32, .euclidean(4), &.{ 4, 1 })));
 }
 
 test "large-dimension full multivector geometric product with scalar identity" {
-    const M8 = FullMultivector(f64, 8);
-    const scalar_one = Scalar(f64, 8).init(.{1.0});
+    const M8 = FullMultivector(f64, .euclidean(8));
+    const scalar_one = Scalar(f64, .euclidean(8)).init(.{1.0});
     var coeffs = std.mem.zeroes([M8.blades.len]f64);
 
     inline for (M8.blades, 0..) |mask, index| {
