@@ -5,6 +5,7 @@ pub const enable_simd_fast_paths = true;
 
 pub const ga = @import("ga.zig");
 pub const vga = @import("vga.zig");
+pub const pga = @import("pga.zig");
 
 test "root surface links ga and vga entrypoints" {
     try std.testing.expect(ga.blades.choose(4, 2) == ga.choose(4, 2));
