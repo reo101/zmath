@@ -80,10 +80,14 @@ pub const WriteBladeMaskError = std.Io.Writer.Error || error{DimensionTooLarge};
 
 fn validateDimension(dimension: usize) void {
     if (dimension > max_supported_basis_vectors) {
+        const message = comptime std.fmt.comptimePrint(
+            "dimensions up to {} are currently supported",
+            .{max_supported_basis_vectors},
+        );
         if (@inComptime()) {
-            @compileError("dimensions up to 63 are currently supported");
+            @compileError(message);
         }
-        std.debug.panic("dimensions up to 63 are currently supported", .{});
+        std.debug.panic(message, .{});
     }
 }
 
