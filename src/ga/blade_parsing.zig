@@ -67,7 +67,7 @@ fn parseSeparatedSignedBlade(
     comptime dimension: usize,
     comptime syntax: SeparatedBladeSyntax,
 ) SignedBladeParseError!SignedBladeSpec {
-    var spec = SignedBladeSpec{ .sign = .positive, .mask = 0 };
+    var spec = SignedBladeSpec{ .sign = .positive, .mask = blades.Mask.init(0) };
     var position = syntax.start;
 
     if (syntax.allow_leading_separator and position < syntax.end and name[position] == syntax.separator) {
@@ -91,10 +91,10 @@ fn hasUnderscoreSyntax(comptime name: []const u8) bool {
     return if (name.len <= 1) false else std.mem.indexOfScalar(u8, name[1..], '_') != null;
 }
 
-fn invalidSignedBladeCompileError(comptime name: []const u8, err: SignedBladeParseError) noreturn {
+fn invalidSignedBladeCompileError(comptime name: []const u8, _: SignedBladeParseError) noreturn {
     @compileError(std.fmt.comptimePrint(
-        "invalid signed blade `{s}` for this algebra: {s}",
-        .{ name, @errorName(err) },
+        "invalid signed blade `{s}` for this algebra",
+        .{name},
     ));
 }
 
@@ -110,7 +110,7 @@ fn parseCompactSignedBlade(
     comptime name: []const u8,
     comptime dimension: usize,
 ) SignedBladeParseError!SignedBladeSpec {
-    var spec = SignedBladeSpec{ .sign = .positive, .mask = 0 };
+    var spec = SignedBladeSpec{ .sign = .positive, .mask = blades.Mask.init(0) };
     inline for (name[1..], 1..) |char, position| {
         if (char == '_' or char == ',' or char == '-' or char == ')' or char == ']') {
             return if (position == 1) error.InvalidBasisIndex else error.InvalidBasisSeparator;
@@ -192,16 +192,16 @@ pub fn expectSignedBlade(comptime name: []const u8, comptime dimension: usize) S
 
 test "signed blades keep compact and multi-digit forms distinct" {
     const compact = try parseSignedBlade("e12", 12);
-    try std.testing.expectEqual(SignedBladeSpec{ .sign = .positive, .mask = 0b011 }, compact);
+    try std.testing.expectEqual(SignedBladeSpec{ .sign = .positive, .mask = blades.Mask.init(0b011) }, compact);
 
     const single = try parseSignedBlade("e_12", 12);
     try std.testing.expectEqual(
-        SignedBladeSpec{ .sign = .positive, .mask = @as(BladeMask, 1) << 11 },
+        SignedBladeSpec{ .sign = .positive, .mask = blades.Mask.init(@as(u64, 1) << 11) },
         single,
     );
 
     const swapped = try parseSignedBlade("e21", 2);
-    try std.testing.expectEqual(SignedBladeSpec{ .sign = .negative, .mask = 0b011 }, swapped);
+    try std.testing.expectEqual(SignedBladeSpec{ .sign = .negative, .mask = blades.Mask.init(0b011) }, swapped);
 }
 
 test "invalid signed blades produce parse errors" {
@@ -217,7 +217,7 @@ test "delimited and underscore forms agree on canonical output" {
 
     try std.testing.expectEqual(from_parens, from_brackets);
     try std.testing.expectEqual(from_brackets, from_underscore);
-    try std.testing.expectEqual(SignedBladeSpec{ .sign = .positive, .mask = 0b111 }, from_parens);
+    try std.testing.expectEqual(SignedBladeSpec{ .sign = .positive, .mask = blades.Mask.init(0b111) }, from_parens);
 }
 
 test "isSignedBlade rejects malformed delimiters and separators" {

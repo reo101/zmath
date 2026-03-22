@@ -77,6 +77,6 @@ test "vga facade keeps ga parity and rotor aliases" {
     const r = planarRotor(f64, radiansFromDegrees(90.0));
     const turned = rotated(e1, r);
 
-    try std.testing.expect(nearlyEqual(turned.coeff(0b01), 0.0, 1e-12));
-    try std.testing.expect(nearlyEqual(turned.coeff(0b10), e2.coeff(0b10), 1e-12));
+    try std.testing.expect(nearlyEqual(turned.coeff(ga.Mask.init(0b01)), 0.0, 1e-12));
+    try std.testing.expect(nearlyEqual(turned.coeff(ga.Mask.init(0b10)), e2.coeff(ga.Mask.init(0b10)), 1e-12));
 }
