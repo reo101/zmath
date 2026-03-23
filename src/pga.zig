@@ -11,7 +11,13 @@ pub const metric_signature = sig;
 
 /// Ambient dimension of the PGA algebra (4).
 pub const dimension = sig.dimension();
-const algebra = ga.Algebra(sig);
+const parser_options: ga.ParserOptions = .{
+    .basis_spans = .{
+        .positive = .range(1, 3),
+        .degenerate = .singleton(0),
+    },
+};
+const algebra = ga.AlgebraWithParserOptions(sig, parser_options);
 
 pub fn Multivector(comptime T: type, comptime blade_masks: []const ga.BladeMask) type {
     return algebra.Multivector(T, blade_masks);
@@ -145,4 +151,13 @@ test "fullSignedBladeFromIndicesWithSignature respects degenerate square" {
     const result = ga.fullSignedBladeFromIndicesWithSignature(f64, sig, &.{ 4, 4 });
     // e0*e0 = 0, so the scalar part must be zero
     try std.testing.expectEqual(@as(f64, 0.0), result.coeff(.init(0)));
+}
+
+test "pga signed blade parser accepts e0 alias for degenerate basis" {
+    const parsed = ga.parseSignedBladeWithOptions("e0", dimension, parser_options);
+    try std.testing.expectEqual(ga.SignedBladeSpec{ .sign = .positive, .mask = .init(0b1000) }, try parsed);
+
+    const E = Basis(f64);
+    try std.testing.expect(E.signedBlade("e0").eql(E.e(4)));
+    try std.testing.expect(E.signedBlade("e10").eql(E.signedBlade("e14")));
 }
