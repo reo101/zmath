@@ -65,7 +65,7 @@ const SpirvShaderPair = struct {
         return .{ .name = name };
     }
 
-    pub fn idk(self: SpirvShaderPair, b: *std.Build, cfg: Config) void {
+    pub fn build(self: SpirvShaderPair, b: *std.Build, cfg: Config) void {
         const vert = b.addObject(.{
             .name = b.fmt("{s}.vert", .{self.name}),
             .root_module = b.createModule(.{
@@ -109,7 +109,9 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const use_llvm_spirv = b.option(bool, "llvm-spirv", "Use LLVM backend for SPIR-V shader builds") orelse false;
+    _ = use_llvm_spirv; // autofix
     const compare_spirv = b.option(bool, "compare-spirv", "Emit SPIR-V size comparison for GA vs raw shader variants") orelse false;
+    _ = compare_spirv; // autofix
 
     const build_options = b.addOptions();
     build_options.addOption(bool, "enable_simd_fast_paths", true);
@@ -225,110 +227,111 @@ pub fn build(b: *std.Build) void {
     run_bench_scalar_then_simd.step.dependOn(&run_bench_scalar.step);
     bench_step.dependOn(&run_bench_scalar_then_simd.step);
 
-    const spirv_target = b.resolveTargetQuery(.{
-        .cpu_arch = .spirv32,
-        .os_tag = .vulkan,
-        .cpu_model = .{
-            .explicit = &std.Target.spirv.cpu.vulkan_v1_2,
-        },
-        .ofmt = .spirv,
-        .abi = .none,
-    });
-
-    const spirv_build_options = b.addOptions();
-    spirv_build_options.addOption(bool, "enable_simd_fast_paths", true);
-    const spirv_build_options_module = spirv_build_options.createModule();
-    const spirv_ga = b.addModule("ga-spirv", .{
-        .root_source_file = b.path("src/ga.zig"),
-        .target = spirv_target,
-        .imports = &.{
-            .{
-                .name = "build_options",
-                .module = spirv_build_options_module,
-            },
-        },
-    });
-    const spirv_vga = b.addModule("vga-spirv", .{
-        .root_source_file = b.path("src/vga.zig"),
-        .target = spirv_target,
-        .imports = &.{
-            .{
-                .name = "ga",
-                .module = spirv_ga,
-            },
-            .{
-                .name = "build_options",
-                .module = spirv_build_options_module,
-            },
-        },
-    });
-
-    const spirv_step = b.step("spirv-vga", "Build the VGA-based SPIR-V vertex and fragment shaders");
-    const spirv_compare_step = b.step("spirv-compare", "Build GA and raw SPIR-V vertex shader variants for size comparison");
-
-    const spirv_shader_imports = [_]std.Build.Module.Import{
-        .{
-            .name = "vga",
-            .module = spirv_vga,
-        },
-        .{
-            .name = "build_options",
-            .module = spirv_build_options_module,
-        },
-    };
-
-    SpirvShaderPair.init("vga_passthrough").idk(b, .{
-        .target = spirv_target,
-        .optimize = optimize,
-        .use_llvm = use_llvm_spirv,
-        .imports = &spirv_shader_imports,
-        .install_step = b.getInstallStep(),
-        .pair_step = spirv_step,
-    });
-
-    const raw_vert = b.addObject(.{
-        .name = "vga_passthrough_raw.vert",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/shaders/vga_passthrough_raw.vert.zig"),
-            .target = spirv_target,
-            .optimize = optimize,
-            .strip = true,
-            .imports = &.{
-                .{
-                    .name = "build_options",
-                    .module = spirv_build_options_module,
-                },
-            },
-        }),
-        .use_llvm = use_llvm_spirv,
-        .use_lld = false,
-    });
-    const install_raw_vert = b.addInstallFile(raw_vert.getEmittedBin(), "shaders/vga_passthrough_raw.vert.spv");
-    spirv_compare_step.dependOn(&raw_vert.step);
-    spirv_compare_step.dependOn(&install_raw_vert.step);
-
-    const ga_vert = b.addObject(.{
-        .name = "vga_passthrough.vert",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/shaders/vga_passthrough.vert.zig"),
-            .target = spirv_target,
-            .optimize = optimize,
-            .strip = true,
-            .imports = &spirv_shader_imports,
-        }),
-        .use_llvm = use_llvm_spirv,
-        .use_lld = false,
-    });
-    const install_ga_vert = b.addInstallFile(ga_vert.getEmittedBin(), "shaders/vga_passthrough_ga.vert.spv");
-    spirv_compare_step.dependOn(&ga_vert.step);
-    spirv_compare_step.dependOn(&install_ga_vert.step);
-
-    if (compare_spirv) {
-        const compare_sizes_cmd = b.addSystemCommand(&.{ "sh", "-c", "wc -c zig-out/shaders/vga_passthrough_ga.vert.spv zig-out/shaders/vga_passthrough_raw.vert.spv" });
-        compare_sizes_cmd.step.dependOn(&install_ga_vert.step);
-        compare_sizes_cmd.step.dependOn(&install_raw_vert.step);
-        spirv_compare_step.dependOn(&compare_sizes_cmd.step);
-    }
+    // const spirv_target = b.resolveTargetQuery(.{
+    //     .cpu_arch = .spirv32,
+    //     .os_tag = .vulkan,
+    //     .cpu_model = .{
+    //         .explicit = &std.Target.spirv.cpu.vulkan_v1_2,
+    //     },
+    //     .ofmt = .spirv,
+    //     .abi = .none,
+    // });
+    //
+    // const spirv_build_options = b.addOptions();
+    // spirv_build_options.addOption(bool, "enable_simd_fast_paths", true);
+    // const spirv_build_options_module = spirv_build_options.createModule();
+    // const spirv_ga = b.addModule("ga-spirv", .{
+    //     .root_source_file = b.path("src/ga.zig"),
+    //     .target = spirv_target,
+    //     .imports = &.{
+    //         .{
+    //             .name = "build_options",
+    //             .module = spirv_build_options_module,
+    //         },
+    //     },
+    // });
+    // const spirv_vga = b.addModule("vga-spirv", .{
+    //     .root_source_file = b.path("src/vga.zig"),
+    //     .target = spirv_target,
+    //     .imports = &.{
+    //         .{
+    //             .name = "ga",
+    //             .module = spirv_ga,
+    //         },
+    //         .{
+    //             .name = "build_options",
+    //             .module = spirv_build_options_module,
+    //         },
+    //     },
+    // });
+    //
+    // const spirv_step = b.step("spirv-vga", "Build the VGA-based SPIR-V vertex and fragment shaders");
+    // const spirv_compare_step = b.step("spirv-compare", "Build GA and raw SPIR-V vertex shader variants for size comparison");
+    //
+    // const spirv_shader_imports = [_]std.Build.Module.Import{
+    //     .{
+    //         .name = "vga",
+    //         .module = spirv_vga,
+    //     },
+    //     .{
+    //         .name = "build_options",
+    //         .module = spirv_build_options_module,
+    //     },
+    // };
+    //
+    // const spirv_shaders = SpirvShaderPair.init("vga_passthrough");
+    // spirv_shaders.build(b, .{
+    //     .target = spirv_target,
+    //     .optimize = optimize,
+    //     .use_llvm = use_llvm_spirv,
+    //     .imports = &spirv_shader_imports,
+    //     .install_step = b.getInstallStep(),
+    //     .pair_step = spirv_step,
+    // });
+    //
+    // const raw_vert = b.addObject(.{
+    //     .name = "vga_passthrough_raw.vert",
+    //     .root_module = b.createModule(.{
+    //         .root_source_file = b.path("src/shaders/vga_passthrough_raw.vert.zig"),
+    //         .target = spirv_target,
+    //         .optimize = optimize,
+    //         .strip = true,
+    //         .imports = &.{
+    //             .{
+    //                 .name = "build_options",
+    //                 .module = spirv_build_options_module,
+    //             },
+    //         },
+    //     }),
+    //     .use_llvm = use_llvm_spirv,
+    //     .use_lld = false,
+    // });
+    // const install_raw_vert = b.addInstallFile(raw_vert.getEmittedBin(), "shaders/vga_passthrough_raw.vert.spv");
+    // spirv_compare_step.dependOn(&raw_vert.step);
+    // spirv_compare_step.dependOn(&install_raw_vert.step);
+    //
+    // const ga_vert = b.addObject(.{
+    //     .name = "vga_passthrough.vert",
+    //     .root_module = b.createModule(.{
+    //         .root_source_file = b.path("src/shaders/vga_passthrough.vert.zig"),
+    //         .target = spirv_target,
+    //         .optimize = optimize,
+    //         .strip = true,
+    //         .imports = &spirv_shader_imports,
+    //     }),
+    //     .use_llvm = use_llvm_spirv,
+    //     .use_lld = false,
+    // });
+    // const install_ga_vert = b.addInstallFile(ga_vert.getEmittedBin(), "shaders/vga_passthrough_ga.vert.spv");
+    // spirv_compare_step.dependOn(&ga_vert.step);
+    // spirv_compare_step.dependOn(&install_ga_vert.step);
+    //
+    // if (compare_spirv) {
+    //     const compare_sizes_cmd = b.addSystemCommand(&.{ "sh", "-c", "wc -c zig-out/shaders/vga_passthrough_ga.vert.spv zig-out/shaders/vga_passthrough_raw.vert.spv" });
+    //     compare_sizes_cmd.step.dependOn(&install_ga_vert.step);
+    //     compare_sizes_cmd.step.dependOn(&install_raw_vert.step);
+    //     spirv_compare_step.dependOn(&compare_sizes_cmd.step);
+    // }
 
     const zmath_tests = b.addTest(.{
         .root_module = zmath,

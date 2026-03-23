@@ -6,7 +6,6 @@ pub const multivector = @import("ga/multivector.zig");
 pub const rotors2d = @import("ga/rotors.zig");
 
 pub const BladeMask = blades.BladeMask;
-pub const Mask = blades.Mask;
 pub const SignedBladeParseError = blade_parsing.SignedBladeParseError;
 pub const SignedBladeSpec = blades.SignedBladeSpec;
 pub const MetricSignature = blades.MetricSignature;
@@ -19,6 +18,7 @@ pub const gradeBladeMasks = blades.gradeBladeMasks;
 pub const evenBladeMasks = blades.evenBladeMasks;
 pub const oddBladeMasks = blades.oddBladeMasks;
 pub const basisVectorMask = blades.basisVectorMask;
+pub const basisVectorBladeMask = basisVectorMask;
 pub const basisBladeMask = blades.basisBladeMask;
 pub const writeBladeMask = blades.writeBladeMask;
 
@@ -136,14 +136,14 @@ test "ga facade exposes core and specialized modules" {
 
     const sig: MetricSignature = .{ .p = 1, .q = 1 };
     const value = fullSignedBladeFromIndicesWithSignature(i32, sig, &.{ 2, 2 });
-    try std.testing.expectEqual(@as(i32, -1), value.coeff(Mask.init(0)));
+    try std.testing.expectEqual(@as(i32, -1), value.coeff(.init(0)));
 
     const E2 = Algebra(.euclidean(2)).Basis(f64);
     const e1 = E2.e(1);
     const half_turn = rotors2d.planarRotor(f64, std.math.pi);
     const rotated_e1 = rotors2d.rotated(e1, half_turn);
-    try std.testing.expect(rotors2d.nearlyEqual(rotated_e1.coeff(Mask.init(0b01)), -1.0, 1e-12));
-    try std.testing.expect(rotors2d.nearlyEqual(rotated_e1.coeff(Mask.init(0b10)), 0.0, 1e-12));
+    try std.testing.expect(rotors2d.nearlyEqual(rotated_e1.coeff(.init(0b01)), -1.0, 1e-12));
+    try std.testing.expect(rotors2d.nearlyEqual(rotated_e1.coeff(.init(0b10)), 0.0, 1e-12));
 }
 
 test "signature-baked algebra namespace drives metric-dependent products" {
@@ -152,5 +152,5 @@ test "signature-baked algebra namespace drives metric-dependent products" {
 
     const e2 = Cl11.Basis(i32).e(2);
     const e2_squared = e2.gp(e2);
-    try std.testing.expectEqual(@as(i32, -1), e2_squared.coeff(Mask.init(0)));
+    try std.testing.expectEqual(@as(i32, -1), e2_squared.coeff(.init(0)));
 }

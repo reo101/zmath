@@ -18,8 +18,8 @@ fn colorAsGAVector() Vec(2) {
 
 export fn main() callconv(.spirv_fragment) void {
     const color_xy = colorAsGAVector();
-    const e1: ga.BladeMask = ga.Mask.init(0b01);
-    const e2: ga.BladeMask = ga.Mask.init(0b10);
+    const e1: ga.BladeMask = .init(0b01);
+    const e2: ga.BladeMask = .init(0b10);
     const intensity = @min(vga.norm(color_xy), 1.0);
 
     out_color = .init(.{ color_xy.coeff(e1), color_xy.coeff(e2), in_color.coeffs[2], intensity });

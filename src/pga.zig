@@ -79,7 +79,7 @@ test "degenerate basis vector squares to zero under geometric product" {
     const result = e0.gp(e0);
 
     // e0 * e0 = 0 in Cl(3,0,1)
-    try std.testing.expectEqual(@as(f64, 0.0), result.coeff(ga.Mask.init(0))); // scalar part
+    try std.testing.expectEqual(@as(f64, 0.0), result.coeff(.init(0))); // scalar part
 }
 
 test "positive basis vectors still square to +1" {
@@ -88,7 +88,7 @@ test "positive basis vectors still square to +1" {
     inline for (1..4) |i| {
         const ei = E.e(i);
         const sq = ei.gp(ei);
-        try std.testing.expectEqual(@as(f64, 1.0), sq.coeff(ga.Mask.init(0)));
+        try std.testing.expectEqual(@as(f64, 1.0), sq.coeff(.init(0)));
     }
 }
 
@@ -144,5 +144,5 @@ test "fullSignedBladeFromIndicesWithSignature respects degenerate square" {
     // Repeated degenerate index should give zero
     const result = ga.fullSignedBladeFromIndicesWithSignature(f64, sig, &.{ 4, 4 });
     // e0*e0 = 0, so the scalar part must be zero
-    try std.testing.expectEqual(@as(f64, 0.0), result.coeff(ga.Mask.init(0)));
+    try std.testing.expectEqual(@as(f64, 0.0), result.coeff(.init(0)));
 }
