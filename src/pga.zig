@@ -11,13 +11,14 @@ pub const metric_signature = sig;
 
 /// Ambient dimension of the PGA algebra (4).
 pub const dimension = sig.dimension();
-const parser_options: ga.ParserOptions = .{
+const naming_options: ga.SignedBladeNamingOptions = .{
     .basis_spans = .{
         .positive = .range(1, 3),
-        .degenerate = .singleton(0),
+        .degenerate = .singleton(4),
     },
+    .index_aliases = &.{.{ .from = 0, .to = 4 }},
 };
-const algebra = ga.AlgebraWithParserOptions(sig, parser_options);
+const algebra = ga.AlgebraWithNamingOptions(sig, naming_options);
 
 pub fn Multivector(comptime T: type, comptime blade_masks: []const ga.BladeMask) type {
     return algebra.Multivector(T, blade_masks);
@@ -81,7 +82,7 @@ test "pga signature has correct dimension and basis-vector squares" {
 
 test "degenerate basis vector squares to zero under geometric product" {
     const E = Basis(f64);
-    const e0 = E.e(4); // the degenerate direction
+    const e0 = E.e(0); // the degenerate direction
     const result = e0.gp(e0);
 
     // e0 * e0 = 0 in Cl(3,0,1)
@@ -101,7 +102,7 @@ test "positive basis vectors still square to +1" {
 test "geometric product with degenerate vector produces dual-like elements" {
     const E = Basis(f64);
     const e1 = E.e(1);
-    const e0 = E.e(4);
+    const e0 = E.e(0);
 
     // e1 * e0 should give a bivector e10 with coefficient +1 (or -1 depending on order)
     const e1e0 = e1.gp(e0);
@@ -116,7 +117,7 @@ test "geometric product with degenerate vector produces dual-like elements" {
 
 test "ideal point (pure e0 multivector) has zero scalar product with itself" {
     const E = Basis(f64);
-    const e0 = E.e(4);
+    const e0 = E.e(0);
     const sp = e0.scalarProduct(e0);
     try std.testing.expectEqual(@as(f64, 0.0), sp);
 }
@@ -126,7 +127,7 @@ test "euclidean point representation and join" {
     const e1 = E.e(1);
     const e2 = E.e(2);
     const e3 = E.e(3);
-    const e0 = E.e(4);
+    const e0 = E.e(0);
 
     // In PGA a Euclidean point is P = x*e1 + y*e2 + z*e3 + e0
     // Build point P = e1 + e0 (x=1, y=0, z=0)
@@ -154,10 +155,12 @@ test "fullSignedBladeFromIndicesWithSignature respects degenerate square" {
 }
 
 test "pga signed blade parser accepts e0 alias for degenerate basis" {
-    const parsed = ga.parseSignedBladeWithOptions("e0", dimension, parser_options);
+    const parsed = ga.parseSignedBladeWithOptions("e0", dimension, naming_options);
     try std.testing.expectEqual(ga.SignedBladeSpec{ .sign = .positive, .mask = .init(0b1000) }, try parsed);
 
     const E = Basis(f64);
-    try std.testing.expect(E.signedBlade("e0").eql(E.e(4)));
-    try std.testing.expect(E.signedBlade("e10").eql(E.signedBlade("e14")));
+    try std.testing.expect(E.signedBlade("e0").eql(E.e(0)));
+    try std.testing.expectError(error.InvalidBasisIndex, ga.resolveBasisHelperIndexWithOptions(4, dimension, naming_options));
+    try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBladeWithOptions("e4", dimension, naming_options));
+    try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBladeWithOptions("e14", dimension, naming_options));
 }
