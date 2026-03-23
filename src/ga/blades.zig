@@ -5,16 +5,17 @@ const parser = @import("blade_parsing.zig");
 /// Bitset representation of a basis blade.
 ///
 /// Bit `0` corresponds to `e1`, bit `1` to `e2`, and so on.
-pub const BladeMaskBackingType = u64;
-const BladeMaskBitSet = std.bit_set.IntegerBitSet(@bitSizeOf(BladeMaskBackingType));
+pub const BladeMaskBytes = 2;
+pub const BladeMaskBitSet = std.bit_set.IntegerBitSet(BladeMaskBytes * 8);
+pub const BladeMaskInt = BladeMaskBitSet.MaskInt;
 
 /// Utilities for working with blade masks.
-pub const BladeMask = packed struct(BladeMaskBackingType) {
+pub const BladeMask = packed struct(BladeMaskInt) {
     bitset: BladeMaskBitSet,
 
     /// Explicit constructor for blade masks from integer bit patterns.
     pub inline fn init(value: anytype) BladeMask {
-        return .{ .bitset = .{ .mask = @as(u64, @intCast(value)) } };
+        return .{ .bitset = .{ .mask = @as(BladeMaskInt, @intCast(value)) } };
     }
 
     /// Convenience constructor for tuple/array literals of raw masks.
@@ -26,7 +27,7 @@ pub const BladeMask = packed struct(BladeMaskBackingType) {
         return masks;
     }
 
-    pub inline fn toInt(mask: BladeMask) u64 {
+    pub inline fn toInt(mask: BladeMask) BladeMaskInt {
         return mask.bitset.mask;
     }
 
@@ -208,7 +209,7 @@ pub fn basisVectorMask(comptime dimension: usize, one_based_index: usize) BladeM
     validateDimension(dimension);
     std.debug.assert(1 <= one_based_index and one_based_index <= dimension);
 
-    return .init(@as(u64, 1) << @intCast(one_based_index - 1));
+    return .init(@as(BladeMaskInt, 1) << @intCast(one_based_index - 1));
 }
 
 /// Returns the mask for a basis blade expressed as one-based indices.
@@ -236,7 +237,7 @@ pub fn applyBasisIndex(spec: *SignedBladeSpec, one_based_index: usize, comptime 
 pub fn applyBasisIndexWithSignature(spec: *SignedBladeSpec, one_based_index: usize, comptime sig: MetricSignature) void {
     const dimension = sig.dimension();
     std.debug.assert(1 <= one_based_index and one_based_index <= dimension);
-    const bit: BladeMask = .init(@as(u64, 1) << @intCast(one_based_index - 1));
+    const bit: BladeMask = .init(@as(BladeMaskInt, 1) << @intCast(one_based_index - 1));
     if (geometricProductSignWithSignature(spec.mask, bit, sig) < 0) {
         spec.sign.flip();
     }
@@ -294,8 +295,8 @@ pub fn gradeBladeMasks(comptime dimension: usize, comptime grade: usize) [choose
     }
 
     var next_index: usize = 0;
-    var mask: BladeMask = .init((@as(u64, 1) << @intCast(grade)) - 1);
-    const limit = @as(u64, 1) << @intCast(dimension);
+    var mask: BladeMask = .init((@as(BladeMaskInt, 1) << @intCast(grade)) - 1);
+    const limit = @as(BladeMaskInt, 1) << @intCast(dimension);
 
     while (mask.toInt() < limit) {
         masks[next_index] = mask;
@@ -526,9 +527,9 @@ pub fn geometricProductSign(lhs_mask: BladeMask, rhs_mask: BladeMask) i8 {
         remaining &= remaining - 1;
 
         const lower_bits = if (bit_index == 0)
-            @as(u64, 0)
+            @as(BladeMaskInt, 0)
         else
-            (@as(u64, 1) << @intCast(bit_index)) - 1;
+            (@as(BladeMaskInt, 1) << @intCast(bit_index)) - 1;
 
         const lower_rhs = rhs_bits.intersectWith(.{ .mask = lower_bits });
         if ((lower_rhs.count() % 2) != 0) {
@@ -638,9 +639,9 @@ test "advanceFixedPopcountMask reports zero and high-bit transition behavior" {
     try std.testing.expect(!advanceFixedPopcountMask(&zero));
     try std.testing.expectEqual(BladeMask.init(0), zero);
 
-    var crossing_high_bit: BladeMask = .init((@as(u64, 1) << (@bitSizeOf(BladeMask) - 2)) | 0b1);
+    var crossing_high_bit: BladeMask = .init((@as(BladeMaskInt, 1) << (@bitSizeOf(BladeMask) - 2)) | 0b1);
     try std.testing.expect(advanceFixedPopcountMask(&crossing_high_bit));
-    try std.testing.expectEqual(BladeMask.init((@as(u64, 1) << (@bitSizeOf(BladeMask) - 2)) | 0b10), crossing_high_bit);
+    try std.testing.expectEqual(BladeMask.init((@as(BladeMaskInt, 1) << (@bitSizeOf(BladeMask) - 2)) | 0b10), crossing_high_bit);
     try std.testing.expectEqual(@as(usize, 2), bladeGrade(crossing_high_bit));
 }
 
