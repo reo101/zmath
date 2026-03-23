@@ -3,8 +3,11 @@ const gpu = std.gpu;
 const vga = @import("vga");
 const ga = vga.ga;
 
+fn Alg(n: usize) type {
+    return ga.Algebra(.euclidean(n));
+}
 fn Vec(n: usize) type {
-    return ga.Algebra(.euclidean(n)).GAVector(f32);
+    return Alg(n).GAVector(f32);
 }
 
 /// Vertex input position at location 0.

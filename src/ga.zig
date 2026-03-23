@@ -44,11 +44,9 @@ pub const signedBladeWithSignature = multivector.signedBlade;
 
 /// Returns a signature-baked algebra namespace for a fixed `Cl(p, q, r)`.
 pub fn Algebra(comptime sig: MetricSignature) type {
-    const algebra_dimension = sig.dimension();
-
     return struct {
-        pub const dimension = algebra_dimension;
         pub const metric_signature = sig;
+        pub const dimension = metric_signature.dimension();
 
         pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask) type {
             return multivector.Multivector(T, blade_masks, metric_signature);
@@ -98,19 +96,31 @@ pub fn Algebra(comptime sig: MetricSignature) type {
             return multivector.Rotor(T, metric_signature);
         }
 
-        pub fn basisBlade(comptime T: type, comptime mask: BladeMask) multivector.BasisBladeType(T, mask, metric_signature) {
+        pub fn basisBlade(
+            comptime T: type,
+            comptime mask: BladeMask,
+        ) multivector.BasisBladeType(T, mask, metric_signature) {
             return multivector.basisBlade(T, mask, metric_signature);
         }
 
-        pub fn basisVector(comptime T: type, comptime one_based_index: usize) multivector.BasisBladeType(T, blades.basisVectorMask(dimension, one_based_index), metric_signature) {
+        pub fn basisVector(
+            comptime T: type,
+            comptime one_based_index: usize,
+        ) multivector.BasisBladeType(T, blades.basisVectorMask(metric_signature.dimension(), one_based_index), metric_signature) {
             return multivector.basisVector(T, one_based_index, metric_signature);
         }
 
-        pub fn signedBlade(comptime T: type, comptime name: []const u8) multivector.SignedBladeType(T, name, metric_signature) {
+        pub fn signedBlade(
+            comptime T: type,
+            comptime name: []const u8,
+        ) multivector.SignedBladeType(T, name, metric_signature) {
             return multivector.signedBlade(T, name, metric_signature);
         }
 
-        pub fn fullSignedBladeFromIndices(comptime T: type, indices: []const usize) multivector.FullMultivector(T, metric_signature) {
+        pub fn fullSignedBladeFromIndices(
+            comptime T: type,
+            indices: []const usize,
+        ) multivector.FullMultivector(T, metric_signature) {
             return multivector.fullSignedBladeFromIndicesWithSignature(T, metric_signature, indices);
         }
     };
