@@ -31,7 +31,14 @@ fn addGaLeafTests(
     std.mem.sort([]const u8, roots.items, {}, pathLessThan);
 
     for (roots.items) |root_path| {
+        const test_name = try b.allocator.dupe(u8, root_path);
+        for (test_name[0..]) |*c| {
+            if (c.* == '/') {
+                c.* = '_';
+            }
+        }
         const leaf_tests = b.addTest(.{
+            .name = test_name,
             .root_module = b.createModule(.{
                 .root_source_file = b.path(root_path),
                 .target = target,
