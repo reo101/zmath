@@ -50,12 +50,81 @@ pub const BladeMask = packed struct(BladeMaskInt) {
     pub fn parseForDimensionPanicking(comptime name: []const u8, comptime dimension: usize) BladeMask {
         return parser.expectSignedBlade(name, dimension).mask;
     }
+
+    /// Returns the orientation sign produced by the Euclidean geometric product with `rhs`.
+    pub fn geometricProductSign(lhs: BladeMask, rhs: BladeMask) OrientationSign {
+        var sign: OrientationSign = .positive;
+        var remaining = lhs.toInt();
+
+        while (remaining != 0) {
+            const bit_index = @ctz(remaining);
+            remaining &= remaining - 1;
+
+            const lower_bits = if (bit_index == 0)
+                @as(BladeMaskInt, 0)
+            else
+                (@as(BladeMaskInt, 1) << @intCast(bit_index)) - 1;
+
+            const lower_rhs = rhs.bitset.intersectWith(.{ .mask = lower_bits });
+            if ((lower_rhs.count() % 2) != 0) {
+                sign.flip();
+            }
+        }
+
+        return sign;
+    }
+
+    /// Returns the signature class produced by the `Cl(p, q, r)` geometric product with `rhs`.
+    pub fn geometricProductClassWithSignature(lhs: BladeMask, rhs: BladeMask, comptime sig: MetricSignature) SignatureClass {
+        var sign: SignatureClass = .positive;
+        var remaining = lhs.toInt();
+        while (remaining != 0) {
+            const bit_index = @ctz(remaining);
+            remaining &= remaining - 1;
+
+            const lower_bits = if (bit_index == 0)
+                @as(BladeMaskInt, 0)
+            else
+                (@as(BladeMaskInt, 1) << @intCast(bit_index)) - 1;
+
+            const lower_rhs = rhs.bitset.intersectWith(.{ .mask = lower_bits });
+            if ((lower_rhs.count() % 2) != 0) {
+                sign = sign.mul(.negative);
+            }
+
+            if (rhs.bitset.isSet(bit_index)) {
+                sign = sign.mul(basisSquareClass(sig, bit_index + 1));
+            }
+        }
+
+        return sign;
+    }
+};
+
+/// Signature class of one basis-vector square in `Cl(p, q, r)`.
+pub const SignatureClass = enum(i2) {
+    positive = 1,
+    negative = -1,
+    degenerate = 0,
+
+    pub fn isNegative(self: SignatureClass) bool {
+        return self == .negative;
+    }
+
+    pub fn mul(self: SignatureClass, rhs: SignatureClass) SignatureClass {
+        if (self == .degenerate or rhs == .degenerate) {
+            return .degenerate;
+        }
+        return if (self == rhs)
+            .positive
+        else
+            .negative;
+    }
 };
 
 /// Orientation sign attached to a canonicalized signed blade.
 pub const OrientationSign = enum(i2) {
     negative = -1,
-    degenerate = 0,
     positive = 1,
 
     /// Flips to the opposite orientation sign in place.
@@ -67,7 +136,6 @@ pub const OrientationSign = enum(i2) {
     pub fn flipped(self: OrientationSign) OrientationSign {
         return switch (self) {
             .negative => .positive,
-            .degenerate => .degenerate,
             .positive => .negative,
         };
     }
@@ -78,11 +146,10 @@ pub const OrientationSign = enum(i2) {
     }
 
     pub fn mul(self: OrientationSign, rhs: OrientationSign) OrientationSign {
-        return switch (self) {
-            .negative => rhs.flipped(),
-            .degenerate => .degenerate,
-            .positive => rhs,
-        };
+        return if (self == rhs)
+            .positive
+        else
+            .negative;
     }
 };
 
@@ -116,40 +183,61 @@ pub const BasisIndexSpan = struct {
 
 /// Basis-index spans partitioned by metric signature category.
 pub const BasisIndexSpans = struct {
-    positive: ?BasisIndexSpan = null,
-    negative: ?BasisIndexSpan = null,
-    degenerate: ?BasisIndexSpan = null,
+    pub const ByClass = std.enums.EnumFieldStruct(SignatureClass, ?BasisIndexSpan, @as(?BasisIndexSpan, null));
+
+    by_class: ByClass = .{},
+
+    pub fn init(by_class: ByClass) BasisIndexSpans {
+        return .{ .by_class = by_class };
+    }
 
     pub fn fromSignature(comptime sig: MetricSignature) BasisIndexSpans {
         _ = sig.dimension();
 
-        const pos_end = sig.p;
-        const neg_start = sig.p + 1;
-        const neg_end = sig.p + sig.q;
-        const deg_start = sig.p + sig.q + 1;
-        const deg_end = sig.p + sig.q + sig.r;
+        var by_class: ByClass = .{};
+        var next_start: usize = 1;
+        inline for (std.meta.tags(SignatureClass)) |class| {
+            const count = switch (class) {
+                .positive => sig.p,
+                .negative => sig.q,
+                .degenerate => sig.r,
+            };
+            if (count != 0) {
+                switch (class) {
+                    inline else => |tag| @field(by_class, @tagName(tag)) = .range(next_start, next_start + count - 1),
+                }
+                next_start += count;
+            }
+        }
 
-        return .{
-            .positive = if (sig.p == 0) null else .range(1, pos_end),
-            .negative = if (sig.q == 0) null else .range(neg_start, neg_end),
-            .degenerate = if (sig.r == 0) null else .range(deg_start, deg_end),
+        return init(by_class);
+    }
+
+    pub fn spanFor(self: BasisIndexSpans, class: SignatureClass) ?BasisIndexSpan {
+        return switch (class) {
+            inline else => |tag| @field(self.by_class, @tagName(tag)),
         };
     }
 
     pub fn contains(self: BasisIndexSpans, one_based_index: usize) bool {
-        return containsIn(self.positive, one_based_index) or
-            containsIn(self.negative, one_based_index) or
-            containsIn(self.degenerate, one_based_index);
+        inline for (std.meta.tags(SignatureClass)) |class| {
+            if (containsIn(self.spanFor(class), one_based_index)) return true;
+        }
+        return false;
     }
 
     pub fn assertValidForDimension(self: BasisIndexSpans, comptime dimension: usize) void {
-        validateSpan(self, .positive, dimension);
-        validateSpan(self, .negative, dimension);
-        validateSpan(self, .degenerate, dimension);
+        const classes = comptime std.meta.tags(SignatureClass);
 
-        validateNoOverlap(self, .positive, .negative);
-        validateNoOverlap(self, .positive, .degenerate);
-        validateNoOverlap(self, .negative, .degenerate);
+        inline for (classes) |class| {
+            validateSpan(self, class, dimension);
+        }
+
+        inline for (classes, 0..) |lhs_class, lhs_index| {
+            inline for (classes[(lhs_index + 1)..]) |rhs_class| {
+                validateNoOverlap(self, lhs_class, rhs_class);
+            }
+        }
     }
 
     fn containsIn(span: ?BasisIndexSpan, one_based_index: usize) bool {
@@ -157,19 +245,9 @@ pub const BasisIndexSpans = struct {
         return false;
     }
 
-    fn spanFieldName(comptime field: OrientationSign) []const u8 {
-        return switch (field) {
-            inline else => |tag| @tagName(tag),
-        };
-    }
-
-    fn spanFor(self: BasisIndexSpans, comptime field: OrientationSign) ?BasisIndexSpan {
-        return @field(self, spanFieldName(field));
-    }
-
-    fn validateSpan(self: BasisIndexSpans, comptime field: OrientationSign, comptime dimension: usize) void {
-        const label = comptime spanFieldName(field);
-        if (self.spanFor(field)) |range| {
+    fn validateSpan(self: BasisIndexSpans, comptime class: SignatureClass, comptime dimension: usize) void {
+        const label = comptime @tagName(class);
+        if (self.spanFor(class)) |range| {
             if (!(1 <= range.start and range.start <= range.end and range.end <= dimension)) {
                 const message = comptime std.fmt.comptimePrint(
                     "{s} basis span must stay within [1, {d}] and have start <= end",
@@ -189,14 +267,14 @@ pub const BasisIndexSpans = struct {
 
     fn validateNoOverlap(
         self: BasisIndexSpans,
-        comptime lhs_field: OrientationSign,
-        comptime rhs_field: OrientationSign,
+        comptime lhs_class: SignatureClass,
+        comptime rhs_class: SignatureClass,
     ) void {
-        const lhs_label = comptime spanFieldName(lhs_field);
-        const rhs_label = comptime spanFieldName(rhs_field);
+        const lhs_label = comptime @tagName(lhs_class);
+        const rhs_label = comptime @tagName(rhs_class);
 
-        const left_span = self.spanFor(lhs_field) orelse return;
-        const right_span = self.spanFor(rhs_field) orelse return;
+        const left_span = self.spanFor(lhs_class) orelse return;
+        const right_span = self.spanFor(rhs_class) orelse return;
 
         if (spansOverlap(left_span, right_span)) {
             const message = comptime std.fmt.comptimePrint(
@@ -277,11 +355,11 @@ pub fn euclideanSignature(comptime dimension: usize) MetricSignature {
     return MetricSignature.euclidean(dimension);
 }
 
-/// Returns the square sign of a one-based basis vector in `sig`.
-/// - Returns `1` for basis vectors in the positive signature (first `p` vectors)
-/// - Returns `-1` for basis vectors in the negative signature (next `q` vectors)
-/// - Returns `0` for basis vectors in the degenerate signature (last `r` vectors)
-pub fn basisSquareSign(comptime sig: MetricSignature, one_based_index: usize) OrientationSign {
+/// Returns the square class of a one-based basis vector in `sig`.
+/// - Returns `.positive` for basis vectors in the positive signature (first `p` vectors)
+/// - Returns `.negative` for basis vectors in the negative signature (next `q` vectors)
+/// - Returns `.degenerate` for basis vectors in the degenerate signature (last `r` vectors)
+pub fn basisSquareClass(comptime sig: MetricSignature, one_based_index: usize) SignatureClass {
     const dimension = sig.dimension();
     std.debug.assert(1 <= one_based_index and one_based_index <= dimension);
 
@@ -367,7 +445,7 @@ pub fn applyBasisIndexWithSignature(spec: *SignedBladeSpec, one_based_index: usi
     const dimension = sig.dimension();
     std.debug.assert(1 <= one_based_index and one_based_index <= dimension);
     const bit: BladeMask = .init(@as(BladeMaskInt, 1) << @intCast(one_based_index - 1));
-    if (geometricProductSignWithSignature(spec.mask, bit, sig).isNegative()) {
+    if (spec.mask.geometricProductClassWithSignature(bit, sig).isNegative()) {
         spec.sign.flip();
     }
     spec.mask.bitset = spec.mask.bitset.xorWith(bit.bitset);
@@ -645,45 +723,6 @@ pub fn bladeIndexByMask(
     return result;
 }
 
-/// Returns the sign produced by the Euclidean geometric product of two blade masks.
-pub fn geometricProductSign(lhs_mask: BladeMask, rhs_mask: BladeMask) OrientationSign {
-    var sign: OrientationSign = .positive;
-    var remaining = lhs_mask.toInt();
-    const rhs_bits = rhs_mask.bitset;
-
-    while (remaining != 0) {
-        const bit_index = @ctz(remaining);
-        remaining &= remaining - 1;
-
-        const lower_bits = if (bit_index == 0)
-            @as(BladeMaskInt, 0)
-        else
-            (@as(BladeMaskInt, 1) << @intCast(bit_index)) - 1;
-
-        const lower_rhs = rhs_bits.intersectWith(.{ .mask = lower_bits });
-        if ((lower_rhs.count() % 2) != 0) {
-            sign.flip();
-        }
-    }
-
-    return sign;
-}
-
-/// Returns the sign produced by the `Cl(p, q, r)` geometric product of two blade masks.
-pub fn geometricProductSignWithSignature(
-    lhs_mask: BladeMask,
-    rhs_mask: BladeMask,
-    comptime sig: MetricSignature,
-) OrientationSign {
-    var sign = geometricProductSign(lhs_mask, rhs_mask);
-    var overlap = lhs_mask.bitset.intersectWith(rhs_mask.bitset);
-    while (overlap.toggleFirstSet()) |bit_index| {
-        sign = sign.mul(basisSquareSign(sig, bit_index + 1));
-    }
-
-    return sign;
-}
-
 /// Returns whether two blade lists are identical.
 pub fn sameBladeSet(comptime lhs_masks: []const BladeMask, comptime rhs_masks: []const BladeMask) bool {
     if (lhs_masks.len != rhs_masks.len) return false;
@@ -782,14 +821,14 @@ test "writeBladeMask renders fixed-width binary through std.Io.Writer" {
     try std.testing.expectEqualSlices(u8, "0b0101", out.written());
 }
 
-test "geometricProductSignWithSignature applies negative basis-vector squares" {
+test "geometricProductClassWithSignature applies metric square classes" {
     const Minkowski11: MetricSignature = .{ .p = 1, .q = 1 };
-    try std.testing.expectEqual(.positive, geometricProductSignWithSignature(.init(0b01), .init(0b01), Minkowski11));
-    try std.testing.expectEqual(.negative, geometricProductSignWithSignature(.init(0b10), .init(0b10), Minkowski11));
+    try std.testing.expectEqual(.positive, BladeMask.init(0b01).geometricProductClassWithSignature(.init(0b01), Minkowski11));
+    try std.testing.expectEqual(.negative, BladeMask.init(0b10).geometricProductClassWithSignature(.init(0b10), Minkowski11));
 
     const PGA: MetricSignature = .{ .p = 3, .q = 0, .r = 1 };
     // e4 (0b1000) is degenerate
-    try std.testing.expectEqual(.degenerate, geometricProductSignWithSignature(.init(0b1000), .init(0b1000), PGA));
+    try std.testing.expectEqual(.degenerate, BladeMask.init(0b1000).geometricProductClassWithSignature(.init(0b1000), PGA));
 }
 
 test "mask set helpers compute sorted unions and products" {
@@ -818,7 +857,7 @@ test "MetricSignature constructors expose dot-syntax helpers" {
     try std.testing.expectEqual(@as(usize, 3), e3.dimension());
     try std.testing.expectEqual(@as(usize, 2), e2.dimension());
     try std.testing.expectEqual(@as(usize, 2), minkowski11.dimension());
-    try std.testing.expectEqual(.negative, basisSquareSign(minkowski11, 2));
+    try std.testing.expectEqual(.negative, basisSquareClass(minkowski11, 2));
 }
 
 test "ascending uniqueness helper handles short and invalid slices" {
@@ -838,9 +877,9 @@ test "basis index spans derive from metric signature partitions" {
     const spans = BasisIndexSpans.fromSignature(.{ .p = 2, .q = 1, .r = 1 });
     spans.assertValidForDimension(4);
 
-    try std.testing.expectEqual(BasisIndexSpan{ .start = 1, .end = 2 }, spans.positive.?);
-    try std.testing.expectEqual(BasisIndexSpan{ .start = 3, .end = 3 }, spans.negative.?);
-    try std.testing.expectEqual(BasisIndexSpan{ .start = 4, .end = 4 }, spans.degenerate.?);
+    try std.testing.expectEqual(BasisIndexSpan{ .start = 1, .end = 2 }, spans.spanFor(.positive).?);
+    try std.testing.expectEqual(BasisIndexSpan{ .start = 3, .end = 3 }, spans.spanFor(.negative).?);
+    try std.testing.expectEqual(BasisIndexSpan{ .start = 4, .end = 4 }, spans.spanFor(.degenerate).?);
     try std.testing.expect(spans.contains(4));
     try std.testing.expect(!spans.contains(5));
 }

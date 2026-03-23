@@ -9,6 +9,7 @@ pub const BladeMask = blades.BladeMask;
 pub const SignedBladeParseError = blade_parsing.SignedBladeParseError;
 pub const SignedBladeSpec = blades.SignedBladeSpec;
 pub const MetricSignature = blades.MetricSignature;
+pub const SignatureClass = blades.SignatureClass;
 pub const BasisIndexSpan = blades.BasisIndexSpan;
 pub const BasisIndexSpans = blades.BasisIndexSpans;
 pub const SignedBladeNamingOptions = blade_parsing.SignedBladeNamingOptions;
@@ -171,10 +172,10 @@ test "signature-baked algebra namespace drives metric-dependent products" {
 
 test "algebra naming options can enforce e0 alias spelling" {
     const sig: MetricSignature = .{ .p = 3, .q = 0, .r = 1 };
-    const spans = comptime BasisIndexSpans{
+    const spans = comptime BasisIndexSpans.init(.{
         .positive = .range(1, 3),
         .degenerate = .singleton(4),
-    };
+    });
     const opts = comptime SignedBladeNamingOptions{
         .basis_spans = spans,
         .parser_index_map = .fromBasisSpansDegenerateFirst(spans),
