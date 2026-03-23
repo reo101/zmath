@@ -2,11 +2,7 @@ const std = @import("std");
 
 pub const ga = @import("ga.zig");
 
-const sig = ga.euclideanSignature(2);
-
-pub const MetricSignature = ga.MetricSignature;
-pub const dimension: usize = 2;
-const algebra = ga.Algebra(sig);
+const algebra = ga.Algebra(ga.euclideanSignature(2));
 
 pub fn Multivector(comptime T: type, comptime blade_masks: []const ga.BladeMask) type {
     return algebra.Multivector(T, blade_masks);
