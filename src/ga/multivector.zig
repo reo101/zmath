@@ -296,12 +296,12 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
             return signedBladeImpl(T, name, sig, .{});
         }
 
-        /// Constructs a compile-time signed blade using parser options.
+        /// Constructs a compile-time signed blade using naming options.
         pub fn signedBladeWithOptions(
             comptime name: []const u8,
-            comptime parser_options: blade_parsing.ParserOptions,
-        ) SignedBladeTypeWithOptions(T, name, sig, parser_options) {
-            return signedBladeImpl(T, name, sig, parser_options);
+            comptime naming_options: blade_parsing.SignedBladeNamingOptions,
+        ) SignedBladeTypeWithOptions(T, name, sig, naming_options) {
+            return signedBladeImpl(T, name, sig, naming_options);
         }
 
         /// Constructs a signed blade from runtime basis-vector indices.
@@ -934,6 +934,45 @@ pub fn BasisWithNamingOptions(
             return basisVector(T, one_based_index, sig);
         }
 
+        /// Returns the `ordinal` basis vector from one signature class (`positive`/`negative`/`degenerate`).
+        pub fn basisVectorBySign(
+            comptime sign: OrientationSign,
+            comptime ordinal: usize,
+        ) BasisBladeType(T, blade_ops.basisVectorMask(dimension, expectBasisVectorBySign(sign, ordinal)), sig) {
+            const one_based_index = comptime expectBasisVectorBySign(sign, ordinal);
+            return basisVector(T, one_based_index, sig);
+        }
+
+        fn expectBasisVectorBySign(comptime sign: OrientationSign, comptime ordinal: usize) usize {
+            const spans = if (comptime naming_options.basis_spans) |configured|
+                configured
+            else
+                blade_ops.BasisIndexSpans.fromSignature(sig);
+
+            const span = switch (sign) {
+                .positive => spans.positive,
+                .negative => spans.negative,
+                .degenerate => spans.degenerate,
+            } orelse @compileError(std.fmt.comptimePrint(
+                "no `{s}` basis-vector span configured for this algebra",
+                .{@tagName(sign)},
+            ));
+
+            if (ordinal == 0) {
+                @compileError("basis-vector ordinal is one-based and must be >= 1");
+            }
+
+            const span_len = span.end - span.start + 1;
+            if (ordinal > span_len) {
+                @compileError(std.fmt.comptimePrint(
+                    "basis-vector ordinal {d} exceeds `{s}` span length {d}",
+                    .{ ordinal, @tagName(sign), span_len },
+                ));
+            }
+
+            return span.start + (ordinal - 1);
+        }
+
         /// Returns the blade mask for one basis vector.
         pub fn mask(comptime one_based_index: usize) BladeMask {
             return blade_ops.basisVectorMask(dimension, one_based_index);
@@ -964,15 +1003,6 @@ pub fn BasisWithNamingOptions(
     };
 }
 
-/// Backward-compatible alias for parser-options naming.
-pub fn BasisWithParserOptions(
-    comptime T: type,
-    comptime sig: MetricSignature,
-    comptime parser_options: blade_parsing.ParserOptions,
-) type {
-    return BasisWithNamingOptions(T, sig, parser_options);
-}
-
 test "aliases and signed blades expose more than just plain vectors" {
     const E2 = Basis(i32, .euclidean(2));
 
@@ -985,16 +1015,40 @@ test "aliases and signed blades expose more than just plain vectors" {
 
 test "basis helper e applies naming index options" {
     const sig: MetricSignature = .{ .p = 3, .q = 0, .r = 1 };
+    const spans = comptime blade_ops.BasisIndexSpans{
+        .positive = blade_ops.BasisIndexSpan.range(1, 3),
+        .degenerate = blade_ops.BasisIndexSpan.singleton(4),
+    };
     const options = comptime blade_parsing.SignedBladeNamingOptions{
-        .basis_spans = .{
-            .positive = blade_ops.BasisIndexSpan.range(1, 3),
-            .degenerate = blade_ops.BasisIndexSpan.singleton(4),
-        },
-        .index_aliases = &.{.{ .from = 0, .to = 4 }},
+        .basis_spans = spans,
+        .parser_index_map = .fromBasisSpansDegenerateFirst(spans),
     };
 
     const E = BasisWithNamingOptions(f64, sig, options);
     try std.testing.expect(E.e(0).eql(basisVector(f64, 4, sig)));
+}
+
+test "basis helper can select nth basis vector by signature class" {
+    const sig: MetricSignature = .{ .p = 2, .q = 1, .r = 1 };
+    const E = Basis(f64, sig);
+
+    try std.testing.expect(E.basisVectorBySign(.positive, 2).eql(E.e(2)));
+    try std.testing.expect(E.basisVectorBySign(.negative, 1).eql(E.e(3)));
+    try std.testing.expect(E.basisVectorBySign(.degenerate, 1).eql(E.e(4)));
+
+    const named = BasisWithNamingOptions(f64, sig, .{
+        .basis_spans = .{
+            .degenerate = .singleton(4),
+            .positive = .range(1, 2),
+            .negative = .singleton(3),
+        },
+        .parser_index_map = .fromBasisSpansDegenerateFirst(.{
+            .degenerate = .singleton(4),
+            .positive = .range(1, 2),
+            .negative = .singleton(3),
+        }),
+    });
+    try std.testing.expect(named.basisVectorBySign(.degenerate, 1).eql(named.e(0)));
 }
 
 test "geometric products and involutions follow Euclidean VGA relations" {
@@ -1069,7 +1123,7 @@ test "basis namespace mask and blade helpers agree" {
 }
 
 test "large-dimension full multivector geometric product with scalar identity" {
-    const M8 = FullMultivector(f64, .euclidean(8));
+    const M8 = FullMultivector(f64, .euclidean(12));
     const scalar_one = M8.ScalarType.init(.{1.0});
     var coeffs = std.mem.zeroes([M8.blades.len]f64);
 

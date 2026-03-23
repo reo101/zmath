@@ -22,6 +22,70 @@ pub const SignedBladeParseError = error{
 
 /// Naming and parser behavior switches for signed-blade syntax.
 pub const SignedBladeNamingOptions = struct {
+    pub const ParserIndexMap = struct {
+        pub const max_entries = blades.max_supported_basis_vectors + 1;
+
+        parser_index_count: usize,
+        canonical_indices: [max_entries]usize,
+
+        fn appendSpan(canonical_indices: *[max_entries]usize, next: *usize, span: ?blades.BasisIndexSpan) void {
+            const range = span orelse return;
+            var one_based_index = range.start;
+            while (one_based_index <= range.end) : (one_based_index += 1) {
+                canonical_indices[next.*] = one_based_index;
+                next.* += 1;
+            }
+        }
+
+        pub fn init(comptime parser_index_to_canonical: []const usize) ParserIndexMap {
+            if (parser_index_to_canonical.len == 0) {
+                @compileError("parser index map must contain at least one entry");
+            }
+            if (parser_index_to_canonical.len > max_entries) {
+                @compileError(std.fmt.comptimePrint(
+                    "parser index map can contain at most {d} entries",
+                    .{max_entries},
+                ));
+            }
+
+            var canonical_indices = std.mem.zeroes([max_entries]usize);
+            inline for (parser_index_to_canonical, 0..) |canonical_index, parser_index| {
+                canonical_indices[parser_index] = canonical_index;
+            }
+
+            return .{
+                .parser_index_count = parser_index_to_canonical.len,
+                .canonical_indices = canonical_indices,
+            };
+        }
+
+        /// Builds a parser map directly from basis spans with `degenerate -> positive -> negative` parser order.
+        ///
+        /// Example for PGA (`positive: 1..3`, `degenerate: 4`) yields parser map `&.{ 4, 1, 2, 3 }`.
+        pub fn fromBasisSpansDegenerateFirst(comptime spans: blades.BasisIndexSpans) ParserIndexMap {
+            var canonical_indices = std.mem.zeroes([max_entries]usize);
+            var parser_index_count: usize = 0;
+
+            appendSpan(&canonical_indices, &parser_index_count, spans.degenerate);
+            appendSpan(&canonical_indices, &parser_index_count, spans.positive);
+            appendSpan(&canonical_indices, &parser_index_count, spans.negative);
+
+            return .{
+                .parser_index_count = parser_index_count,
+                .canonical_indices = canonical_indices,
+            };
+        }
+
+        fn entries(self: ParserIndexMap) []const usize {
+            return self.canonical_indices[0..self.parser_index_count];
+        }
+
+        fn canonicalFor(self: ParserIndexMap, parser_index: usize) ?usize {
+            if (parser_index >= self.parser_index_count) return null;
+            return self.canonical_indices[parser_index];
+        }
+    };
+
     /// Optional basis-index partition used for parser-level validation.
     /// Spans are asserted to be in-range and pairwise non-overlapping.
     basis_spans: ?blades.BasisIndexSpans = null,
@@ -29,9 +93,11 @@ pub const SignedBladeNamingOptions = struct {
     /// Required prefix byte for signed-blade names (default: `e`).
     basis_prefix: u8 = 'e',
 
-    /// Optional explicit index alias map where `from` resolves to `to`.
-    /// Aliases are strict: when `from` maps to `to`, canonical `to` spelling is rejected.
-    index_aliases: []const IndexAlias = &.{},
+    /// Optional static map from parser-visible indices to canonical one-based indices.
+    ///
+    /// When configured, only parser indices in `[0, parser_index_map.len)` are accepted.
+    /// For example, `.init(&.{ 4, 1, 2, 3 })` maps `e0 -> e4`, `e1 -> e1`, `e2 -> e2`, `e3 -> e3`.
+    parser_index_map: ?ParserIndexMap = null,
 
     /// Whether compact spellings like `e12` are accepted.
     allow_compact_form: bool = true,
@@ -45,36 +111,45 @@ pub const SignedBladeNamingOptions = struct {
     /// Whether bracketed spellings like `e[10,2]` are accepted.
     allow_bracketed_form: bool = true,
 
-    pub const IndexAlias = struct {
-        from: usize,
-        to: usize,
-    };
-
     fn assertValid(self: SignedBladeNamingOptions, comptime dimension: usize) void {
         if (self.basis_spans) |spans| {
             spans.assertValidForDimension(dimension);
         }
-    }
 
-    fn aliasTargetFor(comptime self: SignedBladeNamingOptions, raw_index: usize) ?usize {
-        inline for (self.index_aliases) |alias| {
-            if (alias.from == raw_index) return alias.to;
+        if (self.parser_index_map) |index_map| {
+            const entries = index_map.entries();
+            for (entries, 0..) |one_based_index, parser_index| {
+                if (one_based_index == 0 or one_based_index > dimension) {
+                    if (@inComptime()) {
+                        @compileError("parser index map entries must resolve within the algebra dimensions");
+                    }
+                    std.debug.panic(
+                        "parser index map entry `{d}` resolves to `{d}` outside [1, {d}]",
+                        .{ parser_index, one_based_index, dimension },
+                    );
+                }
+            }
+
+            for (entries, 0..) |lhs, lhs_index| {
+                for (entries[(lhs_index + 1)..], (lhs_index + 1)..) |rhs, rhs_index| {
+                    if (lhs == rhs) {
+                        if (@inComptime()) {
+                            @compileError("parser index map must map to unique canonical basis indices");
+                        }
+                        std.debug.panic(
+                            "parser index map entries `{d}` and `{d}` both resolve to `{d}`",
+                            .{ lhs_index, rhs_index, lhs },
+                        );
+                    }
+                }
+            }
         }
-        return null;
     }
 
-    fn isAliasTarget(comptime self: SignedBladeNamingOptions, one_based_index: usize) bool {
-        inline for (self.index_aliases) |alias| {
-            if (alias.to == one_based_index) return true;
-        }
-        return false;
-    }
-
-    fn resolveCanonicalBasisIndex(
+    fn validateCanonicalBasisIndex(
         comptime self: SignedBladeNamingOptions,
         one_based_index: usize,
         comptime dimension: usize,
-        comptime allow_alias_target: bool,
     ) SignedBladeParseError!usize {
         self.assertValid(dimension);
 
@@ -82,10 +157,6 @@ pub const SignedBladeNamingOptions = struct {
 
         if (self.basis_spans) |spans| {
             if (!spans.contains(one_based_index)) return error.InvalidBasisIndex;
-        }
-
-        if (!allow_alias_target and self.isAliasTarget(one_based_index)) {
-            return error.InvalidBasisIndex;
         }
 
         return one_based_index;
@@ -96,16 +167,14 @@ pub const SignedBladeNamingOptions = struct {
         raw_index: usize,
         comptime dimension: usize,
     ) SignedBladeParseError!usize {
-        if (self.aliasTargetFor(raw_index)) |alias_target| {
-            return self.resolveCanonicalBasisIndex(alias_target, dimension, true);
+        if (self.parser_index_map) |index_map| {
+            const one_based_index = index_map.canonicalFor(raw_index) orelse return error.InvalidBasisIndex;
+            return self.validateCanonicalBasisIndex(one_based_index, dimension);
         }
 
-        return self.resolveCanonicalBasisIndex(raw_index, dimension, false);
+        return self.validateCanonicalBasisIndex(raw_index, dimension);
     }
 };
-
-/// Backward-compatible alias for previous parser options naming.
-pub const ParserOptions = SignedBladeNamingOptions;
 
 fn isDigit(char: u8) bool {
     return char >= '0' and char <= '9';
@@ -267,7 +336,7 @@ pub fn isSignedBlade(comptime name: []const u8, comptime dimension: usize) bool 
     return true;
 }
 
-/// Returns whether `name` is a valid signed-blade spelling under parser options.
+/// Returns whether `name` is a valid signed-blade spelling under naming options.
 pub fn isSignedBladeWithOptions(
     comptime name: []const u8,
     comptime dimension: usize,
@@ -282,7 +351,7 @@ pub fn parseSignedBlade(comptime name: []const u8, comptime dimension: usize) Si
     return parseSignedBladeWithOptions(name, dimension, .{});
 }
 
-/// Parses a signed blade into a canonical sign-plus-mask representation under parser options.
+/// Parses a signed blade into a canonical sign-plus-mask representation under naming options.
 pub fn parseSignedBladeWithOptions(
     comptime name: []const u8,
     comptime dimension: usize,
@@ -312,7 +381,7 @@ pub fn parseSignedBladeWithOptions(
     };
 }
 
-/// Resolves one raw basis index under parser options.
+/// Resolves one raw parser index under naming options.
 pub fn resolveBasisIndexWithOptions(
     comptime raw_index: usize,
     comptime dimension: usize,
@@ -321,7 +390,7 @@ pub fn resolveBasisIndexWithOptions(
     return options.resolveNamedBasisIndex(raw_index, dimension);
 }
 
-/// Resolves one raw basis index under parser options or emits compile error.
+/// Resolves one raw parser index under naming options or emits compile error.
 pub fn expectBasisIndexWithOptions(
     comptime raw_index: usize,
     comptime dimension: usize,
@@ -353,7 +422,7 @@ pub fn expectSignedBlade(comptime name: []const u8, comptime dimension: usize) S
     return comptime parseSignedBlade(name, dimension) catch |err| invalidSignedBladeCompileError(name, dimension, err);
 }
 
-/// Parses a signed blade with parser options or emits a compile error if invalid.
+/// Parses a signed blade with naming options or emits a compile error if invalid.
 pub fn expectSignedBladeWithOptions(
     comptime name: []const u8,
     comptime dimension: usize,
@@ -399,13 +468,14 @@ test "isSignedBlade rejects malformed delimiters and separators" {
     try std.testing.expect(isSignedBlade("e(1,2)", 3));
 }
 
-test "parser options can alias e0 to a configured basis index" {
-    const options = comptime ParserOptions{
-        .basis_spans = .{
-            .positive = .range(1, 3),
-            .degenerate = .singleton(4),
-        },
-        .index_aliases = &.{.{ .from = 0, .to = 4 }},
+test "naming options can remap e0 to a configured basis index" {
+    const spans = comptime blades.BasisIndexSpans{
+        .positive = .range(1, 3),
+        .degenerate = .singleton(4),
+    };
+    const options = comptime SignedBladeNamingOptions{
+        .basis_spans = spans,
+        .parser_index_map = .fromBasisSpansDegenerateFirst(spans),
     };
 
     const e0 = try parseSignedBladeWithOptions("e0", 4, options);
@@ -421,19 +491,23 @@ test "parser options can alias e0 to a configured basis index" {
     try std.testing.expect(isSignedBladeWithOptions("e_0_1", 4, options));
 }
 
-test "alias target must be allowed by configured spans" {
-    const no_degenerate = comptime ParserOptions{
+test "parser index map targets must be allowed by configured spans" {
+    const no_degenerate = comptime SignedBladeNamingOptions{
         .basis_spans = .{ .positive = .range(1, 3) },
-        .index_aliases = &.{.{ .from = 0, .to = 4 }},
+        .parser_index_map = .fromBasisSpansDegenerateFirst(.{
+            .positive = .range(1, 3),
+            .degenerate = .singleton(4),
+        }),
     };
     try std.testing.expectError(error.InvalidBasisIndex, parseSignedBladeWithOptions("e0", 4, no_degenerate));
 
-    const allowed_range = comptime ParserOptions{
-        .basis_spans = .{
-            .positive = .range(1, 2),
-            .degenerate = .range(3, 4),
-        },
-        .index_aliases = &.{.{ .from = 0, .to = 3 }},
+    const allowed_spans = comptime blades.BasisIndexSpans{
+        .positive = .range(1, 2),
+        .degenerate = .range(3, 4),
+    };
+    const allowed_range = comptime SignedBladeNamingOptions{
+        .basis_spans = allowed_spans,
+        .parser_index_map = .fromBasisSpansDegenerateFirst(allowed_spans),
     };
     try std.testing.expectEqual(
         SignedBladeSpec{ .sign = .positive, .mask = .init(0b0100) },
@@ -441,13 +515,14 @@ test "alias target must be allowed by configured spans" {
     );
 }
 
-test "basis index resolution with options can map e0 alias" {
+test "basis index resolution with options can map parser indices" {
+    const spans = comptime blades.BasisIndexSpans{
+        .positive = blades.BasisIndexSpan.range(1, 3),
+        .degenerate = blades.BasisIndexSpan.singleton(4),
+    };
     const options = comptime SignedBladeNamingOptions{
-        .basis_spans = .{
-            .positive = blades.BasisIndexSpan.range(1, 3),
-            .degenerate = blades.BasisIndexSpan.singleton(4),
-        },
-        .index_aliases = &.{.{ .from = 0, .to = 4 }},
+        .basis_spans = spans,
+        .parser_index_map = .fromBasisSpansDegenerateFirst(spans),
     };
 
     try std.testing.expectEqual(@as(usize, 4), try resolveBasisIndexWithOptions(0, 4, options));
@@ -456,21 +531,22 @@ test "basis index resolution with options can map e0 alias" {
     try std.testing.expectError(error.InvalidBasisIndex, resolveBasisIndexWithOptions(5, 4, options));
 }
 
-test "alias-only naming rejects canonical singleton alias target" {
-    const strict = comptime SignedBladeNamingOptions{
-        .basis_spans = .{
-            .positive = .range(1, 3),
-            .degenerate = .singleton(4),
-        },
-        .index_aliases = &.{.{ .from = 0, .to = 4 }},
+test "parser index map can enforce e0-only singleton spelling" {
+    const spans = comptime blades.BasisIndexSpans{
+        .positive = .range(1, 3),
+        .degenerate = .singleton(4),
+    };
+    const mapped = comptime SignedBladeNamingOptions{
+        .basis_spans = spans,
+        .parser_index_map = .fromBasisSpansDegenerateFirst(spans),
     };
 
-    try std.testing.expect(isSignedBladeWithOptions("e0", 4, strict));
-    try std.testing.expect(!isSignedBladeWithOptions("e4", 4, strict));
-    try std.testing.expectError(error.InvalidBasisIndex, resolveBasisIndexWithOptions(4, 4, strict));
+    try std.testing.expect(isSignedBladeWithOptions("e0", 4, mapped));
+    try std.testing.expect(!isSignedBladeWithOptions("e4", 4, mapped));
+    try std.testing.expectError(error.InvalidBasisIndex, resolveBasisIndexWithOptions(4, 4, mapped));
 }
 
-test "unconfigured aliases are rejected" {
+test "unconfigured parser indices are rejected" {
     const options = comptime SignedBladeNamingOptions{};
     try std.testing.expectError(error.InvalidBasisIndex, parseSignedBladeWithOptions("e0", 4, options));
 }
@@ -492,4 +568,17 @@ test "syntax policy can gate prefix and accepted forms" {
     };
     try std.testing.expectError(error.InvalidBasisSeparator, parseSignedBladeWithOptions("e12", 12, no_compact));
     try std.testing.expect(isSignedBladeWithOptions("e_12", 12, no_compact));
+}
+
+test "parser index map can be derived from basis spans" {
+    const map = comptime SignedBladeNamingOptions.ParserIndexMap.fromBasisSpansDegenerateFirst(.{
+        .positive = .range(1, 3),
+        .degenerate = .singleton(4),
+    });
+
+    try std.testing.expectEqual(@as(usize, 4), map.canonicalFor(0).?);
+    try std.testing.expectEqual(@as(usize, 1), map.canonicalFor(1).?);
+    try std.testing.expectEqual(@as(usize, 2), map.canonicalFor(2).?);
+    try std.testing.expectEqual(@as(usize, 3), map.canonicalFor(3).?);
+    try std.testing.expectEqual(@as(?usize, null), map.canonicalFor(4));
 }

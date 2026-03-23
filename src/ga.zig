@@ -12,7 +12,6 @@ pub const MetricSignature = blades.MetricSignature;
 pub const BasisIndexSpan = blades.BasisIndexSpan;
 pub const BasisIndexSpans = blades.BasisIndexSpans;
 pub const SignedBladeNamingOptions = blade_parsing.SignedBladeNamingOptions;
-pub const ParserOptions = blade_parsing.ParserOptions;
 pub const euclideanSignature = blades.euclideanSignature;
 
 pub const choose = blades.choose;
@@ -62,7 +61,6 @@ pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_o
         pub const metric_signature = sig;
         pub const dimension = metric_signature.dimension();
         pub const signed_blade_naming_options = naming_options;
-        pub const signed_blade_parser_options = signed_blade_naming_options;
 
         pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask) type {
             return multivector.Multivector(T, blade_masks, metric_signature);
@@ -142,11 +140,6 @@ pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_o
     };
 }
 
-/// Backward-compatible alias for parser-options naming.
-pub fn AlgebraWithParserOptions(comptime sig: MetricSignature, comptime parser_options: ParserOptions) type {
-    return AlgebraWithNamingOptions(sig, parser_options);
-}
-
 pub const fullSignedBladeFromIndicesWithSignature = multivector.fullSignedBladeFromIndicesWithSignature;
 pub const writeMultivector = multivector.writeMultivector;
 
@@ -178,12 +171,13 @@ test "signature-baked algebra namespace drives metric-dependent products" {
 
 test "algebra naming options can enforce e0 alias spelling" {
     const sig: MetricSignature = .{ .p = 3, .q = 0, .r = 1 };
+    const spans = comptime BasisIndexSpans{
+        .positive = .range(1, 3),
+        .degenerate = .singleton(4),
+    };
     const opts = comptime SignedBladeNamingOptions{
-        .basis_spans = .{
-            .positive = .range(1, 3),
-            .degenerate = .singleton(4),
-        },
-        .index_aliases = &.{.{ .from = 0, .to = 4 }},
+        .basis_spans = spans,
+        .parser_index_map = .fromBasisSpansDegenerateFirst(spans),
     };
 
     const parsed = try parseSignedBladeWithOptions("e0", sig.dimension(), opts);
