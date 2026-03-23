@@ -593,7 +593,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
 
             var result: T = coeffZero(T);
             inline for (blade_masks, 0..) |lhs_mask, lhs_index| {
-                const rhs_index = Rhs.blade_index_by_mask[lhs_mask];
+                const rhs_index = Rhs.blade_index_by_mask[lhs_mask.index()];
                 if (rhs_index == Rhs.missing_blade_index) continue;
 
                 result += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @as(T, blade_ops.geometricProductSignWithSignature(lhs_mask, lhs_mask, override_sig));
