@@ -55,6 +55,7 @@ pub const BladeMask = packed struct(BladeMaskInt) {
 /// Orientation sign attached to a canonicalized signed blade.
 pub const OrientationSign = enum(i2) {
     negative = -1,
+    degenerate = 0,
     positive = 1,
 
     /// Flips to the opposite orientation sign in place.
@@ -66,6 +67,7 @@ pub const OrientationSign = enum(i2) {
     pub fn flipped(self: OrientationSign) OrientationSign {
         return switch (self) {
             .negative => .positive,
+            .degenerate => .degenerate,
             .positive => .negative,
         };
     }
@@ -73,6 +75,14 @@ pub const OrientationSign = enum(i2) {
     /// Returns whether the sign is negative.
     pub fn isNegative(self: OrientationSign) bool {
         return self == .negative;
+    }
+
+    pub fn mul(self: OrientationSign, rhs: OrientationSign) OrientationSign {
+        return switch (self) {
+            .negative => rhs.flipped(),
+            .degenerate => .degenerate,
+            .positive => rhs,
+        };
     }
 };
 
@@ -152,16 +162,16 @@ pub fn euclideanSignature(comptime dimension: usize) MetricSignature {
 /// - Returns `1` for basis vectors in the positive signature (first `p` vectors)
 /// - Returns `-1` for basis vectors in the negative signature (next `q` vectors)
 /// - Returns `0` for basis vectors in the degenerate signature (last `r` vectors)
-pub fn basisSquareSign(comptime sig: MetricSignature, one_based_index: usize) i8 {
+pub fn basisSquareSign(comptime sig: MetricSignature, one_based_index: usize) OrientationSign {
     const dimension = sig.dimension();
     std.debug.assert(1 <= one_based_index and one_based_index <= dimension);
 
     return if (one_based_index <= sig.p)
-        1
+        .positive
     else if (one_based_index <= sig.p + sig.q)
-        -1
+        .negative
     else
-        0;
+        .degenerate;
 }
 
 /// Returns the number of basis blades in `Cl(dimension, 0, 0)`.
@@ -238,7 +248,7 @@ pub fn applyBasisIndexWithSignature(spec: *SignedBladeSpec, one_based_index: usi
     const dimension = sig.dimension();
     std.debug.assert(1 <= one_based_index and one_based_index <= dimension);
     const bit: BladeMask = .init(@as(BladeMaskInt, 1) << @intCast(one_based_index - 1));
-    if (geometricProductSignWithSignature(spec.mask, bit, sig) < 0) {
+    if (geometricProductSignWithSignature(spec.mask, bit, sig).isNegative()) {
         spec.sign.flip();
     }
     spec.mask.bitset = spec.mask.bitset.xorWith(bit.bitset);
@@ -517,8 +527,8 @@ pub fn bladeIndexByMask(
 }
 
 /// Returns the sign produced by the Euclidean geometric product of two blade masks.
-pub fn geometricProductSign(lhs_mask: BladeMask, rhs_mask: BladeMask) i8 {
-    var sign: i8 = 1;
+pub fn geometricProductSign(lhs_mask: BladeMask, rhs_mask: BladeMask) OrientationSign {
+    var sign: OrientationSign = .positive;
     var remaining = lhs_mask.toInt();
     const rhs_bits = rhs_mask.bitset;
 
@@ -533,7 +543,7 @@ pub fn geometricProductSign(lhs_mask: BladeMask, rhs_mask: BladeMask) i8 {
 
         const lower_rhs = rhs_bits.intersectWith(.{ .mask = lower_bits });
         if ((lower_rhs.count() % 2) != 0) {
-            sign = -sign;
+            sign.flip();
         }
     }
 
@@ -545,11 +555,11 @@ pub fn geometricProductSignWithSignature(
     lhs_mask: BladeMask,
     rhs_mask: BladeMask,
     comptime sig: MetricSignature,
-) i8 {
+) OrientationSign {
     var sign = geometricProductSign(lhs_mask, rhs_mask);
     var overlap = lhs_mask.bitset.intersectWith(rhs_mask.bitset);
     while (overlap.toggleFirstSet()) |bit_index| {
-        sign *= basisSquareSign(sig, bit_index + 1);
+        sign = sign.mul(basisSquareSign(sig, bit_index + 1));
     }
 
     return sign;
@@ -655,12 +665,12 @@ test "writeBladeMask renders fixed-width binary through std.Io.Writer" {
 
 test "geometricProductSignWithSignature applies negative basis-vector squares" {
     const Minkowski11: MetricSignature = .{ .p = 1, .q = 1 };
-    try std.testing.expectEqual(@as(i8, 1), geometricProductSignWithSignature(.init(0b01), .init(0b01), Minkowski11));
-    try std.testing.expectEqual(@as(i8, -1), geometricProductSignWithSignature(.init(0b10), .init(0b10), Minkowski11));
+    try std.testing.expectEqual(.positive, geometricProductSignWithSignature(.init(0b01), .init(0b01), Minkowski11));
+    try std.testing.expectEqual(.negative, geometricProductSignWithSignature(.init(0b10), .init(0b10), Minkowski11));
 
     const PGA: MetricSignature = .{ .p = 3, .q = 0, .r = 1 };
     // e4 (0b1000) is degenerate
-    try std.testing.expectEqual(@as(i8, 0), geometricProductSignWithSignature(.init(0b1000), .init(0b1000), PGA));
+    try std.testing.expectEqual(.degenerate, geometricProductSignWithSignature(.init(0b1000), .init(0b1000), PGA));
 }
 
 test "mask set helpers compute sorted unions and products" {
@@ -689,7 +699,7 @@ test "MetricSignature constructors expose dot-syntax helpers" {
     try std.testing.expectEqual(@as(usize, 3), e3.dimension());
     try std.testing.expectEqual(@as(usize, 2), e2.dimension());
     try std.testing.expectEqual(@as(usize, 2), minkowski11.dimension());
-    try std.testing.expectEqual(@as(i8, -1), basisSquareSign(minkowski11, 2));
+    try std.testing.expectEqual(.negative, basisSquareSign(minkowski11, 2));
 }
 
 test "ascending uniqueness helper handles short and invalid slices" {

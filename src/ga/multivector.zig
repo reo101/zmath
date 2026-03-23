@@ -88,7 +88,7 @@ fn scalarProductSigns(
 ) [masks.len]T {
     var signs: [masks.len]T = undefined;
     inline for (masks, 0..) |mask, index| {
-        signs[index] = @as(T, blade_ops.geometricProductSignWithSignature(mask, mask, sig));
+        signs[index] = @intFromEnum(blade_ops.geometricProductSignWithSignature(mask, mask, sig));
     }
     return signs;
 }
@@ -122,6 +122,7 @@ fn reverseSignForGrade(comptime T: type, grade: usize) T {
 fn signedUnit(comptime T: type, sign: OrientationSign) T {
     return switch (sign) {
         .positive => coeffOne(T),
+        .degenerate => coeffZero(T),
         .negative => -coeffOne(T),
     };
 }
@@ -454,7 +455,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                     const sign = blade_ops.geometricProductSignWithSignature(lhs_mask, rhs_mask, override_sig);
 
                     std.debug.assert(result_index < Result.stored_blade_count);
-                    result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @as(T, sign);
+                    result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @intFromEnum(sign);
                 }
             }
 
@@ -476,7 +477,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                     const result_index = comptime Result.blade_index_by_mask[BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt()).index()];
                     const sign = blade_ops.geometricProductSign(lhs_mask, rhs_mask);
                     std.debug.assert(result_index < Result.stored_blade_count);
-                    result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @as(T, sign);
+                    result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @intFromEnum(sign);
                 }
             }
 
@@ -498,7 +499,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                     const result_index = comptime Result.blade_index_by_mask[BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt()).index()];
                     const sign = blade_ops.geometricProductSignWithSignature(lhs_mask, rhs_mask, sig);
                     std.debug.assert(result_index < Result.stored_blade_count);
-                    result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @as(T, sign);
+                    result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @intFromEnum(sign);
                 }
             }
 
@@ -520,7 +521,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                     const result_index = comptime Result.blade_index_by_mask[BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt()).index()];
                     const sign = blade_ops.geometricProductSignWithSignature(lhs_mask, rhs_mask, sig);
                     std.debug.assert(result_index < Result.stored_blade_count);
-                    result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @as(T, sign);
+                    result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @intFromEnum(sign);
                 }
             }
 
@@ -596,7 +597,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                 const rhs_index = Rhs.blade_index_by_mask[lhs_mask.index()];
                 if (rhs_index == Rhs.missing_blade_index) continue;
 
-                result += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @as(T, blade_ops.geometricProductSignWithSignature(lhs_mask, lhs_mask, override_sig));
+                result += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @intFromEnum(blade_ops.geometricProductSignWithSignature(lhs_mask, lhs_mask, override_sig));
             }
 
             return result;

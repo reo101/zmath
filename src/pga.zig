@@ -63,12 +63,12 @@ pub fn Rotor(comptime T: type) type {
 
 test "pga signature has correct dimension and basis-vector squares" {
     // e1² = e2² = e3² = +1 (positive)
-    try std.testing.expectEqual(@as(i8, 1), ga.blades.basisSquareSign(sig, 1));
-    try std.testing.expectEqual(@as(i8, 1), ga.blades.basisSquareSign(sig, 2));
-    try std.testing.expectEqual(@as(i8, 1), ga.blades.basisSquareSign(sig, 3));
+    try std.testing.expectEqual(.positive, ga.blades.basisSquareSign(sig, 1));
+    try std.testing.expectEqual(.positive, ga.blades.basisSquareSign(sig, 2));
+    try std.testing.expectEqual(.positive, ga.blades.basisSquareSign(sig, 3));
 
     // e4 (a.k.a. e0) squares to 0 (degenerate)
-    try std.testing.expectEqual(@as(i8, 0), ga.blades.basisSquareSign(sig, 4));
+    try std.testing.expectEqual(.degenerate, ga.blades.basisSquareSign(sig, 4));
 
     try std.testing.expectEqual(@as(usize, 4), dimension);
 }
