@@ -12,18 +12,18 @@ pub const metric_signature = sig;
 /// Ambient dimension of the PGA algebra (4).
 pub const dimension = sig.dimension();
 const degenerate_parser_index: usize = 0;
-const parser_index_map = ga.SignedBladeNamingOptions.ParserIndexMap.fromBasisSpansDegenerateFirst(.{
+const parser_index_map = ga.SignedBladeNamingOptions.ParserIndexMap.fromBasisSpansDegenerateFirst(.init(.{
     .positive = .range(1, 3),
     .negative = null,
     .degenerate = .singleton(dimension),
-});
+}));
 const canonical_degenerate_index = parser_index_map.canonical_indices[degenerate_parser_index];
 
 const naming_options: ga.SignedBladeNamingOptions = .{
-    .basis_spans = .{
+    .basis_spans = .init(.{
         .positive = .range(1, 3),
         .degenerate = .singleton(canonical_degenerate_index),
-    },
+    }),
     .parser_index_map = parser_index_map,
 };
 const algebra = ga.AlgebraWithNamingOptions(sig, naming_options);
@@ -82,12 +82,12 @@ pub fn Rotor(comptime T: type) type {
 
 test "pga signature has correct dimension and basis-vector squares" {
     // e1² = e2² = e3² = +1 (positive)
-    try std.testing.expectEqual(.positive, ga.blades.basisSquareSign(sig, 1));
-    try std.testing.expectEqual(.positive, ga.blades.basisSquareSign(sig, 2));
-    try std.testing.expectEqual(.positive, ga.blades.basisSquareSign(sig, 3));
+    try std.testing.expectEqual(.positive, ga.blades.basisSquareClass(sig, 1));
+    try std.testing.expectEqual(.positive, ga.blades.basisSquareClass(sig, 2));
+    try std.testing.expectEqual(.positive, ga.blades.basisSquareClass(sig, 3));
 
     // e0 squares to 0 (degenerate)
-    try std.testing.expectEqual(.degenerate, ga.blades.basisSquareSign(sig, canonicalBasisIndex(degenerate_parser_index)));
+    try std.testing.expectEqual(.degenerate, ga.blades.basisSquareClass(sig, canonicalBasisIndex(degenerate_parser_index)));
 
     try std.testing.expectEqual(@as(usize, 4), dimension);
 }

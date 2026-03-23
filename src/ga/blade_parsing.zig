@@ -66,9 +66,9 @@ pub const SignedBladeNamingOptions = struct {
             var canonical_indices = std.mem.zeroes([max_entries]usize);
             var parser_index_count: usize = 0;
 
-            appendSpan(&canonical_indices, &parser_index_count, spans.degenerate);
-            appendSpan(&canonical_indices, &parser_index_count, spans.positive);
-            appendSpan(&canonical_indices, &parser_index_count, spans.negative);
+            appendSpan(&canonical_indices, &parser_index_count, spans.spanFor(.degenerate));
+            appendSpan(&canonical_indices, &parser_index_count, spans.spanFor(.positive));
+            appendSpan(&canonical_indices, &parser_index_count, spans.spanFor(.negative));
 
             return .{
                 .parser_index_count = parser_index_count,
@@ -469,10 +469,10 @@ test "isSignedBlade rejects malformed delimiters and separators" {
 }
 
 test "naming options can remap e0 to a configured basis index" {
-    const spans = comptime blades.BasisIndexSpans{
+    const spans = comptime blades.BasisIndexSpans.init(.{
         .positive = .range(1, 3),
         .degenerate = .singleton(4),
-    };
+    });
     const options = comptime SignedBladeNamingOptions{
         .basis_spans = spans,
         .parser_index_map = .fromBasisSpansDegenerateFirst(spans),
@@ -493,18 +493,18 @@ test "naming options can remap e0 to a configured basis index" {
 
 test "parser index map targets must be allowed by configured spans" {
     const no_degenerate = comptime SignedBladeNamingOptions{
-        .basis_spans = .{ .positive = .range(1, 3) },
-        .parser_index_map = .fromBasisSpansDegenerateFirst(.{
+        .basis_spans = .init(.{ .positive = .range(1, 3) }),
+        .parser_index_map = .fromBasisSpansDegenerateFirst(.init(.{
             .positive = .range(1, 3),
             .degenerate = .singleton(4),
-        }),
+        })),
     };
     try std.testing.expectError(error.InvalidBasisIndex, parseSignedBladeWithOptions("e0", 4, no_degenerate));
 
-    const allowed_spans = comptime blades.BasisIndexSpans{
+    const allowed_spans = comptime blades.BasisIndexSpans.init(.{
         .positive = .range(1, 2),
         .degenerate = .range(3, 4),
-    };
+    });
     const allowed_range = comptime SignedBladeNamingOptions{
         .basis_spans = allowed_spans,
         .parser_index_map = .fromBasisSpansDegenerateFirst(allowed_spans),
@@ -516,10 +516,10 @@ test "parser index map targets must be allowed by configured spans" {
 }
 
 test "basis index resolution with options can map parser indices" {
-    const spans = comptime blades.BasisIndexSpans{
+    const spans = comptime blades.BasisIndexSpans.init(.{
         .positive = blades.BasisIndexSpan.range(1, 3),
         .degenerate = blades.BasisIndexSpan.singleton(4),
-    };
+    });
     const options = comptime SignedBladeNamingOptions{
         .basis_spans = spans,
         .parser_index_map = .fromBasisSpansDegenerateFirst(spans),
@@ -532,10 +532,10 @@ test "basis index resolution with options can map parser indices" {
 }
 
 test "parser index map can enforce e0-only singleton spelling" {
-    const spans = comptime blades.BasisIndexSpans{
+    const spans = comptime blades.BasisIndexSpans.init(.{
         .positive = .range(1, 3),
         .degenerate = .singleton(4),
-    };
+    });
     const mapped = comptime SignedBladeNamingOptions{
         .basis_spans = spans,
         .parser_index_map = .fromBasisSpansDegenerateFirst(spans),
@@ -571,10 +571,10 @@ test "syntax policy can gate prefix and accepted forms" {
 }
 
 test "parser index map can be derived from basis spans" {
-    const map = comptime SignedBladeNamingOptions.ParserIndexMap.fromBasisSpansDegenerateFirst(.{
+    const map = comptime SignedBladeNamingOptions.ParserIndexMap.fromBasisSpansDegenerateFirst(.init(.{
         .positive = .range(1, 3),
         .degenerate = .singleton(4),
-    });
+    }));
 
     try std.testing.expectEqual(@as(usize, 4), map.canonicalFor(0).?);
     try std.testing.expectEqual(@as(usize, 1), map.canonicalFor(1).?);

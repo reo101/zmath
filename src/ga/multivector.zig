@@ -8,6 +8,7 @@ pub const BladeMask = blade_ops.BladeMask;
 
 /// Orientation sign attached to a canonicalized signed blade.
 pub const OrientationSign = blade_ops.OrientationSign;
+pub const SignatureClass = blade_ops.SignatureClass;
 pub const SignedBladeParseError = blade_parsing.SignedBladeParseError;
 
 /// Parsed signed blade as a sign plus canonical blade mask.
@@ -88,7 +89,7 @@ fn scalarProductSigns(
 ) [masks.len]T {
     var signs: [masks.len]T = undefined;
     inline for (masks, 0..) |mask, index| {
-        signs[index] = @intFromEnum(blade_ops.geometricProductSignWithSignature(mask, mask, sig));
+        signs[index] = @intFromEnum(mask.geometricProductClassWithSignature(mask, sig));
     }
     return signs;
 }
@@ -122,7 +123,6 @@ fn reverseSignForGrade(comptime T: type, grade: usize) T {
 fn signedUnit(comptime T: type, sign: OrientationSign) T {
     return switch (sign) {
         .positive => coeffOne(T),
-        .degenerate => coeffZero(T),
         .negative => -coeffOne(T),
     };
 }
@@ -471,7 +471,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
             inline for (blade_masks, 0..) |lhs_mask, lhs_index| {
                 inline for (Rhs.blades, 0..) |rhs_mask, rhs_index| {
                     const result_index = comptime Result.blade_index_by_mask[BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt()).index()];
-                    const sign = blade_ops.geometricProductSignWithSignature(lhs_mask, rhs_mask, override_sig);
+                    const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, override_sig);
 
                     std.debug.assert(result_index < Result.stored_blade_count);
                     result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @intFromEnum(sign);
@@ -494,7 +494,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                     if ((lhs_mask.toInt() & rhs_mask.toInt()) != 0) continue;
 
                     const result_index = comptime Result.blade_index_by_mask[BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt()).index()];
-                    const sign = blade_ops.geometricProductSign(lhs_mask, rhs_mask);
+                    const sign = lhs_mask.geometricProductSign(rhs_mask);
                     std.debug.assert(result_index < Result.stored_blade_count);
                     result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @intFromEnum(sign);
                 }
@@ -516,7 +516,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                     if ((lhs_mask.toInt() & rhs_mask.toInt()) != lhs_mask.toInt()) continue;
 
                     const result_index = comptime Result.blade_index_by_mask[BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt()).index()];
-                    const sign = blade_ops.geometricProductSignWithSignature(lhs_mask, rhs_mask, sig);
+                    const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, sig);
                     std.debug.assert(result_index < Result.stored_blade_count);
                     result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @intFromEnum(sign);
                 }
@@ -538,7 +538,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                     if ((lhs_mask.toInt() & rhs_mask.toInt()) != rhs_mask.toInt()) continue;
 
                     const result_index = comptime Result.blade_index_by_mask[BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt()).index()];
-                    const sign = blade_ops.geometricProductSignWithSignature(lhs_mask, rhs_mask, sig);
+                    const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, sig);
                     std.debug.assert(result_index < Result.stored_blade_count);
                     result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @intFromEnum(sign);
                 }
@@ -573,9 +573,9 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                     if (blade_ops.bladeGrade(result_mask) != target_grade) continue;
 
                     const result_index = comptime Result.blade_index_by_mask[BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt()).index()];
-                    const sign = blade_ops.geometricProductSignWithSignature(lhs_mask, rhs_mask, sig);
+                    const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, sig);
                     std.debug.assert(result_index < Result.stored_blade_count);
-                    result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @as(T, sign);
+                    result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @intFromEnum(sign);
                 }
             }
 
@@ -616,7 +616,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                 const rhs_index = Rhs.blade_index_by_mask[lhs_mask.index()];
                 if (rhs_index == Rhs.missing_blade_index) continue;
 
-                result += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @intFromEnum(blade_ops.geometricProductSignWithSignature(lhs_mask, lhs_mask, override_sig));
+                result += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @intFromEnum(lhs_mask.geometricProductClassWithSignature(lhs_mask, override_sig));
             }
 
             return result;
@@ -935,27 +935,23 @@ pub fn BasisWithNamingOptions(
         }
 
         /// Returns the `ordinal` basis vector from one signature class (`positive`/`negative`/`degenerate`).
-        pub fn basisVectorBySign(
-            comptime sign: OrientationSign,
+        pub fn basisVectorByClass(
+            comptime class: SignatureClass,
             comptime ordinal: usize,
-        ) BasisBladeType(T, blade_ops.basisVectorMask(dimension, expectBasisVectorBySign(sign, ordinal)), sig) {
-            const one_based_index = comptime expectBasisVectorBySign(sign, ordinal);
+        ) BasisBladeType(T, blade_ops.basisVectorMask(dimension, expectBasisVectorByClass(class, ordinal)), sig) {
+            const one_based_index = comptime expectBasisVectorByClass(class, ordinal);
             return basisVector(T, one_based_index, sig);
         }
 
-        fn expectBasisVectorBySign(comptime sign: OrientationSign, comptime ordinal: usize) usize {
+        fn expectBasisVectorByClass(comptime class: SignatureClass, comptime ordinal: usize) usize {
             const spans = if (comptime naming_options.basis_spans) |configured|
                 configured
             else
                 blade_ops.BasisIndexSpans.fromSignature(sig);
 
-            const span = switch (sign) {
-                .positive => spans.positive,
-                .negative => spans.negative,
-                .degenerate => spans.degenerate,
-            } orelse @compileError(std.fmt.comptimePrint(
+            const span = spans.spanFor(class) orelse @compileError(std.fmt.comptimePrint(
                 "no `{s}` basis-vector span configured for this algebra",
-                .{@tagName(sign)},
+                .{@tagName(class)},
             ));
 
             if (ordinal == 0) {
@@ -966,7 +962,7 @@ pub fn BasisWithNamingOptions(
             if (ordinal > span_len) {
                 @compileError(std.fmt.comptimePrint(
                     "basis-vector ordinal {d} exceeds `{s}` span length {d}",
-                    .{ ordinal, @tagName(sign), span_len },
+                    .{ ordinal, @tagName(class), span_len },
                 ));
             }
 
@@ -1015,10 +1011,10 @@ test "aliases and signed blades expose more than just plain vectors" {
 
 test "basis helper e applies naming index options" {
     const sig: MetricSignature = .{ .p = 3, .q = 0, .r = 1 };
-    const spans = comptime blade_ops.BasisIndexSpans{
+    const spans = comptime blade_ops.BasisIndexSpans.init(.{
         .positive = blade_ops.BasisIndexSpan.range(1, 3),
         .degenerate = blade_ops.BasisIndexSpan.singleton(4),
-    };
+    });
     const options = comptime blade_parsing.SignedBladeNamingOptions{
         .basis_spans = spans,
         .parser_index_map = .fromBasisSpansDegenerateFirst(spans),
@@ -1032,23 +1028,23 @@ test "basis helper can select nth basis vector by signature class" {
     const sig: MetricSignature = .{ .p = 2, .q = 1, .r = 1 };
     const E = Basis(f64, sig);
 
-    try std.testing.expect(E.basisVectorBySign(.positive, 2).eql(E.e(2)));
-    try std.testing.expect(E.basisVectorBySign(.negative, 1).eql(E.e(3)));
-    try std.testing.expect(E.basisVectorBySign(.degenerate, 1).eql(E.e(4)));
+    try std.testing.expect(E.basisVectorByClass(.positive, 2).eql(E.e(2)));
+    try std.testing.expect(E.basisVectorByClass(.negative, 1).eql(E.e(3)));
+    try std.testing.expect(E.basisVectorByClass(.degenerate, 1).eql(E.e(4)));
 
     const named = BasisWithNamingOptions(f64, sig, .{
-        .basis_spans = .{
-            .degenerate = .singleton(4),
-            .positive = .range(1, 2),
-            .negative = .singleton(3),
-        },
-        .parser_index_map = .fromBasisSpansDegenerateFirst(.{
+        .basis_spans = .init(.{
             .degenerate = .singleton(4),
             .positive = .range(1, 2),
             .negative = .singleton(3),
         }),
+        .parser_index_map = .fromBasisSpansDegenerateFirst(.init(.{
+            .degenerate = .singleton(4),
+            .positive = .range(1, 2),
+            .negative = .singleton(3),
+        })),
     });
-    try std.testing.expect(named.basisVectorBySign(.degenerate, 1).eql(named.e(0)));
+    try std.testing.expect(named.basisVectorByClass(.degenerate, 1).eql(named.e(0)));
 }
 
 test "geometric products and involutions follow Euclidean VGA relations" {
