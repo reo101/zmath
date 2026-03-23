@@ -3,7 +3,7 @@ const std = @import("std");
 pub const blades = @import("ga/blades.zig");
 pub const blade_parsing = @import("ga/blade_parsing.zig");
 pub const multivector = @import("ga/multivector.zig");
-pub const rotors2d = @import("ga/rotors.zig");
+pub const rotors2d = @import("ga/rotors2d.zig");
 
 pub const BladeMask = blades.BladeMask;
 pub const SignedBladeParseError = blade_parsing.SignedBladeParseError;
