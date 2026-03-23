@@ -11,6 +11,7 @@ pub const SignedBladeSpec = blades.SignedBladeSpec;
 pub const MetricSignature = blades.MetricSignature;
 pub const BasisIndexSpan = blades.BasisIndexSpan;
 pub const BasisIndexSpans = blades.BasisIndexSpans;
+pub const SignedBladeNamingOptions = blade_parsing.SignedBladeNamingOptions;
 pub const ParserOptions = blade_parsing.ParserOptions;
 pub const euclideanSignature = blades.euclideanSignature;
 
@@ -29,6 +30,7 @@ pub const isSignedBlade = blade_parsing.isSignedBlade;
 pub const isSignedBladeWithOptions = blade_parsing.isSignedBladeWithOptions;
 pub const parseSignedBlade = blade_parsing.parseSignedBlade;
 pub const parseSignedBladeWithOptions = blade_parsing.parseSignedBladeWithOptions;
+pub const resolveBasisHelperIndexWithOptions = blade_parsing.resolveBasisHelperIndexWithOptions;
 pub const expectSignedBlade = blade_parsing.expectSignedBlade;
 pub const expectSignedBladeWithOptions = blade_parsing.expectSignedBladeWithOptions;
 
@@ -51,22 +53,23 @@ pub const signedBladeWithSignatureAndOptions = multivector.signedBladeWithOption
 
 /// Returns a signature-baked algebra namespace for a fixed `Cl(p, q, r)`.
 pub fn Algebra(comptime sig: MetricSignature) type {
-    return AlgebraWithParserOptions(sig, .{});
+    return AlgebraWithNamingOptions(sig, .{});
 }
 
-/// Returns a signature-baked algebra namespace with parser options.
-pub fn AlgebraWithParserOptions(comptime sig: MetricSignature, comptime parser_options: ParserOptions) type {
+/// Returns a signature-baked algebra namespace with naming options.
+pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_options: SignedBladeNamingOptions) type {
     return struct {
         pub const metric_signature = sig;
         pub const dimension = metric_signature.dimension();
-        pub const signed_blade_parser_options = parser_options;
+        pub const signed_blade_naming_options = naming_options;
+        pub const signed_blade_parser_options = signed_blade_naming_options;
 
         pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask) type {
             return multivector.Multivector(T, blade_masks, metric_signature);
         }
 
         pub fn Basis(comptime T: type) type {
-            return multivector.BasisWithParserOptions(T, metric_signature, parser_options);
+            return multivector.BasisWithNamingOptions(T, metric_signature, naming_options);
         }
 
         pub fn FullMultivector(comptime T: type) type {
@@ -126,8 +129,8 @@ pub fn AlgebraWithParserOptions(comptime sig: MetricSignature, comptime parser_o
         pub fn signedBlade(
             comptime T: type,
             comptime name: []const u8,
-        ) multivector.SignedBladeTypeWithOptions(T, name, metric_signature, parser_options) {
-            return multivector.signedBladeWithOptions(T, name, metric_signature, parser_options);
+        ) multivector.SignedBladeTypeWithOptions(T, name, metric_signature, naming_options) {
+            return multivector.signedBladeWithOptions(T, name, metric_signature, naming_options);
         }
 
         pub fn fullSignedBladeFromIndices(
@@ -137,6 +140,11 @@ pub fn AlgebraWithParserOptions(comptime sig: MetricSignature, comptime parser_o
             return multivector.fullSignedBladeFromIndicesWithSignature(T, metric_signature, indices);
         }
     };
+}
+
+/// Backward-compatible alias for parser-options naming.
+pub fn AlgebraWithParserOptions(comptime sig: MetricSignature, comptime parser_options: ParserOptions) type {
+    return AlgebraWithNamingOptions(sig, parser_options);
 }
 
 pub const fullSignedBladeFromIndicesWithSignature = multivector.fullSignedBladeFromIndicesWithSignature;
@@ -168,19 +176,21 @@ test "signature-baked algebra namespace drives metric-dependent products" {
     try std.testing.expectEqual(@as(i32, -1), e2_squared.coeff(.init(0)));
 }
 
-test "algebra parser options can enable e0 alias via degenerate span" {
+test "algebra naming options can enforce e0 alias spelling" {
     const sig: MetricSignature = .{ .p = 3, .q = 0, .r = 1 };
-    const opts = comptime ParserOptions{
+    const opts = comptime SignedBladeNamingOptions{
         .basis_spans = .{
             .positive = .range(1, 3),
             .degenerate = .singleton(4),
         },
+        .index_aliases = &.{.{ .from = 0, .to = 4 }},
     };
 
     const parsed = try parseSignedBladeWithOptions("e0", sig.dimension(), opts);
     try std.testing.expectEqual(SignedBladeSpec{ .sign = .positive, .mask = .init(0b1000) }, parsed);
 
-    const Cl301 = AlgebraWithParserOptions(sig, opts);
+    const Cl301 = AlgebraWithNamingOptions(sig, opts);
     const E = Cl301.Basis(f64);
-    try std.testing.expect(E.signedBlade("e0").eql(E.e(4)));
+    try std.testing.expect(E.signedBlade("e0").eql(E.e(0)));
+    try std.testing.expectError(error.InvalidBasisIndex, parseSignedBladeWithOptions("e4", sig.dimension(), opts));
 }

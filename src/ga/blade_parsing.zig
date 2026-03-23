@@ -20,40 +20,92 @@ pub const SignedBladeParseError = error{
     TrailingBasisSeparator,
 };
 
-/// Parser behavior switches for signed-blade syntax.
-pub const ParserOptions = struct {
+/// Naming and parser behavior switches for signed-blade syntax.
+pub const SignedBladeNamingOptions = struct {
     /// Optional basis-index partition used for parser-level validation.
     /// Spans are asserted to be in-range and pairwise non-overlapping.
     basis_spans: ?blades.BasisIndexSpans = null,
 
-    fn assertValid(self: ParserOptions, comptime dimension: usize) void {
+    /// Required prefix byte for signed-blade names (default: `e`).
+    basis_prefix: u8 = 'e',
+
+    /// Optional explicit index alias map where `from` resolves to `to`.
+    /// Aliases are strict: when `from` maps to `to`, canonical `to` spelling is rejected.
+    index_aliases: []const IndexAlias = &.{},
+
+    /// Whether compact spellings like `e12` are accepted.
+    allow_compact_form: bool = true,
+
+    /// Whether underscore spellings like `e_10_2` are accepted.
+    allow_underscore_form: bool = true,
+
+    /// Whether parenthesized spellings like `e(10,2)` are accepted.
+    allow_parenthesized_form: bool = true,
+
+    /// Whether bracketed spellings like `e[10,2]` are accepted.
+    allow_bracketed_form: bool = true,
+
+    pub const IndexAlias = struct {
+        from: usize,
+        to: usize,
+    };
+
+    fn assertValid(self: SignedBladeNamingOptions, comptime dimension: usize) void {
         if (self.basis_spans) |spans| {
             spans.assertValidForDimension(dimension);
         }
     }
 
-    fn resolveBasisIndex(
-        comptime self: ParserOptions,
-        raw_index: usize,
+    fn aliasTargetFor(comptime self: SignedBladeNamingOptions, raw_index: usize) ?usize {
+        inline for (self.index_aliases) |alias| {
+            if (alias.from == raw_index) return alias.to;
+        }
+        return null;
+    }
+
+    fn isAliasTarget(comptime self: SignedBladeNamingOptions, one_based_index: usize) bool {
+        inline for (self.index_aliases) |alias| {
+            if (alias.to == one_based_index) return true;
+        }
+        return false;
+    }
+
+    fn resolveCanonicalBasisIndex(
+        comptime self: SignedBladeNamingOptions,
+        one_based_index: usize,
         comptime dimension: usize,
+        comptime allow_alias_target: bool,
     ) SignedBladeParseError!usize {
         self.assertValid(dimension);
 
-        if (raw_index == 0) {
-            const spans = self.basis_spans orelse return error.InvalidBasisIndex;
-            const degenerate_span = spans.degenerate orelse return error.InvalidBasisIndex;
-            return degenerate_span.singleIndex() orelse error.InvalidBasisIndex;
-        }
-
-        if (raw_index > dimension) return error.InvalidBasisIndex;
+        if (one_based_index == 0 or one_based_index > dimension) return error.InvalidBasisIndex;
 
         if (self.basis_spans) |spans| {
-            if (!spans.contains(raw_index)) return error.InvalidBasisIndex;
+            if (!spans.contains(one_based_index)) return error.InvalidBasisIndex;
         }
 
-        return raw_index;
+        if (!allow_alias_target and self.isAliasTarget(one_based_index)) {
+            return error.InvalidBasisIndex;
+        }
+
+        return one_based_index;
+    }
+
+    fn resolveNamedBasisIndex(
+        comptime self: SignedBladeNamingOptions,
+        raw_index: usize,
+        comptime dimension: usize,
+    ) SignedBladeParseError!usize {
+        if (self.aliasTargetFor(raw_index)) |alias_target| {
+            return self.resolveCanonicalBasisIndex(alias_target, dimension, true);
+        }
+
+        return self.resolveCanonicalBasisIndex(raw_index, dimension, false);
     }
 };
+
+/// Backward-compatible alias for previous parser options naming.
+pub const ParserOptions = SignedBladeNamingOptions;
 
 fn isDigit(char: u8) bool {
     return char >= '0' and char <= '9';
@@ -63,7 +115,7 @@ fn parseBasisIndex(
     comptime name: []const u8,
     position: *usize,
     comptime dimension: usize,
-    comptime options: ParserOptions,
+    comptime options: SignedBladeNamingOptions,
 ) SignedBladeParseError!usize {
     if (position.* >= name.len or !isDigit(name[position.*])) {
         return error.InvalidBasisIndex;
@@ -77,7 +129,7 @@ fn parseBasisIndex(
 
     if (position.* - start > 1 and name[start] == '0') return error.InvalidBasisIndex;
 
-    return options.resolveBasisIndex(value, dimension);
+    return options.resolveNamedBasisIndex(value, dimension);
 }
 
 fn applyParsedIndex(
@@ -100,7 +152,7 @@ fn parseSeparatedSignedBlade(
     comptime name: []const u8,
     comptime dimension: usize,
     comptime syntax: SeparatedBladeSyntax,
-    comptime options: ParserOptions,
+    comptime options: SignedBladeNamingOptions,
 ) SignedBladeParseError!SignedBladeSpec {
     var spec = SignedBladeSpec{ .sign = .positive, .mask = .init(0) };
     var position = syntax.start;
@@ -151,7 +203,7 @@ fn invalidBasisIndexCompileError(comptime raw_index: usize, comptime dimension: 
 fn parseCompactSignedBlade(
     comptime name: []const u8,
     comptime dimension: usize,
-    comptime options: ParserOptions,
+    comptime options: SignedBladeNamingOptions,
 ) SignedBladeParseError!SignedBladeSpec {
     var spec = SignedBladeSpec{ .sign = .positive, .mask = .init(0) };
     inline for (name[1..], 1..) |char, position| {
@@ -163,7 +215,7 @@ fn parseCompactSignedBlade(
             '0'...'9' => @as(usize, char - '0'),
             else => return error.InvalidBasisIndex,
         };
-        const one_based_index = try options.resolveBasisIndex(raw_index, dimension);
+        const one_based_index = try options.resolveNamedBasisIndex(raw_index, dimension);
 
         applyParsedIndex(&spec, one_based_index, dimension);
     }
@@ -175,7 +227,7 @@ fn parseCompactSignedBlade(
 fn parseUnderscoreSignedBlade(
     comptime name: []const u8,
     comptime dimension: usize,
-    comptime options: ParserOptions,
+    comptime options: SignedBladeNamingOptions,
 ) SignedBladeParseError!SignedBladeSpec {
     if (name.len < 3) return error.EmptySignedBlade;
 
@@ -195,7 +247,7 @@ fn parseDelimitedSignedBlade(
     comptime open: u8,
     comptime close: u8,
     comptime separator: u8,
-    comptime options: ParserOptions,
+    comptime options: SignedBladeNamingOptions,
 ) SignedBladeParseError!SignedBladeSpec {
     if (name.len < 5) return error.EmptySignedBlade;
     if (name[1] != open or name[name.len - 1] != close) return error.InvalidBasisDelimiter;
@@ -219,7 +271,7 @@ pub fn isSignedBlade(comptime name: []const u8, comptime dimension: usize) bool 
 pub fn isSignedBladeWithOptions(
     comptime name: []const u8,
     comptime dimension: usize,
-    comptime options: ParserOptions,
+    comptime options: SignedBladeNamingOptions,
 ) bool {
     _ = parseSignedBladeWithOptions(name, dimension, options) catch return false;
     return true;
@@ -234,18 +286,29 @@ pub fn parseSignedBlade(comptime name: []const u8, comptime dimension: usize) Si
 pub fn parseSignedBladeWithOptions(
     comptime name: []const u8,
     comptime dimension: usize,
-    comptime options: ParserOptions,
+    comptime options: SignedBladeNamingOptions,
 ) SignedBladeParseError!SignedBladeSpec {
-    if (name.len == 0 or name[0] != 'e') return error.MissingBasisPrefix;
+    if (name.len == 0 or name[0] != options.basis_prefix) return error.MissingBasisPrefix;
     if (name.len < 2) return error.EmptySignedBlade;
 
     return switch (name[1]) {
-        '(' => parseDelimitedSignedBlade(name, dimension, '(', ')', ',', options),
-        '[' => parseDelimitedSignedBlade(name, dimension, '[', ']', ',', options),
-        else => if (hasUnderscoreSyntax(name))
-            parseUnderscoreSignedBlade(name, dimension, options)
+        '(' => if (options.allow_parenthesized_form)
+            parseDelimitedSignedBlade(name, dimension, '(', ')', ',', options)
         else
-            parseCompactSignedBlade(name, dimension, options),
+            error.InvalidBasisDelimiter,
+        '[' => if (options.allow_bracketed_form)
+            parseDelimitedSignedBlade(name, dimension, '[', ']', ',', options)
+        else
+            error.InvalidBasisDelimiter,
+        else => if (hasUnderscoreSyntax(name))
+            if (options.allow_underscore_form)
+                parseUnderscoreSignedBlade(name, dimension, options)
+            else
+                error.InvalidBasisSeparator
+        else if (options.allow_compact_form)
+            parseCompactSignedBlade(name, dimension, options)
+        else
+            error.InvalidBasisSeparator,
     };
 }
 
@@ -253,18 +316,36 @@ pub fn parseSignedBladeWithOptions(
 pub fn resolveBasisIndexWithOptions(
     comptime raw_index: usize,
     comptime dimension: usize,
-    comptime options: ParserOptions,
+    comptime options: SignedBladeNamingOptions,
 ) SignedBladeParseError!usize {
-    return options.resolveBasisIndex(raw_index, dimension);
+    return options.resolveNamedBasisIndex(raw_index, dimension);
 }
 
 /// Resolves one raw basis index under parser options or emits compile error.
 pub fn expectBasisIndexWithOptions(
     comptime raw_index: usize,
     comptime dimension: usize,
-    comptime options: ParserOptions,
+    comptime options: SignedBladeNamingOptions,
 ) usize {
     return comptime resolveBasisIndexWithOptions(raw_index, dimension, options) catch |err| invalidBasisIndexCompileError(raw_index, dimension, err);
+}
+
+/// Resolves one basis-helper index (`Basis.e(index)`) under naming options.
+pub fn resolveBasisHelperIndexWithOptions(
+    comptime index: usize,
+    comptime dimension: usize,
+    comptime options: SignedBladeNamingOptions,
+) SignedBladeParseError!usize {
+    return options.resolveNamedBasisIndex(index, dimension);
+}
+
+/// Resolves one basis-helper index (`Basis.e(index)`) or emits compile error.
+pub fn expectBasisHelperIndexWithOptions(
+    comptime index: usize,
+    comptime dimension: usize,
+    comptime options: SignedBladeNamingOptions,
+) usize {
+    return comptime resolveBasisHelperIndexWithOptions(index, dimension, options) catch |err| invalidBasisIndexCompileError(index, dimension, err);
 }
 
 /// Parses a signed blade or emits a compile error if the spelling is invalid.
@@ -276,7 +357,7 @@ pub fn expectSignedBlade(comptime name: []const u8, comptime dimension: usize) S
 pub fn expectSignedBladeWithOptions(
     comptime name: []const u8,
     comptime dimension: usize,
-    comptime options: ParserOptions,
+    comptime options: SignedBladeNamingOptions,
 ) SignedBladeSpec {
     return comptime parseSignedBladeWithOptions(name, dimension, options) catch |err| invalidSignedBladeCompileError(name, dimension, err);
 }
@@ -324,6 +405,7 @@ test "parser options can alias e0 to a configured basis index" {
             .positive = .range(1, 3),
             .degenerate = .singleton(4),
         },
+        .index_aliases = &.{.{ .from = 0, .to = 4 }},
     };
 
     const e0 = try parseSignedBladeWithOptions("e0", 4, options);
@@ -339,30 +421,75 @@ test "parser options can alias e0 to a configured basis index" {
     try std.testing.expect(isSignedBladeWithOptions("e_0_1", 4, options));
 }
 
-test "e0 alias requires a singular degenerate span" {
+test "alias target must be allowed by configured spans" {
     const no_degenerate = comptime ParserOptions{
-        .basis_spans = .{ .positive = .range(1, 4) },
+        .basis_spans = .{ .positive = .range(1, 3) },
+        .index_aliases = &.{.{ .from = 0, .to = 4 }},
     };
     try std.testing.expectError(error.InvalidBasisIndex, parseSignedBladeWithOptions("e0", 4, no_degenerate));
 
-    const multiple_degenerate = comptime ParserOptions{
+    const allowed_range = comptime ParserOptions{
         .basis_spans = .{
             .positive = .range(1, 2),
             .degenerate = .range(3, 4),
         },
+        .index_aliases = &.{.{ .from = 0, .to = 3 }},
     };
-    try std.testing.expectError(error.InvalidBasisIndex, parseSignedBladeWithOptions("e0", 4, multiple_degenerate));
+    try std.testing.expectEqual(
+        SignedBladeSpec{ .sign = .positive, .mask = .init(0b0100) },
+        try parseSignedBladeWithOptions("e0", 4, allowed_range),
+    );
 }
 
 test "basis index resolution with options can map e0 alias" {
-    const options = comptime ParserOptions{
+    const options = comptime SignedBladeNamingOptions{
         .basis_spans = .{
             .positive = blades.BasisIndexSpan.range(1, 3),
             .degenerate = blades.BasisIndexSpan.singleton(4),
         },
+        .index_aliases = &.{.{ .from = 0, .to = 4 }},
     };
 
     try std.testing.expectEqual(@as(usize, 4), try resolveBasisIndexWithOptions(0, 4, options));
     try std.testing.expectEqual(@as(usize, 2), try resolveBasisIndexWithOptions(2, 4, options));
+    try std.testing.expectEqual(@as(usize, 4), try resolveBasisHelperIndexWithOptions(0, 4, options));
     try std.testing.expectError(error.InvalidBasisIndex, resolveBasisIndexWithOptions(5, 4, options));
+}
+
+test "alias-only naming rejects canonical singleton alias target" {
+    const strict = comptime SignedBladeNamingOptions{
+        .basis_spans = .{
+            .positive = .range(1, 3),
+            .degenerate = .singleton(4),
+        },
+        .index_aliases = &.{.{ .from = 0, .to = 4 }},
+    };
+
+    try std.testing.expect(isSignedBladeWithOptions("e0", 4, strict));
+    try std.testing.expect(!isSignedBladeWithOptions("e4", 4, strict));
+    try std.testing.expectError(error.InvalidBasisIndex, resolveBasisIndexWithOptions(4, 4, strict));
+}
+
+test "unconfigured aliases are rejected" {
+    const options = comptime SignedBladeNamingOptions{};
+    try std.testing.expectError(error.InvalidBasisIndex, parseSignedBladeWithOptions("e0", 4, options));
+}
+
+test "syntax policy can gate prefix and accepted forms" {
+    const prefixed = comptime SignedBladeNamingOptions{
+        .basis_prefix = 'v',
+        .allow_parenthesized_form = false,
+        .allow_bracketed_form = false,
+    };
+
+    try std.testing.expect(isSignedBladeWithOptions("v12", 3, prefixed));
+    try std.testing.expectError(error.MissingBasisPrefix, parseSignedBladeWithOptions("e12", 3, prefixed));
+    try std.testing.expectError(error.InvalidBasisDelimiter, parseSignedBladeWithOptions("v(1,2)", 3, prefixed));
+
+    const no_compact = comptime SignedBladeNamingOptions{
+        .allow_compact_form = false,
+        .allow_underscore_form = true,
+    };
+    try std.testing.expectError(error.InvalidBasisSeparator, parseSignedBladeWithOptions("e12", 12, no_compact));
+    try std.testing.expect(isSignedBladeWithOptions("e_12", 12, no_compact));
 }
