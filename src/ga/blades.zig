@@ -5,13 +5,16 @@ const parser = @import("blade_parsing.zig");
 /// Bitset representation of a basis blade.
 ///
 /// Bit `0` corresponds to `e1`, bit `1` to `e2`, and so on.
-pub const BladeMask = u64;
+pub const BladeMaskBackingType = u64;
+const BladeMaskBitSet = std.bit_set.IntegerBitSet(@bitSizeOf(BladeMaskBackingType));
 
 /// Utilities for working with blade masks.
-pub const Mask = struct {
+pub const BladeMask = packed struct(BladeMaskBackingType) {
+    bitset: BladeMaskBitSet,
+
     /// Explicit constructor for blade masks from integer bit patterns.
     pub inline fn init(value: anytype) BladeMask {
-        return @as(u64, @intCast(value));
+        return .{ .bitset = .{ .mask = @as(u64, @intCast(value)) } };
     }
 
     /// Convenience constructor for tuple/array literals of raw masks.
@@ -24,11 +27,11 @@ pub const Mask = struct {
     }
 
     pub inline fn toInt(mask: BladeMask) u64 {
-        return mask;
+        return mask.bitset.mask;
     }
 
     pub inline fn index(mask: BladeMask) usize {
-        return @intCast(mask);
+        return @intCast(mask.toInt());
     }
 
     pub fn parse(comptime name: []const u8) !BladeMask {
@@ -182,7 +185,7 @@ pub fn choose(comptime n: usize, comptime k: usize) usize {
 
 /// Returns the grade of a blade mask.
 pub fn bladeGrade(mask: BladeMask) usize {
-    return @popCount(mask);
+    return mask.bitset.count();
 }
 
 fn maskHasParity(mask: BladeMask, comptime even: bool) bool {
@@ -194,7 +197,7 @@ pub fn areStrictlyAscendingUnique(comptime masks: []const BladeMask) bool {
     if (masks.len <= 1) return true;
 
     inline for (masks[0..(masks.len - 1)], masks[1..]) |mask_prev, mask| {
-        if (mask_prev >= mask) return false;
+        if (mask_prev.toInt() >= mask.toInt()) return false;
     }
 
     return true;
@@ -205,20 +208,20 @@ pub fn basisVectorMask(comptime dimension: usize, one_based_index: usize) BladeM
     validateDimension(dimension);
     std.debug.assert(1 <= one_based_index and one_based_index <= dimension);
 
-    return @as(u64, 1) << @intCast(one_based_index - 1);
+    return .init(@as(u64, 1) << @intCast(one_based_index - 1));
 }
 
 /// Returns the mask for a basis blade expressed as one-based indices.
 pub fn basisBladeMask(comptime dimension: usize, comptime one_based_indices: []const usize) BladeMask {
     validateDimension(dimension);
 
-    var mask: BladeMask = 0;
+    var mask: BladeMask = .init(0);
     inline for (one_based_indices) |one_based_index| {
         const bit = basisVectorMask(dimension, one_based_index);
-        if ((mask & bit) != 0) {
+        if (mask.bitset.intersectWith(bit.bitset).mask != 0) {
             @compileError("repeated basis vectors cancel in the geometric product and are not represented by a blade mask");
         }
-        mask |= bit;
+        mask.bitset = mask.bitset.unionWith(bit.bitset);
     }
 
     return mask;
@@ -233,11 +236,11 @@ pub fn applyBasisIndex(spec: *SignedBladeSpec, one_based_index: usize, comptime 
 pub fn applyBasisIndexWithSignature(spec: *SignedBladeSpec, one_based_index: usize, comptime sig: MetricSignature) void {
     const dimension = sig.dimension();
     std.debug.assert(1 <= one_based_index and one_based_index <= dimension);
-    const bit = @as(u64, 1) << @intCast(one_based_index - 1);
+    const bit: BladeMask = .init(@as(u64, 1) << @intCast(one_based_index - 1));
     if (geometricProductSignWithSignature(spec.mask, bit, sig) < 0) {
         spec.sign.flip();
     }
-    spec.mask ^= bit;
+    spec.mask.bitset = spec.mask.bitset.xorWith(bit.bitset);
 }
 
 /// Returns every blade mask in ascending canonical order.
@@ -247,7 +250,7 @@ pub fn allBladeMasks(comptime dimension: usize) [bladeCount(dimension)]BladeMask
 
     var masks: [bladeCount(dimension)]BladeMask = undefined;
     for (0..masks.len) |index| {
-        masks[index] = @intCast(index);
+        masks[index] = .init(index);
     }
     return masks;
 }
@@ -263,15 +266,15 @@ pub fn allBladeMasks(comptime dimension: usize) [bladeCount(dimension)]BladeMask
 /// Returns `false` when there is no larger mask with the same popcount in the
 /// current machine word.
 fn advanceFixedPopcountMask(mask: *BladeMask) bool {
-    if (mask.* == 0) return false;
+    if (mask.toInt() == 0) return false;
 
-    const current = mask.*;
+    const current = mask.toInt();
     const smallest = current & (~current + 1);
     const ripple = current + smallest;
     if (ripple == 0) return false;
 
     const ones = ((current ^ ripple) >> 2) / smallest;
-    mask.* = ripple | ones;
+    mask.* = .init(ripple | ones);
     return true;
 }
 
@@ -286,15 +289,15 @@ pub fn gradeBladeMasks(comptime dimension: usize, comptime grade: usize) [choose
 
     var masks: [choose(dimension, grade)]BladeMask = undefined;
     if (grade == 0) {
-        masks[0] = 0;
+        masks[0] = .init(0);
         return masks;
     }
 
     var next_index: usize = 0;
-    var mask: BladeMask = (@as(u64, 1) << @intCast(grade)) - 1;
+    var mask: BladeMask = .init((@as(u64, 1) << @intCast(grade)) - 1);
     const limit = @as(u64, 1) << @intCast(dimension);
 
-    while (mask < limit) {
+    while (mask.toInt() < limit) {
         masks[next_index] = mask;
         next_index += 1;
 
@@ -321,7 +324,7 @@ fn parityBladeMasks(
     var next_index: usize = 0;
 
     for (0..bladeCount(dimension)) |index| {
-        const candidate: BladeMask = @intCast(index);
+        const candidate: BladeMask = .init(index);
         if (!maskHasParity(candidate, even)) continue;
 
         masks[next_index] = candidate;
@@ -357,7 +360,7 @@ fn collectMarkedMasks(comptime dimension: usize, comptime marked: [bladeCount(di
     for (0..marked.len) |index| {
         if (!marked[index]) continue;
 
-        masks[next_index] = @intCast(index);
+        masks[next_index] = .init(index);
         next_index += 1;
     }
 
@@ -382,8 +385,8 @@ fn unionMaskTable(
     @setEvalBranchQuota(1_000_000);
     var marked = std.mem.zeroes([bladeCount(dimension)]bool);
 
-    inline for (lhs_masks) |mask| marked[@intCast(mask)] = true;
-    inline for (rhs_masks) |mask| marked[@intCast(mask)] = true;
+    inline for (lhs_masks) |mask| marked[mask.index()] = true;
+    inline for (rhs_masks) |mask| marked[mask.index()] = true;
 
     return marked;
 }
@@ -407,7 +410,7 @@ fn geometricProductMaskTable(
 
     inline for (lhs_masks) |lhs_mask| {
         inline for (rhs_masks) |rhs_mask| {
-            marked[@intCast(lhs_mask ^ rhs_mask)] = true;
+            marked[@intCast(lhs_mask.bitset.xorWith(rhs_mask.bitset).mask)] = true;
         }
     }
 
@@ -433,8 +436,8 @@ fn outerProductMaskTable(
 
     inline for (lhs_masks) |lhs_mask| {
         inline for (rhs_masks) |rhs_mask| {
-            if ((lhs_mask & rhs_mask) != 0) continue;
-            marked[@intCast(lhs_mask ^ rhs_mask)] = true;
+            if (lhs_mask.bitset.intersectWith(rhs_mask.bitset).mask != 0) continue;
+            marked[@intCast(lhs_mask.bitset.xorWith(rhs_mask.bitset).mask)] = true;
         }
     }
 
@@ -461,8 +464,8 @@ fn leftContractionMaskTable(
     inline for (lhs_masks) |lhs_mask| {
         inline for (rhs_masks) |rhs_mask| {
             // Left contraction B_M \rfloor B_N is non-zero only if M \subseteq N.
-            if ((lhs_mask & rhs_mask) != lhs_mask) continue;
-            marked[@intCast(lhs_mask ^ rhs_mask)] = true;
+            if (!lhs_mask.bitset.subsetOf(rhs_mask.bitset)) continue;
+            marked[@intCast(lhs_mask.bitset.xorWith(rhs_mask.bitset).mask)] = true;
         }
     }
 
@@ -489,8 +492,8 @@ fn rightContractionMaskTable(
     inline for (lhs_masks) |lhs_mask| {
         inline for (rhs_masks) |rhs_mask| {
             // Right contraction B_M \lfloor B_N is non-zero only if N \subseteq M.
-            if ((lhs_mask & rhs_mask) != rhs_mask) continue;
-            marked[@intCast(lhs_mask ^ rhs_mask)] = true;
+            if (!rhs_mask.bitset.subsetOf(lhs_mask.bitset)) continue;
+            marked[@intCast(lhs_mask.bitset.xorWith(rhs_mask.bitset).mask)] = true;
         }
     }
 
@@ -507,7 +510,7 @@ pub fn bladeIndexByMask(
 
     var result = [_]usize{blade_masks.len} ** bladeCount(dimension);
     inline for (blade_masks, 0..) |mask, index| {
-        result[@intCast(mask)] = index;
+        result[mask.index()] = index;
     }
     return result;
 }
@@ -515,7 +518,8 @@ pub fn bladeIndexByMask(
 /// Returns the sign produced by the Euclidean geometric product of two blade masks.
 pub fn geometricProductSign(lhs_mask: BladeMask, rhs_mask: BladeMask) i8 {
     var sign: i8 = 1;
-    var remaining = lhs_mask;
+    var remaining = lhs_mask.toInt();
+    const rhs_bits = rhs_mask.bitset;
 
     while (remaining != 0) {
         const bit_index = @ctz(remaining);
@@ -526,7 +530,8 @@ pub fn geometricProductSign(lhs_mask: BladeMask, rhs_mask: BladeMask) i8 {
         else
             (@as(u64, 1) << @intCast(bit_index)) - 1;
 
-        if ((@popCount(rhs_mask & lower_bits) % 2) != 0) {
+        const lower_rhs = rhs_bits.intersectWith(.{ .mask = lower_bits });
+        if ((lower_rhs.count() % 2) != 0) {
             sign = -sign;
         }
     }
@@ -541,10 +546,8 @@ pub fn geometricProductSignWithSignature(
     comptime sig: MetricSignature,
 ) i8 {
     var sign = geometricProductSign(lhs_mask, rhs_mask);
-    var overlap = lhs_mask & rhs_mask;
-    while (overlap != 0) {
-        const bit_index = @ctz(overlap);
-        overlap &= overlap - 1;
+    var overlap = lhs_mask.bitset.intersectWith(rhs_mask.bitset);
+    while (overlap.toggleFirstSet()) |bit_index| {
         sign *= basisSquareSign(sig, bit_index + 1);
     }
 
@@ -591,36 +594,36 @@ pub fn writeBladeMask(writer: *std.Io.Writer, mask: BladeMask, dimension: usize)
     var bit_index = dimension;
     while (bit_index > 0) {
         bit_index -= 1;
-        const is_set = ((mask >> @intCast(bit_index)) & 1) == 1;
+        const is_set = mask.bitset.isSet(bit_index);
         try writer.writeByte(if (is_set) '1' else '0');
     }
 }
 
 test "blade helpers match basic Euclidean tables" {
-    const masks3 = Mask.initMany(.{ 0b001, 0b010, 0b100 });
-    const masks32 = Mask.initMany(.{ 0b011, 0b101, 0b110 });
-    const masks42 = Mask.initMany(.{ 0b0011, 0b0101, 0b0110, 0b1001, 0b1010, 0b1100 });
+    const masks3 = BladeMask.initMany(.{ 0b001, 0b010, 0b100 });
+    const masks32 = BladeMask.initMany(.{ 0b011, 0b101, 0b110 });
+    const masks42 = BladeMask.initMany(.{ 0b0011, 0b0101, 0b0110, 0b1001, 0b1010, 0b1100 });
 
     try std.testing.expectEqual(@as(usize, 6), choose(4, 2));
     try std.testing.expectEqual(@as(usize, 8), bladeCount(3));
-    try std.testing.expectEqual(@as(usize, 2), bladeGrade(Mask.init(0b011)));
+    try std.testing.expectEqual(@as(usize, 2), bladeGrade(.init(0b011)));
     try std.testing.expectEqualSlices(BladeMask, masks3[0..], gradeBladeMasks(3, 1)[0..]);
     try std.testing.expectEqualSlices(BladeMask, masks32[0..], gradeBladeMasks(3, 2)[0..]);
     try std.testing.expectEqualSlices(BladeMask, masks42[0..], gradeBladeMasks(4, 2)[0..]);
 }
 
 test "advanceFixedPopcountMask follows canonical fixed-popcount order" {
-    var mask = Mask.init(0b00111);
+    var mask: BladeMask = .init(0b00111);
     const expected = [_]BladeMask{
-        Mask.init(0b01011),
-        Mask.init(0b01101),
-        Mask.init(0b01110),
-        Mask.init(0b10011),
-        Mask.init(0b10101),
-        Mask.init(0b10110),
-        Mask.init(0b11001),
-        Mask.init(0b11010),
-        Mask.init(0b11100),
+        .init(0b01011),
+        .init(0b01101),
+        .init(0b01110),
+        .init(0b10011),
+        .init(0b10101),
+        .init(0b10110),
+        .init(0b11001),
+        .init(0b11010),
+        .init(0b11100),
     };
 
     inline for (expected) |next_mask| {
@@ -631,13 +634,13 @@ test "advanceFixedPopcountMask follows canonical fixed-popcount order" {
 }
 
 test "advanceFixedPopcountMask reports zero and high-bit transition behavior" {
-    var zero = Mask.init(0);
+    var zero: BladeMask = .init(0);
     try std.testing.expect(!advanceFixedPopcountMask(&zero));
-    try std.testing.expectEqual(Mask.init(0), zero);
+    try std.testing.expectEqual(BladeMask.init(0), zero);
 
-    var crossing_high_bit = Mask.init((@as(u64, 1) << (@bitSizeOf(BladeMask) - 2)) | 0b1);
+    var crossing_high_bit: BladeMask = .init((@as(u64, 1) << (@bitSizeOf(BladeMask) - 2)) | 0b1);
     try std.testing.expect(advanceFixedPopcountMask(&crossing_high_bit));
-    try std.testing.expectEqual(Mask.init((@as(u64, 1) << (@bitSizeOf(BladeMask) - 2)) | 0b10), crossing_high_bit);
+    try std.testing.expectEqual(BladeMask.init((@as(u64, 1) << (@bitSizeOf(BladeMask) - 2)) | 0b10), crossing_high_bit);
     try std.testing.expectEqual(@as(usize, 2), bladeGrade(crossing_high_bit));
 }
 
@@ -645,24 +648,24 @@ test "writeBladeMask renders fixed-width binary through std.Io.Writer" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    try writeBladeMask(&out.writer, Mask.init(0b101), 4);
+    try writeBladeMask(&out.writer, .init(0b101), 4);
     try std.testing.expectEqualSlices(u8, "0b0101", out.written());
 }
 
 test "geometricProductSignWithSignature applies negative basis-vector squares" {
     const Minkowski11: MetricSignature = .{ .p = 1, .q = 1 };
-    try std.testing.expectEqual(@as(i8, 1), geometricProductSignWithSignature(Mask.init(0b01), Mask.init(0b01), Minkowski11));
-    try std.testing.expectEqual(@as(i8, -1), geometricProductSignWithSignature(Mask.init(0b10), Mask.init(0b10), Minkowski11));
+    try std.testing.expectEqual(@as(i8, 1), geometricProductSignWithSignature(.init(0b01), .init(0b01), Minkowski11));
+    try std.testing.expectEqual(@as(i8, -1), geometricProductSignWithSignature(.init(0b10), .init(0b10), Minkowski11));
 
     const PGA: MetricSignature = .{ .p = 3, .q = 0, .r = 1 };
     // e4 (0b1000) is degenerate
-    try std.testing.expectEqual(@as(i8, 0), geometricProductSignWithSignature(Mask.init(0b1000), Mask.init(0b1000), PGA));
+    try std.testing.expectEqual(@as(i8, 0), geometricProductSignWithSignature(.init(0b1000), .init(0b1000), PGA));
 }
 
 test "mask set helpers compute sorted unions and products" {
-    try std.testing.expectEqualSlices(BladeMask, Mask.initMany(.{ 0b001, 0b010, 0b100 })[0..], unionBladeMasks(3, &comptime Mask.initMany(.{ 0b001, 0b010 }), &comptime Mask.initMany(.{ 0b010, 0b100 }))[0..]);
-    try std.testing.expectEqualSlices(BladeMask, Mask.initMany(.{ 0b000, 0b011, 0b101, 0b110 })[0..], geometricProductMasks(3, &comptime Mask.initMany(.{ 0b001, 0b010 }), &comptime Mask.initMany(.{ 0b010, 0b100 }))[0..]);
-    try std.testing.expectEqualSlices(BladeMask, Mask.initMany(.{ 0b011, 0b101, 0b110 })[0..], outerProductMasks(3, &comptime Mask.initMany(.{ 0b001, 0b010 }), &comptime Mask.initMany(.{ 0b010, 0b100 }))[0..]);
+    try std.testing.expectEqualSlices(BladeMask, BladeMask.initMany(.{ 0b001, 0b010, 0b100 })[0..], unionBladeMasks(3, &comptime BladeMask.initMany(.{ 0b001, 0b010 }), &comptime BladeMask.initMany(.{ 0b010, 0b100 }))[0..]);
+    try std.testing.expectEqualSlices(BladeMask, BladeMask.initMany(.{ 0b000, 0b011, 0b101, 0b110 })[0..], geometricProductMasks(3, &comptime BladeMask.initMany(.{ 0b001, 0b010 }), &comptime BladeMask.initMany(.{ 0b010, 0b100 }))[0..]);
+    try std.testing.expectEqualSlices(BladeMask, BladeMask.initMany(.{ 0b011, 0b101, 0b110 })[0..], outerProductMasks(3, &comptime BladeMask.initMany(.{ 0b001, 0b010 }), &comptime BladeMask.initMany(.{ 0b010, 0b100 }))[0..]);
 }
 
 test "orientation sign helpers and parity predicates behave consistently" {
@@ -672,9 +675,9 @@ test "orientation sign helpers and parity predicates behave consistently" {
     try std.testing.expect(sign.isNegative());
     try std.testing.expect(sign.flipped() == .positive);
 
-    try std.testing.expect(allMasksHaveGrade(&.{ Mask.init(0b001), Mask.init(0b010), Mask.init(0b100) }, 1));
-    try std.testing.expect(allMasksHaveParity(&.{ Mask.init(0b000), Mask.init(0b011), Mask.init(0b101) }, true));
-    try std.testing.expect(allMasksHaveParity(&.{ Mask.init(0b001), Mask.init(0b010), Mask.init(0b111) }, false));
+    try std.testing.expect(allMasksHaveGrade(&.{ .init(0b001), .init(0b010), .init(0b100) }, 1));
+    try std.testing.expect(allMasksHaveParity(&.{ .init(0b000), .init(0b011), .init(0b101) }, true));
+    try std.testing.expect(allMasksHaveParity(&.{ .init(0b001), .init(0b010), .init(0b111) }, false));
 }
 
 test "MetricSignature constructors expose dot-syntax helpers" {
@@ -690,13 +693,13 @@ test "MetricSignature constructors expose dot-syntax helpers" {
 
 test "ascending uniqueness helper handles short and invalid slices" {
     try std.testing.expect(areStrictlyAscendingUnique(&.{}));
-    try std.testing.expect(areStrictlyAscendingUnique(&.{Mask.init(0b010)}));
-    try std.testing.expect(areStrictlyAscendingUnique(&.{ Mask.init(0b001), Mask.init(0b010), Mask.init(0b100) }));
-    try std.testing.expect(!areStrictlyAscendingUnique(&.{ Mask.init(0b010), Mask.init(0b001) }));
-    try std.testing.expect(!areStrictlyAscendingUnique(&.{ Mask.init(0b001), Mask.init(0b001) }));
+    try std.testing.expect(areStrictlyAscendingUnique(&.{.init(0b010)}));
+    try std.testing.expect(areStrictlyAscendingUnique(&.{ .init(0b001), .init(0b010), .init(0b100) }));
+    try std.testing.expect(!areStrictlyAscendingUnique(&.{ .init(0b010), .init(0b001) }));
+    try std.testing.expect(!areStrictlyAscendingUnique(&.{ .init(0b001), .init(0b001) }));
 }
 
 test "BladeMask.initMany builds explicit mask lists" {
-    const masks = Mask.initMany(.{ 0, 0b1, 0b11, 0b1010 });
-    try std.testing.expectEqualSlices(BladeMask, &.{ Mask.init(0), Mask.init(0b1), Mask.init(0b11), Mask.init(0b1010) }, masks[0..]);
+    const masks = BladeMask.initMany(.{ 0, 0b1, 0b11, 0b1010 });
+    try std.testing.expectEqualSlices(BladeMask, &.{ .init(0), .init(0b1), .init(0b11), .init(0b1010) }, masks[0..]);
 }
