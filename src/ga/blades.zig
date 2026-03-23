@@ -92,6 +92,125 @@ pub const SignedBladeSpec = struct {
     mask: BladeMask,
 };
 
+/// Inclusive one-based span of basis-vector indices.
+pub const BasisIndexSpan = struct {
+    start: usize,
+    end: usize,
+
+    pub fn range(start: usize, end: usize) BasisIndexSpan {
+        return .{ .start = start, .end = end };
+    }
+
+    pub fn singleton(index: usize) BasisIndexSpan {
+        return range(index, index);
+    }
+
+    pub fn contains(self: BasisIndexSpan, one_based_index: usize) bool {
+        return self.start <= one_based_index and one_based_index <= self.end;
+    }
+
+    pub fn singleIndex(self: BasisIndexSpan) ?usize {
+        return if (self.start == self.end) self.start else null;
+    }
+};
+
+/// Basis-index spans partitioned by metric signature category.
+pub const BasisIndexSpans = struct {
+    positive: ?BasisIndexSpan = null,
+    negative: ?BasisIndexSpan = null,
+    degenerate: ?BasisIndexSpan = null,
+
+    pub fn fromSignature(comptime sig: MetricSignature) BasisIndexSpans {
+        _ = sig.dimension();
+
+        const pos_end = sig.p;
+        const neg_start = sig.p + 1;
+        const neg_end = sig.p + sig.q;
+        const deg_start = sig.p + sig.q + 1;
+        const deg_end = sig.p + sig.q + sig.r;
+
+        return .{
+            .positive = if (sig.p == 0) null else .range(1, pos_end),
+            .negative = if (sig.q == 0) null else .range(neg_start, neg_end),
+            .degenerate = if (sig.r == 0) null else .range(deg_start, deg_end),
+        };
+    }
+
+    pub fn contains(self: BasisIndexSpans, one_based_index: usize) bool {
+        return containsIn(self.positive, one_based_index) or
+            containsIn(self.negative, one_based_index) or
+            containsIn(self.degenerate, one_based_index);
+    }
+
+    pub fn assertValidForDimension(self: BasisIndexSpans, comptime dimension: usize) void {
+        validateSpan(self, .positive, dimension);
+        validateSpan(self, .negative, dimension);
+        validateSpan(self, .degenerate, dimension);
+
+        validateNoOverlap(self, .positive, .negative);
+        validateNoOverlap(self, .positive, .degenerate);
+        validateNoOverlap(self, .negative, .degenerate);
+    }
+
+    fn containsIn(span: ?BasisIndexSpan, one_based_index: usize) bool {
+        if (span) |range| return range.contains(one_based_index);
+        return false;
+    }
+
+    fn spanFieldName(comptime field: OrientationSign) []const u8 {
+        return switch (field) {
+            inline else => |tag| @tagName(tag),
+        };
+    }
+
+    fn spanFor(self: BasisIndexSpans, comptime field: OrientationSign) ?BasisIndexSpan {
+        return @field(self, spanFieldName(field));
+    }
+
+    fn validateSpan(self: BasisIndexSpans, comptime field: OrientationSign, comptime dimension: usize) void {
+        const label = comptime spanFieldName(field);
+        if (self.spanFor(field)) |range| {
+            if (!(1 <= range.start and range.start <= range.end and range.end <= dimension)) {
+                const message = comptime std.fmt.comptimePrint(
+                    "{s} basis span must stay within [1, {d}] and have start <= end",
+                    .{ label, dimension },
+                );
+                if (@inComptime()) {
+                    @compileError(message);
+                }
+                std.debug.panic("{s}", .{message});
+            }
+        }
+    }
+
+    fn spansOverlap(lhs: BasisIndexSpan, rhs: BasisIndexSpan) bool {
+        return lhs.start <= rhs.end and rhs.start <= lhs.end;
+    }
+
+    fn validateNoOverlap(
+        self: BasisIndexSpans,
+        comptime lhs_field: OrientationSign,
+        comptime rhs_field: OrientationSign,
+    ) void {
+        const lhs_label = comptime spanFieldName(lhs_field);
+        const rhs_label = comptime spanFieldName(rhs_field);
+
+        const left_span = self.spanFor(lhs_field) orelse return;
+        const right_span = self.spanFor(rhs_field) orelse return;
+
+        if (spansOverlap(left_span, right_span)) {
+            const message = comptime std.fmt.comptimePrint(
+                "{s} basis span overlaps {s} span",
+                .{ lhs_label, rhs_label },
+            );
+            if (@inComptime()) {
+                @compileError(message);
+            }
+            std.debug.panic("{s}", .{message});
+        }
+    }
+};
+
 /// Compile-time metric signature for `Cl(p, q, r)`.
 ///
 /// In the Clifford algebra `Cl(p, q, r)`:
@@ -713,4 +832,20 @@ test "ascending uniqueness helper handles short and invalid slices" {
 test "BladeMask.initMany builds explicit mask lists" {
     const masks = BladeMask.initMany(.{ 0, 0b1, 0b11, 0b1010 });
     try std.testing.expectEqualSlices(BladeMask, &.{ .init(0), .init(0b1), .init(0b11), .init(0b1010) }, masks[0..]);
+}
+
+test "basis index spans derive from metric signature partitions" {
+    const spans = BasisIndexSpans.fromSignature(.{ .p = 2, .q = 1, .r = 1 });
+    spans.assertValidForDimension(4);
+
+    try std.testing.expectEqual(BasisIndexSpan{ .start = 1, .end = 2 }, spans.positive.?);
+    try std.testing.expectEqual(BasisIndexSpan{ .start = 3, .end = 3 }, spans.negative.?);
+    try std.testing.expectEqual(BasisIndexSpan{ .start = 4, .end = 4 }, spans.degenerate.?);
+    try std.testing.expect(spans.contains(4));
+    try std.testing.expect(!spans.contains(5));
+}
+
+test "basis index span helpers construct ranges and singletons" {
+    try std.testing.expectEqual(BasisIndexSpan{ .start = 2, .end = 5 }, BasisIndexSpan.range(2, 5));
+    try std.testing.expectEqual(BasisIndexSpan{ .start = 7, .end = 7 }, BasisIndexSpan.singleton(7));
 }

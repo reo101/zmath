@@ -165,9 +165,19 @@ pub fn renderMultivector(writer: *std.Io.Writer, value: anytype) std.Io.Writer.E
 
 /// Returns the compact multivector type for a named signed blade.
 pub fn SignedBladeType(comptime T: type, comptime name: []const u8, comptime sig: MetricSignature) type {
+    return SignedBladeTypeWithOptions(T, name, sig, .{});
+}
+
+/// Returns the compact multivector type for a named signed blade under parser options.
+pub fn SignedBladeTypeWithOptions(
+    comptime T: type,
+    comptime name: []const u8,
+    comptime sig: MetricSignature,
+    comptime parser_options: blade_parsing.ParserOptions,
+) type {
     ensureNumeric(T);
     const dimension = comptime sig.dimension();
-    const spec = comptime blade_parsing.expectSignedBlade(name, dimension);
+    const spec = comptime blade_parsing.expectSignedBladeWithOptions(name, dimension, parser_options);
     return BasisBladeType(T, spec.mask, sig);
 }
 
@@ -181,12 +191,13 @@ fn signedBladeImpl(
     comptime T: type,
     comptime name: []const u8,
     comptime sig: MetricSignature,
-) SignedBladeType(T, name, sig) {
+    comptime parser_options: blade_parsing.ParserOptions,
+) SignedBladeTypeWithOptions(T, name, sig, parser_options) {
     ensureNumeric(T);
 
     const dimension = comptime sig.dimension();
 
-    const spec = comptime blade_parsing.expectSignedBlade(name, dimension);
+    const spec = comptime blade_parsing.expectSignedBladeWithOptions(name, dimension, parser_options);
     if (comptime spec.sign.isNegative() and !supportsNegativeCoefficients(T)) {
         @compileError("negative-oriented signed blades require a signed or floating-point coefficient type");
     }
@@ -282,7 +293,15 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
 
         /// Constructs a compile-time signed blade using this carrier's coefficient type.
         pub fn signedBlade(comptime name: []const u8) SignedBladeType(T, name, sig) {
-            return signedBladeImpl(T, name, sig);
+            return signedBladeImpl(T, name, sig, .{});
+        }
+
+        /// Constructs a compile-time signed blade using parser options.
+        pub fn signedBladeWithOptions(
+            comptime name: []const u8,
+            comptime parser_options: blade_parsing.ParserOptions,
+        ) SignedBladeTypeWithOptions(T, name, sig, parser_options) {
+            return signedBladeImpl(T, name, sig, parser_options);
         }
 
         /// Constructs a signed blade from runtime basis-vector indices.
@@ -819,7 +838,17 @@ pub fn basisVector(
 
 /// Constructs a compile-time signed blade such as `e12` or `e_10_2`.
 pub fn signedBlade(comptime T: type, comptime name: []const u8, comptime sig: MetricSignature) SignedBladeType(T, name, sig) {
-    return signedBladeImpl(T, name, sig);
+    return signedBladeImpl(T, name, sig, .{});
+}
+
+/// Constructs a compile-time signed blade under parser options.
+pub fn signedBladeWithOptions(
+    comptime T: type,
+    comptime name: []const u8,
+    comptime sig: MetricSignature,
+    comptime parser_options: blade_parsing.ParserOptions,
+) SignedBladeTypeWithOptions(T, name, sig, parser_options) {
+    return signedBladeImpl(T, name, sig, parser_options);
 }
 
 /// Carrier type storing every blade in the algebra.
@@ -874,6 +903,15 @@ pub fn Rotor(comptime T: type, comptime sig: MetricSignature) type {
 
 /// Namespace for basis-vector and signed-blade helpers in one algebra.
 pub fn Basis(comptime T: type, comptime sig: MetricSignature) type {
+    return BasisWithParserOptions(T, sig, .{});
+}
+
+/// Namespace for basis-vector and signed-blade helpers in one algebra under parser options.
+pub fn BasisWithParserOptions(
+    comptime T: type,
+    comptime sig: MetricSignature,
+    comptime parser_options: blade_parsing.ParserOptions,
+) type {
     const dimension = comptime sig.dimension();
     return struct {
         /// The corresponding carrier type for the full algebra.
@@ -890,8 +928,9 @@ pub fn Basis(comptime T: type, comptime sig: MetricSignature) type {
 
         /// Returns the one-based basis vector `e{one_based_index}`.
         pub fn e(
-            comptime one_based_index: usize,
-        ) BasisBladeType(T, blade_ops.basisVectorMask(dimension, one_based_index), sig) {
+            comptime index: usize,
+        ) BasisBladeType(T, blade_ops.basisVectorMask(dimension, blade_parsing.expectBasisIndexWithOptions(index, dimension, parser_options)), sig) {
+            const one_based_index = comptime blade_parsing.expectBasisIndexWithOptions(index, dimension, parser_options);
             return basisVector(T, one_based_index, sig);
         }
 
@@ -906,8 +945,16 @@ pub fn Basis(comptime T: type, comptime sig: MetricSignature) type {
         }
 
         /// Returns a compile-time signed blade such as `e12` or `e_10_2`.
-        pub fn signedBlade(comptime name: []const u8) SignedBladeType(T, name, sig) {
-            return signedBladeImpl(T, name, sig);
+        pub fn signedBlade(comptime name: []const u8) SignedBladeTypeWithOptions(T, name, sig, parser_options) {
+            return signedBladeImpl(T, name, sig, parser_options);
+        }
+
+        /// Returns a compile-time signed blade under explicit parser options.
+        pub fn signedBladeWithOptions(
+            comptime name: []const u8,
+            comptime override_options: blade_parsing.ParserOptions,
+        ) SignedBladeTypeWithOptions(T, name, sig, override_options) {
+            return signedBladeImpl(T, name, sig, override_options);
         }
 
         /// Returns a runtime signed blade from a list of indices.
@@ -925,6 +972,19 @@ test "aliases and signed blades expose more than just plain vectors" {
     try std.testing.expect(E2.signedBlade("e12").eql(Bivector(i32, .euclidean(2)).init(.{1})));
     try std.testing.expect(E2.signedBlade("e21").eql(Bivector(i32, .euclidean(2)).init(.{-1})));
     try std.testing.expect(E2.signedBlade("e11").eql(Scalar(i32, .euclidean(2)).init(.{1})));
+}
+
+test "basis helper e applies parser index options" {
+    const sig: MetricSignature = .{ .p = 3, .q = 0, .r = 1 };
+    const options = comptime blade_parsing.ParserOptions{
+        .basis_spans = .{
+            .positive = blade_ops.BasisIndexSpan.range(1, 3),
+            .degenerate = blade_ops.BasisIndexSpan.singleton(4),
+        },
+    };
+
+    const E = BasisWithParserOptions(f64, sig, options);
+    try std.testing.expect(E.e(0).eql(E.e(4)));
 }
 
 test "geometric products and involutions follow Euclidean VGA relations" {
