@@ -3,7 +3,7 @@ const std = @import("std");
 pub const blades = @import("ga/blades.zig");
 pub const blade_parsing = @import("ga/blade_parsing.zig");
 pub const multivector = @import("ga/multivector.zig");
-pub const rotors2d = @import("ga/rotors2d.zig");
+pub const rotors = @import("ga/rotors.zig");
 
 pub const BladeMask = blades.BladeMask;
 pub const SignedBladeParseError = blade_parsing.SignedBladeParseError;
@@ -29,6 +29,12 @@ pub const writeBladeMask = blades.writeBladeMask;
 pub const isSignedBlade = blade_parsing.isSignedBlade;
 pub const isMultivectorType = multivector.isMultivectorType;
 pub const ensureMultivector = multivector.ensureMultivector;
+
+pub const norm = rotors.norm;
+pub const normSquared = rotors.normSquared;
+pub const normalize = rotors.normalize;
+pub const normalized = rotors.normalized;
+pub const dual = rotors.dual; // Wait, dual is in Multivector, let's export a generic one if possible or just use Multivector.dual
 
 pub fn parseSignedBlade(
     comptime name: []const u8,
@@ -195,6 +201,30 @@ pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_o
                 pub fn signedBlade(comptime name: []const u8) multivector.SignedBladeTypeWithOptions(T, name, metric_signature, naming) {
                     return Self.signedBlade(T, name);
                 }
+
+                pub fn norm(mv: anytype) T {
+                    return rotors.norm(mv);
+                }
+
+                pub fn normSquared(mv: anytype) T {
+                    return rotors.normSquared(mv);
+                }
+
+                pub fn normalize(mv: anytype) rotors.RotorError!@TypeOf(mv) {
+                    return rotors.normalize(mv);
+                }
+
+                pub fn normalized(mv: anytype) @TypeOf(mv) {
+                    return rotors.normalized(mv);
+                }
+
+                pub fn magnitude(mv: anytype) T {
+                    return rotors.norm(mv);
+                }
+
+                pub fn dual(mv: anytype) multivector.DualResultType(T, @TypeOf(mv).blades, metric_signature) {
+                    return mv.dual();
+                }
             };
         }
     };
@@ -214,10 +244,10 @@ test "ga facade exposes core and specialized modules" {
 
     const E2 = Algebra(.euclidean(2)).Basis(f64);
     const e1 = E2.e(1);
-    const half_turn = rotors2d.planarRotor(f64, std.math.pi);
-    const rotated_e1 = rotors2d.rotated(e1, half_turn);
-    try std.testing.expect(rotors2d.nearlyEqual(rotated_e1.coeffNamed("e1"), -1.0, 1e-12));
-    try std.testing.expect(rotors2d.nearlyEqual(rotated_e1.coeffNamed("e2"), 0.0, 1e-12));
+    const half_turn = rotors.planarRotor(f64, std.math.pi);
+    const rotated_e1 = rotors.rotated(e1, half_turn);
+    try std.testing.expect(rotors.nearlyEqual(rotated_e1.coeffNamed("e1"), -1.0, 1e-12));
+    try std.testing.expect(rotors.nearlyEqual(rotated_e1.coeffNamed("e2"), 0.0, 1e-12));
 }
 
 test "signature-baked algebra namespace drives metric-dependent products" {

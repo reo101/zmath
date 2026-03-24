@@ -18,23 +18,89 @@ const basis_spans = ga.BasisIndexSpans.init(.{
 
 const naming_options = ga.SignedBladeNamingOptions.withBasisSpans(basis_spans);
 const algebra = ga.AlgebraWithNamingOptions(sig, naming_options);
-pub const h = algebra.Instantiate(f64);
+pub const h = algebra.Instantiate(f32);
+
+pub const Point = struct {
+    pub fn init(x: f32, y: f32, z: f32) h.Full {
+        const E = h.Basis;
+        // PGA points: x*e023 + y*e031 + z*e012 + e123
+        const res = E.e(0).wedge(E.e(2)).wedge(E.e(3)).scale(x)
+            .add(E.e(0).wedge(E.e(3)).wedge(E.e(1)).scale(y))
+            .add(E.e(0).wedge(E.e(1)).wedge(E.e(2)).scale(z))
+            .add(E.e(1).wedge(E.e(2)).wedge(E.e(3)));
+        
+        var full = h.Full.zero();
+        inline for (h.Full.blades, 0..) |mask, i| {
+            full.coeffs[i] = res.coeff(mask);
+        }
+        return full;
+    }
+    
+    pub fn direction(x: f32, y: f32, z: f32) h.Full {
+        const E = h.Basis;
+        const res = E.e(0).wedge(E.e(2)).wedge(E.e(3)).scale(x)
+            .add(E.e(0).wedge(E.e(3)).wedge(E.e(1)).scale(y))
+            .add(E.e(0).wedge(E.e(1)).wedge(E.e(2)).scale(z));
+        var full = h.Full.zero();
+        inline for (h.Full.blades, 0..) |mask, i| {
+            full.coeffs[i] = res.coeff(mask);
+        }
+        return full;
+    }
+};
+
+pub const Plane = struct {
+    pub fn init(a: f32, b: f32, c: f32, d: f32) h.Full {
+        const E = h.Basis;
+        // Plane: a*e1 + b*e2 + c*e3 + d*e0
+        const res = E.e(1).scale(a)
+            .add(E.e(2).scale(b))
+            .add(E.e(3).scale(c))
+            .add(E.e(0).scale(d));
+        var full = h.Full.zero();
+        inline for (h.Full.blades, 0..) |mask, i| {
+            full.coeffs[i] = res.coeff(mask);
+        }
+        return full;
+    }
+};
 
 fn namedBasisIndex(comptime named_index: usize) usize {
     return comptime ga.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
 }
 
+/// Converts a PGA multivector (intended to be a rotor) to a 4x4 matrix.
+/// Assumes the multivector acts on points P = x*e1 + y*e2 + z*e3 + e0.
+pub fn toMatrix4x4(mv: anytype) [4][4]f32 {
+    ga.ensureMultivector(@TypeOf(mv));
+    const E = h.Basis;
+    const basis_vectors = [_]h.Vector{
+        E.e(1),
+        E.e(2),
+        E.e(3),
+        E.e(0),
+    };
+
+    var mat: [4][4]f32 = undefined;
+    inline for (basis_vectors, 0..) |v, j| {
+        // Compute v' = mv * v * ~mv
+        const v_prime = mv.gp(v).gp(mv.reverse()).gradePart(1);
+        mat[0][j] = @floatCast(v_prime.coeffNamed("e1"));
+        mat[1][j] = @floatCast(v_prime.coeffNamed("e2"));
+        mat[2][j] = @floatCast(v_prime.coeffNamed("e3"));
+        mat[3][j] = @floatCast(v_prime.coeffNamed("e0"));
+    }
+    return mat;
+}
 
 test "pga signature has correct dimension and basis-vector squares" {
     // e1² = e2² = e3² = +1 (positive)
-    try std.testing.expectEqual(.positive, sig.basisSquareClass(1));
-    try std.testing.expectEqual(.positive, sig.basisSquareClass(2));
-    try std.testing.expectEqual(.positive, sig.basisSquareClass(3));
+    try std.testing.expectEqual(.positive, sig.basisSquareClass(namedBasisIndex(1)));
+    try std.testing.expectEqual(.positive, sig.basisSquareClass(namedBasisIndex(2)));
+    try std.testing.expectEqual(.positive, sig.basisSquareClass(namedBasisIndex(3)));
 
-    // e0 squares to 0 (degenerate)
+    // e0² = 0 (degenerate)
     try std.testing.expectEqual(.degenerate, sig.basisSquareClass(namedBasisIndex(0)));
-
-    try std.testing.expectEqual(@as(usize, 4), dimension);
 }
 
 test "degenerate basis vector squares to zero under geometric product" {
@@ -121,4 +187,15 @@ test "pga signed blade parser accepts e0 alias for degenerate basis" {
     try std.testing.expectError(error.InvalidBasisIndex, ga.resolveNamedBasisIndex(4, dimension, naming_options, false));
     try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBlade("e4", dimension, naming_options, false));
     try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBlade("e14", dimension, naming_options, false));
+}
+
+test "toMatrix4x4 with identity rotor" {
+    const rotor = h.Scalar.init(.{1});
+    const mat = toMatrix4x4(rotor);
+    
+    try std.testing.expectEqual(@as(f32, 1.0), mat[0][0]);
+    try std.testing.expectEqual(@as(f32, 0.0), mat[0][1]);
+    try std.testing.expectEqual(@as(f32, 1.0), mat[1][1]);
+    try std.testing.expectEqual(@as(f32, 1.0), mat[2][2]);
+    try std.testing.expectEqual(@as(f32, 1.0), mat[3][3]);
 }

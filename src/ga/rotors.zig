@@ -19,35 +19,29 @@ pub const RotorError = error{
     ZeroVector,
 };
 
-fn assertFloatVector2(comptime M: type) void {
+fn assertFloatVector(comptime M: type) void {
     if (!@hasDecl(M, "dimensions") or !@hasDecl(M, "Coefficient") or !@hasDecl(M, "blades")) {
-        @compileError("expected a 2D multivector type");
-    }
-    if (M.dimensions != 2) {
-        @compileError("this helper is currently specialized to 2D VGA");
+        @compileError("expected a multivector type");
     }
     if (!blades.allMasksHaveGrade(M.blades, 1)) {
         @compileError("this helper expects a grade-1 vector type");
     }
     switch (@typeInfo(M.Coefficient)) {
         .float, .comptime_float => {},
-        else => @compileError("2D rotor helpers currently require floating-point coefficients"),
+        else => @compileError("rotor helpers currently require floating-point coefficients"),
     }
 }
 
-fn assertFloatRotor2(comptime M: type) void {
+fn assertFloatRotor(comptime M: type) void {
     if (!@hasDecl(M, "dimensions") or !@hasDecl(M, "Coefficient") or !@hasDecl(M, "blades")) {
-        @compileError("expected a 2D rotor multivector type");
-    }
-    if (M.dimensions != 2) {
-        @compileError("this helper is currently specialized to 2D VGA");
+        @compileError("expected a rotor multivector type");
     }
     if (!blades.allMasksHaveParity(M.blades, true)) {
         @compileError("this helper expects an even multivector / rotor carrier");
     }
     switch (@typeInfo(M.Coefficient)) {
         .float, .comptime_float => {},
-        else => @compileError("2D rotor helpers currently require floating-point coefficients"),
+        else => @compileError("rotor helpers currently require floating-point coefficients"),
     }
 }
 
@@ -56,29 +50,48 @@ pub fn radiansFromDegrees(angle_degrees: anytype) f64 {
     return @as(f64, @floatCast(angle_degrees)) * std.math.pi / 180.0;
 }
 
-/// Returns the Euclidean norm squared of a 2D grade-1 vector.
-pub fn normSquared(vector: anytype) @TypeOf(vector).Coefficient {
-    const Vector = @TypeOf(vector);
-    comptime assertFloatVector2(Vector);
-    return vector.scalarProduct(vector);
+fn assertFloatMultivector(comptime M: type) void {
+    if (!@hasDecl(M, "dimensions") or !@hasDecl(M, "Coefficient") or !@hasDecl(M, "blades")) {
+        @compileError("expected a multivector type");
+    }
+    switch (@typeInfo(M.Coefficient)) {
+        .float, .comptime_float => {},
+        else => @compileError("rotor helpers currently require floating-point coefficients"),
+    }
 }
 
-/// Returns the Euclidean norm of a 2D grade-1 vector.
-pub fn norm(vector: anytype) @TypeOf(vector).Coefficient {
-    const Vector = @TypeOf(vector);
-    comptime assertFloatVector2(Vector);
-    return @sqrt(normSquared(vector));
+/// Returns the Euclidean norm squared of a multivector.
+pub fn normSquared(mv: anytype) @TypeOf(mv).Coefficient {
+    const M = @TypeOf(mv);
+    comptime assertFloatMultivector(M);
+    return mv.scalarProduct(mv);
 }
 
-/// Returns the normalized version of a 2D grade-1 vector.
-pub fn normalized(vector: anytype) @TypeOf(vector) {
-    return normalize(vector) catch unreachable;
+/// Returns the Euclidean norm of a multivector.
+pub fn norm(mv: anytype) @TypeOf(mv).Coefficient {
+    const M = @TypeOf(mv);
+    comptime assertFloatMultivector(M);
+    return @sqrt(normSquared(mv));
+}
+
+/// Returns the Hodge dual of a multivector.
+pub fn dual(mv: anytype) multivector.DualResultType(@TypeOf(mv).Coefficient, @TypeOf(mv).blades, @TypeOf(mv).metric_signature) {
+    return mv.dual();
+}
+
+/// Returns the normalized version of a multivector.
+pub fn normalized(mv: anytype) @TypeOf(mv) {
+    const magnitude = norm(mv);
+    if (nearlyEqual(magnitude, 0, defaultTolerance(@TypeOf(mv).Coefficient))) {
+        return mv; // Or panic/error if zero vector is not allowed
+    }
+    return mv.scale(1.0 / magnitude);
 }
 
 /// Returns the normalized version of a 2D grade-1 vector, or `error.ZeroVector`.
 pub fn normalize(vector: anytype) RotorError!@TypeOf(vector) {
     const Vector = @TypeOf(vector);
-    comptime assertFloatVector2(Vector);
+    comptime assertFloatVector(Vector);
 
     const magnitude = norm(vector);
     if (nearlyEqual(magnitude, 0, defaultTolerance(Vector.Coefficient))) {
@@ -100,7 +113,7 @@ pub fn nearlyEqual(lhs: anytype, rhs: @TypeOf(lhs), epsilon: @TypeOf(lhs)) bool 
 /// Verifies the rotor normalization invariant in debug builds.
 pub fn debugAssertRotor(rotor: anytype, epsilon: @TypeOf(rotor).Coefficient) void {
     const RotorType = @TypeOf(rotor);
-    comptime assertFloatRotor2(RotorType);
+    comptime assertFloatRotor(RotorType);
 
     if (@import("builtin").mode != .Debug) return;
 
@@ -135,8 +148,8 @@ pub fn rotorFromTo(from: anytype, to: anytype) multivector.Rotor(@TypeOf(from).C
 pub fn tryRotorFromTo(from: anytype, to: anytype) RotorError!multivector.Rotor(@TypeOf(from).Coefficient, euclidean2) {
     const Vector = @TypeOf(from);
     const ToVector = @TypeOf(to);
-    comptime assertFloatVector2(Vector);
-    comptime assertFloatVector2(ToVector);
+    comptime assertFloatVector(Vector);
+    comptime assertFloatVector(ToVector);
     comptime {
         if (Vector.Coefficient != ToVector.Coefficient) {
             @compileError("rotorFromTo expects matching coefficient types");
@@ -170,8 +183,8 @@ pub fn tryRotorFromTo(from: anytype, to: anytype) RotorError!multivector.Rotor(@
 pub fn rotated(vector: anytype, rotor: anytype) multivector.Vector(@TypeOf(vector).Coefficient, euclidean2) {
     const Vector = @TypeOf(vector);
     const RotorType = @TypeOf(rotor);
-    comptime assertFloatVector2(Vector);
-    comptime assertFloatRotor2(RotorType);
+    comptime assertFloatVector(Vector);
+    comptime assertFloatRotor(RotorType);
 
     debugAssertRotor(rotor, defaultTolerance(RotorType.Coefficient));
     return rotor.gp(vector).gp(rotor.reverse()).gradePart(1);
@@ -180,7 +193,7 @@ pub fn rotated(vector: anytype, rotor: anytype) multivector.Vector(@TypeOf(vecto
 /// Rotates a vector by an angle in radians using a planar rotor.
 pub fn rotatedByAngle(vector: anytype, angle_radians: @TypeOf(vector).Coefficient) multivector.Vector(@TypeOf(vector).Coefficient, euclidean2) {
     const Vector = @TypeOf(vector);
-    comptime assertFloatVector2(Vector);
+    comptime assertFloatVector(Vector);
     return rotated(vector, planarRotor(Vector.Coefficient, angle_radians));
 }
 
