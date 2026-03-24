@@ -167,7 +167,7 @@ pub fn tryRotorFromTo(from: anytype, to: anytype) RotorError!multivector.Rotor(@
 }
 
 /// Applies the sandwich product `R v ~R` and returns the rotated vector.
-pub fn rotated(vector: anytype, rotor: anytype) multivector.GAVector(@TypeOf(vector).Coefficient, euclidean2) {
+pub fn rotated(vector: anytype, rotor: anytype) multivector.Vector(@TypeOf(vector).Coefficient, euclidean2) {
     const Vector = @TypeOf(vector);
     const RotorType = @TypeOf(rotor);
     comptime assertFloatVector2(Vector);
@@ -178,7 +178,7 @@ pub fn rotated(vector: anytype, rotor: anytype) multivector.GAVector(@TypeOf(vec
 }
 
 /// Rotates a vector by an angle in radians using a planar rotor.
-pub fn rotatedByAngle(vector: anytype, angle_radians: @TypeOf(vector).Coefficient) multivector.GAVector(@TypeOf(vector).Coefficient, euclidean2) {
+pub fn rotatedByAngle(vector: anytype, angle_radians: @TypeOf(vector).Coefficient) multivector.Vector(@TypeOf(vector).Coefficient, euclidean2) {
     const Vector = @TypeOf(vector);
     comptime assertFloatVector2(Vector);
     return rotated(vector, planarRotor(Vector.Coefficient, angle_radians));
@@ -211,7 +211,7 @@ test "rotorFromTo handles antiparallel vectors" {
 }
 
 test "safe rotor helpers return ZeroVector on invalid input" {
-    const Vec2 = multivector.GAVector(f64, euclidean2);
+    const Vec2 = multivector.Vector(f64, euclidean2);
     const zero = Vec2.zero();
     const e1 = multivector.Basis(f64, euclidean2).e(1);
 

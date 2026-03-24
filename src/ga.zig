@@ -41,7 +41,7 @@ pub const KVectorWithSignature = multivector.KVector;
 pub const EvenMultivectorWithSignature = multivector.EvenMultivector;
 pub const OddMultivectorWithSignature = multivector.OddMultivector;
 pub const ScalarWithSignature = multivector.Scalar;
-pub const GAVectorWithSignature = multivector.GAVector;
+pub const VectorWithSignature = multivector.Vector;
 pub const BivectorWithSignature = multivector.Bivector;
 pub const TrivectorWithSignature = multivector.Trivector;
 pub const PseudoscalarWithSignature = multivector.Pseudoscalar;
@@ -91,8 +91,8 @@ pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_o
             return multivector.Scalar(T, metric_signature);
         }
 
-        pub fn GAVector(comptime T: type) type {
-            return multivector.GAVector(T, metric_signature);
+        pub fn Vector(comptime T: type) type {
+            return multivector.Vector(T, metric_signature);
         }
 
         pub fn Bivector(comptime T: type) type {

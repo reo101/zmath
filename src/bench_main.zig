@@ -13,8 +13,8 @@ fn elapsedNanos(start: std.Io.Timestamp, end: std.Io.Timestamp) u64 {
     return @intCast(duration.toNanoseconds());
 }
 
-fn benchmarkGAVector3(io: std.Io, iterations: usize) u64 {
-    const Vec3 = Cl3.GAVector(f32);
+fn benchmarkVector3(io: std.Io, iterations: usize) u64 {
+    const Vec3 = Cl3.Vector(f32);
     var a = Vec3.init(.{ 1.0, 2.0, 3.0 });
     var b = Vec3.init(.{ 4.0, 5.0, 6.0 });
     var sink: f32 = 0;
@@ -83,7 +83,7 @@ pub fn run(init: std.process.Init, backend_name: []const u8) !void {
     const vector_iterations: usize = 30_000_000;
     const rotor_iterations: usize = 20_000_000;
 
-    const ga_vec_ns = benchmarkGAVector3(io, vector_iterations);
+    const ga_vec_ns = benchmarkVector3(io, vector_iterations);
     const raw_vec_ns = benchmarkRawVector3(io, vector_iterations);
     const rotor_ns = benchmarkRotor2(io, rotor_iterations);
 

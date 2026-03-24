@@ -51,8 +51,8 @@ pub fn Scalar(comptime T: type) type {
     return algebra.Scalar(T);
 }
 
-pub fn GAVector(comptime T: type) type {
-    return algebra.GAVector(T);
+pub fn Vector(comptime T: type) type {
+    return algebra.Vector(T);
 }
 
 pub fn Bivector(comptime T: type) type {
