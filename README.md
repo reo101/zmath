@@ -29,11 +29,30 @@ Right now the repo implements a GA-first core with:
 
 ## Layout
 
-1. `src/ga/` is the core implementation (`blades`, `blade_parsing`, `multivector`, `rotors`).
+1. `src/ga/` is the core implementation (`blades`, `blade_parsing`, `multivector`, `rotors`, `visualizer`).
 2. `src/ga.zig` is the main public GA facade.
-3. `src/vga.zig` is a light alias/branding layer with rotor conveniences.
-4. `src/root.zig` is the package root and exposes `ga` and `vga` modules.
-5. `src/main.zig` is a tiny executable demo/wiring check.
+3. `src/flavours/` contains specialized GA models:
+    - `vga.zig`: Standard Vector GA (Euclidean).
+    - `pga.zig`: Projective GA (Affine/Flat Euclidean).
+    - `cga.zig`: Conformal GA (Spheres/Circles/Curved).
+    - `sta.zig`: Spacetime Algebra (Minkowski/Relativity).
+4. `src/root.zig` is the package root and exposes all modules.
+
+## GA Flavour Comparison
+
+| Flavour | Signature | Space | Key Benefit | Primitives |
+| :--- | :--- | :--- | :--- | :--- |
+| **VGA** | $Cl(n, 0, 0)$ | Flat | Simplest vector math | Vectors, Bivectors |
+| **PGA** | $Cl(n, 0, 1)$ | Affine | Euclidean rigid motion | Points, Lines, Planes |
+| **CGA** | $Cl(n+1, 1, 0)$ | Conformal | Spheres and circular arcs | Spheres, Circles, Points |
+| **STA** | $Cl(3, 1, 0)$ | Hyperbolic | Relativistic physics | Events, Boosts, Spinors |
+
+## Resources
+
+### Videos
+- **[Geometric Algebra for Computer Graphics (Siggraph 2019)](https://www.youtube.com/watch?v=tX4H_ctggYo)** - The definitive primer on PGA and CGA.
+- **[A Swift Introduction to Geometric Algebra (Sudgylacmoe)](https://www.youtube.com/watch?v=60z_hpEAtD8)** - Very accessible overview of the mechanics.
+- **[Conformal Geometric Algebra (Marc Ten Bosch)](https://www.youtube.com/watch?v=0i3o_Zuney4)** - Great visualization of CGA transformations.
 
 ## Design Direction
 

@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const ga = @import("ga.zig");
+pub const ga = @import("../ga.zig");
 
 pub const MetricSignature = ga.MetricSignature;
 
@@ -13,7 +13,7 @@ pub const metric_signature = sig;
 pub const dimension = sig.dimension();
 const basis_spans = ga.BasisIndexSpans.init(.{
     .positive = .range(1, 3),
-    .degenerate = .singleton(0),
+    .degenerate = .singleton(4),
 });
 
 const naming_options = ga.SignedBladeNamingOptions.withBasisSpans(basis_spans);
@@ -23,10 +23,10 @@ pub const h = algebra.Instantiate(f32);
 pub const Point = struct {
     pub fn init(x: f32, y: f32, z: f32) h.Full {
         const E = h.Basis;
-        // PGA points: x*e023 + y*e031 + z*e012 + e123
-        const res = E.e(0).wedge(E.e(2)).wedge(E.e(3)).scale(x)
-            .add(E.e(0).wedge(E.e(3)).wedge(E.e(1)).scale(y))
-            .add(E.e(0).wedge(E.e(1)).wedge(E.e(2)).scale(z))
+        // PGA points are trivectors: x*e234 + y*e314 + z*e124 + e123
+        const res = E.e(2).wedge(E.e(3)).wedge(E.e(4)).scale(x)
+            .add(E.e(3).wedge(E.e(1)).wedge(E.e(4)).scale(y))
+            .add(E.e(1).wedge(E.e(2)).wedge(E.e(4)).scale(z))
             .add(E.e(1).wedge(E.e(2)).wedge(E.e(3)));
         
         var full = h.Full.zero();
@@ -38,9 +38,9 @@ pub const Point = struct {
     
     pub fn direction(x: f32, y: f32, z: f32) h.Full {
         const E = h.Basis;
-        const res = E.e(0).wedge(E.e(2)).wedge(E.e(3)).scale(x)
-            .add(E.e(0).wedge(E.e(3)).wedge(E.e(1)).scale(y))
-            .add(E.e(0).wedge(E.e(1)).wedge(E.e(2)).scale(z));
+        const res = E.e(2).wedge(E.e(3)).wedge(E.e(4)).scale(x)
+            .add(E.e(3).wedge(E.e(1)).wedge(E.e(4)).scale(y))
+            .add(E.e(1).wedge(E.e(2)).wedge(E.e(4)).scale(z));
         var full = h.Full.zero();
         inline for (h.Full.blades, 0..) |mask, i| {
             full.coeffs[i] = res.coeff(mask);
@@ -52,11 +52,11 @@ pub const Point = struct {
 pub const Plane = struct {
     pub fn init(a: f32, b: f32, c: f32, d: f32) h.Full {
         const E = h.Basis;
-        // Plane: a*e1 + b*e2 + c*e3 + d*e0
+        // Plane: a*e1 + b*e2 + c*e3 + d*e4
         const res = E.e(1).scale(a)
             .add(E.e(2).scale(b))
             .add(E.e(3).scale(c))
-            .add(E.e(0).scale(d));
+            .add(E.e(4).scale(d));
         var full = h.Full.zero();
         inline for (h.Full.blades, 0..) |mask, i| {
             full.coeffs[i] = res.coeff(mask);

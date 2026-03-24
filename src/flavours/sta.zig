@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const ga = @import("ga.zig");
+pub const ga = @import("../ga.zig");
 
 pub const MetricSignature = ga.MetricSignature;
 
