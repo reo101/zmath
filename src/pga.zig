@@ -18,57 +18,10 @@ const basis_spans = ga.BasisIndexSpans.init(.{
 
 const naming_options = ga.SignedBladeNamingOptions.withBasisSpans(basis_spans);
 const algebra = ga.AlgebraWithNamingOptions(sig, naming_options);
+pub const helpers = ga.AlgebraHelperExports(algebra.HelperSurface);
 
 fn basisIndex(comptime parser_index: usize) usize {
     return comptime ga.resolveBasisHelperIndexWithOptions(parser_index, dimension, naming_options) catch unreachable;
-}
-
-pub fn Multivector(comptime T: type, comptime blade_masks: []const ga.BladeMask) type {
-    return algebra.Multivector(T, blade_masks);
-}
-
-pub fn Basis(comptime T: type) type {
-    return algebra.Basis(T);
-}
-
-pub fn FullMultivector(comptime T: type) type {
-    return algebra.FullMultivector(T);
-}
-
-pub fn KVector(comptime T: type, comptime grade: usize) type {
-    return algebra.KVector(T, grade);
-}
-
-pub fn EvenMultivector(comptime T: type) type {
-    return algebra.EvenMultivector(T);
-}
-
-pub fn OddMultivector(comptime T: type) type {
-    return algebra.OddMultivector(T);
-}
-
-pub fn Scalar(comptime T: type) type {
-    return algebra.Scalar(T);
-}
-
-pub fn Vector(comptime T: type) type {
-    return algebra.Vector(T);
-}
-
-pub fn Bivector(comptime T: type) type {
-    return algebra.Bivector(T);
-}
-
-pub fn Trivector(comptime T: type) type {
-    return algebra.Trivector(T);
-}
-
-pub fn Pseudoscalar(comptime T: type) type {
-    return algebra.Pseudoscalar(T);
-}
-
-pub fn Rotor(comptime T: type) type {
-    return algebra.Rotor(T);
 }
 
 test "pga signature has correct dimension and basis-vector squares" {
@@ -84,7 +37,7 @@ test "pga signature has correct dimension and basis-vector squares" {
 }
 
 test "degenerate basis vector squares to zero under geometric product" {
-    const E = Basis(f64);
+    const E = helpers.Basis(f64);
     const e0 = E.e(0); // the degenerate direction
     const result = e0.gp(e0);
 
@@ -93,7 +46,7 @@ test "degenerate basis vector squares to zero under geometric product" {
 }
 
 test "positive basis vectors still square to +1" {
-    const E = Basis(f64);
+    const E = helpers.Basis(f64);
 
     inline for (1..4) |i| {
         const ei = E.e(i);
@@ -103,7 +56,7 @@ test "positive basis vectors still square to +1" {
 }
 
 test "geometric product with degenerate vector produces dual-like elements" {
-    const E = Basis(f64);
+    const E = helpers.Basis(f64);
     const e1 = E.e(1);
     const e0 = E.e(0);
 
@@ -119,14 +72,14 @@ test "geometric product with degenerate vector produces dual-like elements" {
 }
 
 test "ideal point (pure e0 multivector) has zero scalar product with itself" {
-    const E = Basis(f64);
+    const E = helpers.Basis(f64);
     const e0 = E.e(0);
     const sp = e0.scalarProduct(e0);
     try std.testing.expectEqual(@as(f64, 0.0), sp);
 }
 
 test "euclidean point representation and join" {
-    const E = Basis(f64);
+    const E = helpers.Basis(f64);
     const e1 = E.e(1);
     const e2 = E.e(2);
     const e3 = E.e(3);
@@ -162,7 +115,7 @@ test "pga signed blade parser accepts e0 alias for degenerate basis" {
     const parsed = ga.parseSignedBladeWithOptions("e0", dimension, naming_options);
     try std.testing.expectEqual(ga.SignedBladeSpec{ .sign = .positive, .mask = .init(0b1000) }, try parsed);
 
-    const E = Basis(f64);
+    const E = helpers.Basis(f64);
     try std.testing.expect(E.signedBlade("e0").eql(E.e(0)));
     try std.testing.expectError(error.InvalidBasisIndex, ga.resolveBasisHelperIndexWithOptions(4, dimension, naming_options));
     try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBladeWithOptions("e4", dimension, naming_options));

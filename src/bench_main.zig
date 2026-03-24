@@ -3,6 +3,8 @@ const zmath = @import("zmath");
 const ga = zmath.ga;
 const Cl3 = ga.Algebra(.euclidean(3));
 const Cl2 = ga.Algebra(.euclidean(2));
+const H3 = Cl3.HelperSurface;
+const H2 = Cl2.HelperSurface;
 
 fn timestampNow(io: std.Io) std.Io.Timestamp {
     return std.Io.Clock.awake.now(io);
@@ -14,7 +16,7 @@ fn elapsedNanos(start: std.Io.Timestamp, end: std.Io.Timestamp) u64 {
 }
 
 fn benchmarkVector3(io: std.Io, iterations: usize) u64 {
-    const Vec3 = Cl3.Vector(f32);
+    const Vec3 = H3.Vector(f32);
     var a = Vec3.init(.{ 1.0, 2.0, 3.0 });
     var b = Vec3.init(.{ 4.0, 5.0, 6.0 });
     var sink: f32 = 0;
@@ -56,7 +58,7 @@ fn benchmarkRawVector3(io: std.Io, iterations: usize) u64 {
 }
 
 fn benchmarkRotor2(io: std.Io, iterations: usize) u64 {
-    const E2 = Cl2.Basis(f32);
+    const E2 = H2.Basis(f32);
     var v = E2.e(1).add(E2.e(2).scale(0.5));
     var angle: f32 = 0;
 
