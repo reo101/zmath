@@ -468,30 +468,13 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         pub fn gp(self: Self, rhs: anytype) GeometricProductResultType(T, blade_masks, @TypeOf(rhs).blades, sig) {
             const Rhs = @TypeOf(rhs);
             comptime assertCompatibleMultivector(Self, Rhs);
-            return self.gpWithSignature(rhs, sig);
-        }
-
-        /// Returns the geometric product under an arbitrary `Cl(p, q, r)` signature.
-        pub fn gpWithSignature(
-            self: Self,
-            rhs: anytype,
-            comptime override_sig: MetricSignature,
-        ) GeometricProductResultType(T, blade_masks, @TypeOf(rhs).blades, override_sig) {
-            const Rhs = @TypeOf(rhs);
-            comptime assertCompatibleMultivector(Self, Rhs);
-            comptime {
-                if (override_sig.dimension() != dimension) {
-                    @compileError("metric signature dimension must match multivector dimension");
-                }
-            }
-
-            const Result = GeometricProductResultType(T, blade_masks, Rhs.blades, override_sig);
+            const Result = GeometricProductResultType(T, blade_masks, Rhs.blades, sig);
             var result = Result.zero();
 
             inline for (blade_masks, 0..) |lhs_mask, lhs_index| {
                 inline for (Rhs.blades, 0..) |rhs_mask, rhs_index| {
                     const result_index = comptime Result.blade_index_by_mask[BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt()).index()];
-                    const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, override_sig);
+                    const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, sig);
 
                     std.debug.assert(result_index < Result.stored_blade_count);
                     result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @intFromEnum(sign);
@@ -1096,8 +1079,8 @@ test "signature-aware products support Cl(1,1)" {
     const e1 = Vec.init(.{ 1.0, 0.0 });
     const e2 = Vec.init(.{ 0.0, 1.0 });
 
-    try std.testing.expect(e1.gpWithSignature(e1, sig).eql(@TypeOf(e1).ScalarType.init(.{1.0})));
-    try std.testing.expect(e2.gpWithSignature(e2, sig).eql(@TypeOf(e2).ScalarType.init(.{-1.0})));
+    try std.testing.expect(e1.gp(e1).eql(@TypeOf(e1).ScalarType.init(.{1.0})));
+    try std.testing.expect(e2.gp(e2).eql(@TypeOf(e2).ScalarType.init(.{-1.0})));
     try std.testing.expectEqual(@as(f64, -1.0), e2.scalarProduct(e2));
 }
 
