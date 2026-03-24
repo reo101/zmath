@@ -57,7 +57,7 @@ pub fn faradayBivector(electric: anytype, magnetic: anytype) h.Bivector {
 
 /// Constructs a Lorentz boost rotor `L = exp(phi * v_hat / 2)`.
 /// `v_hat` is a unit spacelike bivector representing the boost direction.
-pub fn lorentzBoost(rapidity: f64, direction: h.Bivector) h.Rotor {
+pub fn lorentzBoost(rapidity: f64, direction: Bivector) Rotor {
     const cosh_half = std.math.cosh(rapidity / 2.0);
     const sinh_half = std.math.sinh(rapidity / 2.0);
 
@@ -73,6 +73,79 @@ pub fn lorentzBoost(rapidity: f64, direction: h.Bivector) h.Rotor {
 
     return rotor;
 }
+
+/// Computes the action of the spacetime gradient (Dirac operator) ∇ on a multivector.
+///
+/// ∇ M = Σ γ^μ ∂_μ M
+///
+/// Since this library focuses on algebraic relations rather than numerical
+/// differentiation, this function represents the symbolic result of applying
+/// the gradient to a field with given partial derivatives.
+pub fn applyGradient(comptime MType: type, partial_derivatives: [4]MType) h.Full {
+    const E = h.Basis;
+    var result = h.Full.zero();
+
+    // ∇ M = γ^0 ∂_0 M + γ^1 ∂_1 M + γ^2 ∂_2 M + γ^3 ∂_3 M
+    // Note: in STA, γ^0 = γ_0 and γ^i = -γ_i
+    const basis_vectors = [4]h.Vector{
+        E.e(0).gradePart(1),
+        E.e(1).negate().gradePart(1),
+        E.e(2).negate().gradePart(1),
+        E.e(3).negate().gradePart(1),
+    };
+
+    inline for (basis_vectors, partial_derivatives) |gamma_mu, partial_mu| {
+        result = result.add(gamma_mu.gp(partial_mu));
+    }
+
+    return result;
+}
+
+/// Maxwell's equation in STA: ∇F = J
+/// Given a Faraday bivector F and its derivatives, returns the 4-current J.
+pub fn maxwellSource(f_derivatives: [4]h.Bivector) h.Full {
+    return applyGradient(h.Bivector, f_derivatives);
+}
+
+/// Computes the proper time interval squared (ds^2) for a differential 4-position.
+/// In units where c=1, ds^2 = dx^2.
+pub fn properTimeSquared(dx: h.Vector) f64 {
+    return dx.scalarProduct(dx);
+}
+
+/// Returns the 4-velocity vector for a given relative velocity bivector.
+/// `relative_v` is a bivector in the timelike plane (e.g., v^i * e_i0).
+pub fn fourVelocity(relative_v: h.Bivector) h.Vector {
+    const E = h.Basis;
+    const g0 = E.e(0).gradePart(1);
+
+    // v^2 = (v*v) because relative_v is a timelike bivector (e_i0) which squares to +1
+    const v2 = relative_v.scalarProduct(relative_v);
+    const gamma = 1.0 / std.math.sqrt(1.0 - v2);
+
+    // u = gamma * (1 + v) * g0 = gamma * (g0 + v*g0)
+    return g0.add(relative_v.gp(g0).gradePart(1)).scale(gamma);
+}
+
+/// Returns the 4-momentum p = m*u.
+pub fn fourMomentum(mass: f64, velocity: h.Vector) h.Vector {
+    return velocity.scale(mass);
+}
+
+/// Computes the stress-energy vector T(a) for a perfect fluid.
+/// T(a) = (rho + p)(a . u)u - p*a
+pub fn perfectFluidStressEnergy(
+    a: h.Vector,
+    u: h.Vector,
+    energy_density: f64,
+    pressure: f64,
+) h.Vector {
+    const dot_au = a.scalarProduct(u);
+    const term1 = u.scale((energy_density + pressure) * dot_au);
+    const term2 = a.scale(pressure);
+    return term1.sub(term2);
+}
+
 
 test "sta signature has expected metric classes and dimension" {
     try std.testing.expectEqual(@as(usize, 4), dimension);
@@ -144,4 +217,69 @@ test "faraday bivector construction" {
     // I * e20 = e0123 * e20 = -e0123 * e02 = -(e0*e0) * e1 * (e2*e2) * e3 = -1 * e1 * -1 * e3 = e13
     try std.testing.expectEqual(@as(f64, 10.0), F.coeffNamedWithOptions("e10", naming_options));
     try std.testing.expectEqual(@as(f64, 5.0), F.coeffNamedWithOptions("e13", naming_options));
+}
+
+test "4-velocity squares to 1" {
+    const E = h.Basis;
+    // v = 0.6 in e1 direction (represented as 0.6 * e10)
+    const v = E.signedBlade("e10").scale(0.6).gradePart(2);
+    const u = fourVelocity(v);
+
+    // u^2 should be 1
+    try std.testing.expect(ga.rotors2d.nearlyEqual(u.scalarProduct(u), 1.0, 1e-12));
+
+    // Check components: gamma = 1/sqrt(1-0.36) = 1/0.8 = 1.25
+    // u = 1.25*e0 + 1.25*0.6*e1 = 1.25*e0 + 0.75*e1
+    try std.testing.expect(ga.rotors2d.nearlyEqual(u.coeffNamedWithOptions("e0", naming_options), 1.25, 1e-12));
+    try std.testing.expect(ga.rotors2d.nearlyEqual(u.coeffNamedWithOptions("e1", naming_options), 0.75, 1e-12));
+}
+
+test "stress-energy of a static perfect fluid" {
+    const E = h.Basis;
+    const u = E.e(0).gradePart(1); // Static observer
+    const rho = 10.0;
+    const p = 2.0;
+
+    // Energy density seen by observer n=e0 is n . T(n)
+    const n = E.e(0).gradePart(1);
+    const Tn = perfectFluidStressEnergy(n, u, rho, p);
+
+    // For static fluid, T(e0) = rho * e0
+    try std.testing.expectEqual(@as(f64, rho), Tn.coeffNamedWithOptions("e0", naming_options));
+
+    // For static fluid, T(e1) = -p * e1
+    const Te1 = perfectFluidStressEnergy(E.e(1).gradePart(1), u, rho, p);
+    try std.testing.expectEqual(@as(f64, -p), Te1.coeffNamedWithOptions("e1", naming_options));
+}
+
+test "spacetime gradient of a scalar field is a 4-vector" {
+    // Scalar field partial derivatives: ∂_0=1, ∂_1=2, ∂_2=0, ∂_3=0
+    const partials = [4]h.Scalar{
+        h.Scalar.init(.{1.0}),
+        h.Scalar.init(.{2.0}),
+        h.Scalar.init(.{0.0}),
+        h.Scalar.init(.{0.0}),
+    };
+
+    const grad = applyGradient(h.Scalar, partials);
+
+    // ∇ φ = γ^0 ∂_0 φ + γ^1 ∂_1 φ = γ_0 (1) - γ_1 (2)
+    try std.testing.expectEqual(@as(f64, 1.0), grad.coeffNamedWithOptions("e0", naming_options));
+    try std.testing.expectEqual(@as(f64, -2.0), grad.coeffNamedWithOptions("e1", naming_options));
+}
+
+test "spacetime gradient of a vector field includes divergence and curl" {
+    const E = h.Basis;
+    // Vector field partial derivatives: only ∂_0 A_0 = 1, others 0
+    const partials = [4]h.Vector{
+        E.e(0).gradePart(1), // ∂_0 A
+        h.Vector.zero(),
+        h.Vector.zero(),
+        h.Vector.zero(),
+    };
+
+    const result = applyGradient(h.Vector, partials);
+
+    // ∇ A = γ^0 ∂_0 A = γ_0 (e0) = 1 (scalar divergence)
+    try std.testing.expectEqual(@as(f64, 1.0), result.scalarCoeff());
 }
