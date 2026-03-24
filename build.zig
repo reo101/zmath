@@ -1,61 +1,5 @@
 const std = @import("std");
 
-fn pathLessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
-    return std.mem.lessThan(u8, lhs, rhs);
-}
-
-fn addGaLeafTests(
-    b: *std.Build,
-    test_step: *std.Build.Step,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    build_options_module: *std.Build.Module,
-) !void {
-    var ga_dir = try b.build_root.handle.openDir(b.graph.io, "src/ga", .{ .iterate = true });
-    defer ga_dir.close(b.graph.io);
-
-    var walker = try ga_dir.walk(b.allocator);
-    defer walker.deinit();
-
-    var roots: std.ArrayList([]const u8) = .empty;
-    defer roots.deinit(b.allocator);
-
-    while (try walker.next(b.graph.io)) |entry| {
-        if (entry.kind != .file) continue;
-        if (!std.mem.endsWith(u8, entry.path, ".zig")) continue;
-
-        const root_path = try std.fmt.allocPrint(b.allocator, "src/ga/{s}", .{entry.path});
-        try roots.append(b.allocator, root_path);
-    }
-
-    std.mem.sort([]const u8, roots.items, {}, pathLessThan);
-
-    for (roots.items) |root_path| {
-        const test_name = try b.allocator.dupe(u8, root_path);
-        for (test_name[0..]) |*c| {
-            if (c.* == '/') {
-                c.* = '_';
-            }
-        }
-        const leaf_tests = b.addTest(.{
-            .name = test_name,
-            .root_module = b.createModule(.{
-                .root_source_file = b.path(root_path),
-                .target = target,
-                .optimize = optimize,
-                .imports = &.{
-                    .{
-                        .name = "build_options",
-                        .module = build_options_module,
-                    },
-                },
-            }),
-        });
-        const run_leaf_tests = b.addRunArtifact(leaf_tests);
-        test_step.dependOn(&run_leaf_tests.step);
-    }
-}
-
 const SpirvShaderPair = struct {
     const Config = struct {
         target: std.Build.ResolvedTarget,
@@ -352,12 +296,24 @@ pub fn build(b: *std.Build) void {
 
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
+    const scalar_zmath = b.addModule("zmath-scalar", .{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .imports = &.{
+            .{
+                .name = "build_options",
+                .module = scalar_build_options_module,
+            },
+        },
+    });
+
+    const scalar_zmath_tests = b.addTest(.{
+        .root_module = scalar_zmath,
+    });
+    const run_scalar_mod_tests = b.addRunArtifact(scalar_zmath_tests);
+
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
-
-    addGaLeafTests(b, test_step, target, optimize, simd_build_options_module) catch |err| {
-        std.debug.panic("failed to configure GA leaf tests: {s}", .{@errorName(err)});
-    };
-
+    test_step.dependOn(&run_scalar_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
 }
