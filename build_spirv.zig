@@ -88,7 +88,7 @@ pub fn addSpirvSteps(
     });
 
     const spirv_vga = b.addModule("vga-spirv", .{
-        .root_source_file = b.path("src/vga.zig"),
+        .root_source_file = b.path("src/flavours/vga.zig"),
         .target = spirv_target,
         .imports = &.{
             .{

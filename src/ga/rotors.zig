@@ -45,6 +45,18 @@ fn assertFloatRotor(comptime M: type) void {
     }
 }
 
+fn assertCompatibleVectorAndRotor(comptime Vector: type, comptime RotorType: type) void {
+    if (Vector.Coefficient != RotorType.Coefficient) {
+        @compileError("rotated expects vector and rotor with matching coefficient types");
+    }
+    if (Vector.dimensions != RotorType.dimensions) {
+        @compileError("rotated expects vector and rotor with matching dimensions");
+    }
+    if (!std.meta.eql(Vector.metric_signature, RotorType.metric_signature)) {
+        @compileError("rotated expects vector and rotor from the same metric signature");
+    }
+}
+
 /// Converts degrees to radians.
 pub fn radiansFromDegrees(angle_degrees: anytype) f64 {
     return @as(f64, @floatCast(angle_degrees)) * std.math.pi / 180.0;
@@ -86,6 +98,19 @@ pub fn normalized(mv: anytype) @TypeOf(mv) {
         return mv; // Or panic/error if zero vector is not allowed
     }
     return mv.scale(1.0 / magnitude);
+}
+
+/// Returns a rotor normalized via `R * ~R`, which stays stable for bivector-heavy rotors.
+pub fn normalizedRotor(rotor: anytype) @TypeOf(rotor) {
+    const RotorType = @TypeOf(rotor);
+    comptime assertFloatRotor(RotorType);
+
+    const epsilon = defaultTolerance(RotorType.Coefficient);
+    const magnitude_squared = rotor.gp(rotor.reverse()).scalarCoeff();
+    if (!std.math.isFinite(magnitude_squared) or nearlyEqual(magnitude_squared, 0, epsilon)) {
+        return rotor;
+    }
+    return rotor.scale(1.0 / @sqrt(@abs(magnitude_squared)));
 }
 
 /// Returns the normalized version of a 2D grade-1 vector, or `error.ZeroVector`.
@@ -180,13 +205,18 @@ pub fn tryRotorFromTo(from: anytype, to: anytype) RotorError!multivector.Rotor(@
 }
 
 /// Applies the sandwich product `R v ~R` and returns the rotated vector.
-pub fn rotated(vector: anytype, rotor: anytype) multivector.Vector(@TypeOf(vector).Coefficient, euclidean2) {
+///
+/// Works for any algebra dimension/signature as long as:
+/// - `vector` is grade-1,
+/// - `rotor` has even parity blades,
+/// - both share coefficient type, dimension, and metric signature.
+pub fn rotated(vector: anytype, rotor: anytype) multivector.Vector(@TypeOf(vector).Coefficient, @TypeOf(vector).metric_signature) {
     const Vector = @TypeOf(vector);
     const RotorType = @TypeOf(rotor);
     comptime assertFloatVector(Vector);
     comptime assertFloatRotor(RotorType);
+    comptime assertCompatibleVectorAndRotor(Vector, RotorType);
 
-    debugAssertRotor(rotor, defaultTolerance(RotorType.Coefficient));
     return rotor.gp(vector).gp(rotor.reverse()).gradePart(1);
 }
 
@@ -257,4 +287,45 @@ test "rotorFromTo maps normalized direction and preserves norm" {
     try std.testing.expect(nearlyEqual(rotated_unit.coeffNamed("e1"), to_unit.coeffNamed("e1"), 1e-12));
     try std.testing.expect(nearlyEqual(rotated_unit.coeffNamed("e2"), to_unit.coeffNamed("e2"), 1e-12));
     try std.testing.expect(nearlyEqual(from_unit.scalarProduct(from_unit), 1.0, 1e-12));
+}
+
+test "rotated supports non-2D algebras with compatible even rotors" {
+    const sig3 = comptime blades.euclideanSignature(3);
+    const Vec3 = multivector.Vector(f64, sig3);
+    const Rotor3 = multivector.Rotor(f64, sig3);
+
+    const vector = Vec3.init(.{ 1.0, 2.0, 3.0 });
+    const identity = Rotor3.init(.{ 1.0, 0.0, 0.0, 0.0 });
+    const result = rotated(vector, identity);
+
+    try std.testing.expect(nearlyEqual(result.coeffNamed("e1"), 1.0, 1e-12));
+    try std.testing.expect(nearlyEqual(result.coeffNamed("e2"), 2.0, 1e-12));
+    try std.testing.expect(nearlyEqual(result.coeffNamed("e3"), 3.0, 1e-12));
+}
+
+test "normalizedRotor remains finite for 3D exponentiated bivectors" {
+    const sig3 = comptime blades.euclideanSignature(3);
+    const Basis3 = multivector.Basis(f32, sig3);
+    const Rotor3 = multivector.Rotor(f32, sig3);
+    const E3 = Basis3;
+
+    const angle: f32 = 0.5;
+    const b12 = E3.signedBlade("e12").scale(@cos(angle * 0.3));
+    const b23 = E3.signedBlade("e23").scale(@sin(angle * 0.5));
+    const b13 = E3.signedBlade("e13").scale(@cos(angle * 0.7));
+    const B = b12.add(b23).add(b13);
+
+    const exp_rotor = B.scale(-0.5).exp();
+    var rotor = Rotor3.zero();
+    inline for (Rotor3.blades, 0..) |mask, i| {
+        rotor.coeffs[i] = exp_rotor.coeff(mask);
+    }
+
+    const rotor_normalized = normalizedRotor(rotor);
+    const identity = rotor_normalized.gp(rotor_normalized.reverse());
+
+    inline for (Rotor3.blades, 0..) |_, i| {
+        try std.testing.expect(!std.math.isNan(rotor_normalized.coeffs[i]));
+    }
+    try std.testing.expect(nearlyEqual(identity.scalarCoeff(), 1.0, 1e-5));
 }

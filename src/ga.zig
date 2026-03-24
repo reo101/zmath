@@ -34,6 +34,7 @@ pub const norm = rotors.norm;
 pub const normSquared = rotors.normSquared;
 pub const normalize = rotors.normalize;
 pub const normalized = rotors.normalized;
+pub const normalizedRotor = rotors.normalizedRotor;
 pub const dual = rotors.dual; // Wait, dual is in Multivector, let's export a generic one if possible or just use Multivector.dual
 
 pub fn parseSignedBlade(
@@ -216,6 +217,10 @@ pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_o
 
                 pub fn normalized(mv: anytype) @TypeOf(mv) {
                     return rotors.normalized(mv);
+                }
+
+                pub fn normalizedRotor(rotor: anytype) @TypeOf(rotor) {
+                    return rotors.normalizedRotor(rotor);
                 }
 
                 pub fn magnitude(mv: anytype) T {
