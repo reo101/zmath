@@ -9,10 +9,9 @@ pub const pga = @import("pga.zig");
 
 test "root surface links ga and vga entrypoints" {
     try std.testing.expect(ga.blades.choose(4, 2) == ga.choose(4, 2));
-    try std.testing.expect(ga.rotors2d == vga.rotors);
     try std.testing.expectEqual(ga.blades.BladeMask.init(0b010), ga.basisVectorBladeMask(3, 2));
 
-    const E2 = vga.Basis(f64);
+    const E2 = vga.helpers.Basis(f64);
     const e1 = E2.e(1);
     const rotor = vga.planarRotor(f64, std.math.pi / 2.0);
     const turned = vga.rotated(e1, rotor);
