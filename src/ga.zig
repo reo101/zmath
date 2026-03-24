@@ -53,7 +53,7 @@ pub const signedBladeWithSignatureAndOptions = multivector.signedBladeWithOption
 
 /// Returns a signature-baked algebra namespace for a fixed `Cl(p, q, r)`.
 pub fn Algebra(comptime sig: MetricSignature) type {
-    return AlgebraWithNamingOptions(sig, .{});
+    return AlgebraWithNamingOptions(sig, SignedBladeNamingOptions.fromSignature(sig));
 }
 
 /// Returns a signature-baked algebra namespace with naming options.
@@ -170,15 +170,14 @@ test "signature-baked algebra namespace drives metric-dependent products" {
     try std.testing.expectEqual(@as(i32, -1), e2_squared.coeff(.init(0)));
 }
 
-test "algebra naming options can enforce e0 alias spelling" {
+test "algebra naming options can expose span-mapped parser indices" {
     const sig: MetricSignature = .{ .p = 3, .q = 0, .r = 1 };
     const spans = comptime BasisIndexSpans.init(.{
         .positive = .range(1, 3),
-        .degenerate = .singleton(4),
+        .degenerate = .singleton(0),
     });
     const opts = comptime SignedBladeNamingOptions{
         .basis_spans = spans,
-        .parser_index_map = .fromBasisSpansDegenerateFirst(spans),
     };
 
     const parsed = try parseSignedBladeWithOptions("e0", sig.dimension(), opts);

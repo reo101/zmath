@@ -165,7 +165,7 @@ pub fn renderMultivector(writer: *std.Io.Writer, value: anytype) std.Io.Writer.E
 
 /// Returns the compact multivector type for a named signed blade.
 pub fn SignedBladeType(comptime T: type, comptime name: []const u8, comptime sig: MetricSignature) type {
-    return SignedBladeTypeWithOptions(T, name, sig, .{});
+    return SignedBladeTypeWithOptions(T, name, sig, blade_parsing.SignedBladeNamingOptions.fromSignature(sig));
 }
 
 /// Returns the compact multivector type for a named signed blade under parser options.
@@ -293,7 +293,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
 
         /// Constructs a compile-time signed blade using this carrier's coefficient type.
         pub fn signedBlade(comptime name: []const u8) SignedBladeType(T, name, sig) {
-            return signedBladeImpl(T, name, sig, .{});
+            return signedBladeImpl(T, name, sig, blade_parsing.SignedBladeNamingOptions.fromSignature(sig));
         }
 
         /// Constructs a compile-time signed blade using naming options.
@@ -838,7 +838,7 @@ pub fn basisVector(
 
 /// Constructs a compile-time signed blade such as `e12` or `e_10_2`.
 pub fn signedBlade(comptime T: type, comptime name: []const u8, comptime sig: MetricSignature) SignedBladeType(T, name, sig) {
-    return signedBladeImpl(T, name, sig, .{});
+    return signedBladeImpl(T, name, sig, blade_parsing.SignedBladeNamingOptions.fromSignature(sig));
 }
 
 /// Constructs a compile-time signed blade under parser options.
@@ -903,7 +903,7 @@ pub fn Rotor(comptime T: type, comptime sig: MetricSignature) type {
 
 /// Namespace for basis-vector and signed-blade helpers in one algebra.
 pub fn Basis(comptime T: type, comptime sig: MetricSignature) type {
-    return BasisWithNamingOptions(T, sig, .{});
+    return BasisWithNamingOptions(T, sig, blade_parsing.SignedBladeNamingOptions.fromSignature(sig));
 }
 
 /// Namespace for basis-vector and signed-blade helpers in one algebra under naming options.
@@ -944,10 +944,7 @@ pub fn BasisWithNamingOptions(
         }
 
         fn expectBasisVectorByClass(comptime class: SignatureClass, comptime ordinal: usize) usize {
-            const spans = if (comptime naming_options.basis_spans) |configured|
-                configured
-            else
-                blade_ops.BasisIndexSpans.fromSignature(sig);
+            const spans = naming_options.basis_spans;
 
             const span = spans.spanFor(class) orelse @compileError(std.fmt.comptimePrint(
                 "no `{s}` basis-vector span configured for this algebra",
@@ -966,7 +963,8 @@ pub fn BasisWithNamingOptions(
                 ));
             }
 
-            return span.start + (ordinal - 1);
+            const parser_index = span.start + (ordinal - 1);
+            return comptime blade_parsing.expectBasisHelperIndexWithOptions(parser_index, dimension, naming_options);
         }
 
         /// Returns the blade mask for one basis vector.
@@ -1013,11 +1011,10 @@ test "basis helper e applies naming index options" {
     const sig: MetricSignature = .{ .p = 3, .q = 0, .r = 1 };
     const spans = comptime blade_ops.BasisIndexSpans.init(.{
         .positive = blade_ops.BasisIndexSpan.range(1, 3),
-        .degenerate = blade_ops.BasisIndexSpan.singleton(4),
+        .degenerate = blade_ops.BasisIndexSpan.singleton(0),
     });
     const options = comptime blade_parsing.SignedBladeNamingOptions{
         .basis_spans = spans,
-        .parser_index_map = .fromBasisSpansDegenerateFirst(spans),
     };
 
     const E = BasisWithNamingOptions(f64, sig, options);
@@ -1034,15 +1031,10 @@ test "basis helper can select nth basis vector by signature class" {
 
     const named = BasisWithNamingOptions(f64, sig, .{
         .basis_spans = .init(.{
-            .degenerate = .singleton(4),
+            .degenerate = .singleton(0),
             .positive = .range(1, 2),
             .negative = .singleton(3),
         }),
-        .parser_index_map = .fromBasisSpansDegenerateFirst(.init(.{
-            .degenerate = .singleton(4),
-            .positive = .range(1, 2),
-            .negative = .singleton(3),
-        })),
     });
     try std.testing.expect(named.basisVectorByClass(.degenerate, 1).eql(named.e(0)));
 }

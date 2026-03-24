@@ -159,7 +159,10 @@ pub const SignedBladeSpec = struct {
     mask: BladeMask,
 };
 
-/// Inclusive one-based span of basis-vector indices.
+/// Inclusive parser-visible span of basis-vector indices.
+///
+/// Spans may include `0` (for names like `e0`) and are mapped onto
+/// internal sequential mask indices in signature-class order.
 pub const BasisIndexSpan = struct {
     start: usize,
     end: usize,
@@ -179,6 +182,10 @@ pub const BasisIndexSpan = struct {
     pub fn singleIndex(self: BasisIndexSpan) ?usize {
         return if (self.start == self.end) self.start else null;
     }
+
+    pub fn len(self: BasisIndexSpan) usize {
+        return self.end - self.start + 1;
+    }
 };
 
 /// Basis-index spans partitioned by metric signature category.
@@ -189,6 +196,13 @@ pub const BasisIndexSpans = struct {
 
     pub fn init(by_class: ByClass) BasisIndexSpans {
         return .{ .by_class = by_class };
+    }
+
+    pub fn hasAnySpan(self: BasisIndexSpans) bool {
+        inline for (std.meta.tags(SignatureClass)) |class| {
+            if (self.spanFor(class) != null) return true;
+        }
+        return false;
     }
 
     pub fn fromSignature(comptime sig: MetricSignature) BasisIndexSpans {
@@ -226,6 +240,28 @@ pub const BasisIndexSpans = struct {
         return false;
     }
 
+    /// Resolves one parser/programming-visible basis index to an internal
+    /// sequential one-based basis index used by blade masks.
+    pub fn resolveBasisIndex(self: BasisIndexSpans, parser_index: usize, comptime dimension: usize) ?usize {
+        @setEvalBranchQuota(10_000);
+        self.assertValidForDimension(dimension);
+
+        var next_internal_index: usize = 1;
+        for (std.meta.tags(SignatureClass)) |class| {
+            if (self.spanFor(class)) |span| {
+                const span_len = span.len();
+
+                if (span.contains(parser_index)) {
+                    return next_internal_index + (parser_index - span.start);
+                }
+
+                next_internal_index += span_len;
+            }
+        }
+
+        return null;
+    }
+
     pub fn assertValidForDimension(self: BasisIndexSpans, comptime dimension: usize) void {
         const classes = comptime std.meta.tags(SignatureClass);
 
@@ -238,6 +274,8 @@ pub const BasisIndexSpans = struct {
                 validateNoOverlap(self, lhs_class, rhs_class);
             }
         }
+
+        validateMappedBasisCount(self, dimension);
     }
 
     fn containsIn(span: ?BasisIndexSpan, one_based_index: usize) bool {
@@ -246,18 +284,39 @@ pub const BasisIndexSpans = struct {
     }
 
     fn validateSpan(self: BasisIndexSpans, comptime class: SignatureClass, comptime dimension: usize) void {
+        _ = dimension;
         const label = comptime @tagName(class);
         if (self.spanFor(class)) |range| {
-            if (!(1 <= range.start and range.start <= range.end and range.end <= dimension)) {
+            if (!(range.start <= range.end)) {
                 const message = comptime std.fmt.comptimePrint(
-                    "{s} basis span must stay within [1, {d}] and have start <= end",
-                    .{ label, dimension },
+                    "{s} basis span must satisfy start <= end",
+                    .{label},
                 );
                 if (@inComptime()) {
                     @compileError(message);
                 }
                 std.debug.panic("{s}", .{message});
             }
+        }
+    }
+
+    fn validateMappedBasisCount(self: BasisIndexSpans, comptime dimension: usize) void {
+        @setEvalBranchQuota(10_000);
+        var mapped_basis_count: usize = 0;
+        for (std.meta.tags(SignatureClass)) |class| {
+            if (self.spanFor(class)) |span| {
+                mapped_basis_count += span.len();
+            }
+        }
+
+        if (mapped_basis_count > dimension) {
+            if (@inComptime()) {
+                @compileError("configured basis spans cover more parser indices than the algebra dimension");
+            }
+            std.debug.panic(
+                "configured basis spans cover {} parser indices, exceeding dimension {}",
+                .{ mapped_basis_count, dimension },
+            );
         }
     }
 
@@ -882,6 +941,18 @@ test "basis index spans derive from metric signature partitions" {
     try std.testing.expectEqual(BasisIndexSpan{ .start = 4, .end = 4 }, spans.spanFor(.degenerate).?);
     try std.testing.expect(spans.contains(4));
     try std.testing.expect(!spans.contains(5));
+}
+
+test "basis index spans resolve parser-visible indices to sequential basis indices" {
+    const spans = BasisIndexSpans.init(.{
+        .positive = .range(1, 3),
+        .degenerate = .singleton(0),
+    });
+
+    try std.testing.expectEqual(@as(?usize, 1), spans.resolveBasisIndex(1, 4));
+    try std.testing.expectEqual(@as(?usize, 3), spans.resolveBasisIndex(3, 4));
+    try std.testing.expectEqual(@as(?usize, 4), spans.resolveBasisIndex(0, 4));
+    try std.testing.expectEqual(@as(?usize, null), spans.resolveBasisIndex(4, 4));
 }
 
 test "basis index span helpers construct ranges and singletons" {
