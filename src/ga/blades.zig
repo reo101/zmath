@@ -112,10 +112,9 @@ pub const SignatureClass = enum(i2) {
     }
 
     pub fn mul(self: SignatureClass, rhs: SignatureClass) SignatureClass {
-        if (self == .degenerate or rhs == .degenerate) {
-            return .degenerate;
-        }
-        return if (self == rhs)
+        return if (self == .degenerate or rhs == .degenerate)
+            .degenerate
+        else if (self == rhs)
             .positive
         else
             .negative;
