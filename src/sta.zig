@@ -234,8 +234,8 @@ test "lorentz boost transforms vectors correctly" {
     const expected_e0 = std.math.cosh(phi);
     const expected_e1 = std.math.sinh(phi);
 
-    try std.testing.expect(ga.rotors2d.nearlyEqual(e0_prime.coeffNamedWithOptions("e0", naming_options), expected_e0, 1e-12));
-    try std.testing.expect(ga.rotors2d.nearlyEqual(e0_prime.coeffNamedWithOptions("e1", naming_options), expected_e1, 1e-12));
+    try std.testing.expect(ga.rotors.nearlyEqual(e0_prime.coeffNamedWithOptions("e0", naming_options), expected_e0, 1e-12));
+    try std.testing.expect(ga.rotors.nearlyEqual(e0_prime.coeffNamedWithOptions("e1", naming_options), expected_e1, 1e-12));
 }
 
 test "faraday bivector construction" {
@@ -278,7 +278,7 @@ test "duality rotation preserves field invariants" {
     const p_prime = F_prime2.coeff(h.Pseudoscalar.blades[0]);
     const mag_prime = @sqrt(s_prime * s_prime + p_prime * p_prime);
 
-    try std.testing.expect(ga.rotors2d.nearlyEqual(mag_prime, 75.0, 1e-12));
+    try std.testing.expect(ga.rotors.nearlyEqual(mag_prime, 75.0, 1e-12));
 }
 
 test "spinor invariants extract rho and beta" {
@@ -293,8 +293,8 @@ test "spinor invariants extract rho and beta" {
     const inv = spinorInvariants(psi);
 
     // Use UTF-8 field names
-    try std.testing.expect(ga.rotors2d.nearlyEqual(inv.@"ρ", rho, 1e-12));
-    try std.testing.expect(ga.rotors2d.nearlyEqual(inv.@"β", beta, 1e-12));
+    try std.testing.expect(ga.rotors.nearlyEqual(inv.@"ρ", rho, 1e-12));
+    try std.testing.expect(ga.rotors.nearlyEqual(inv.@"β", beta, 1e-12));
 }
 
 test "4-velocity squares to 1" {
@@ -304,12 +304,12 @@ test "4-velocity squares to 1" {
     const u = fourVelocity(v);
 
     // u^2 should be 1
-    try std.testing.expect(ga.rotors2d.nearlyEqual(u.scalarProduct(u), 1.0, 1e-12));
+    try std.testing.expect(ga.rotors.nearlyEqual(u.scalarProduct(u), 1.0, 1e-12));
 
     // Check components: gamma = 1/sqrt(1-0.36) = 1/0.8 = 1.25
     // u = 1.25*e0 + 1.25*0.6*e1 = 1.25*e0 + 0.75*e1
-    try std.testing.expect(ga.rotors2d.nearlyEqual(u.coeffNamedWithOptions("e0", naming_options), 1.25, 1e-12));
-    try std.testing.expect(ga.rotors2d.nearlyEqual(u.coeffNamedWithOptions("e1", naming_options), 0.75, 1e-12));
+    try std.testing.expect(ga.rotors.nearlyEqual(u.coeffNamedWithOptions("e0", naming_options), 1.25, 1e-12));
+    try std.testing.expect(ga.rotors.nearlyEqual(u.coeffNamedWithOptions("e1", naming_options), 0.75, 1e-12));
 }
 
 test "stress-energy of a static perfect fluid" {

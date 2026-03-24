@@ -10,8 +10,16 @@ pub const BladeMaskBitSet = std.bit_set.IntegerBitSet(BladeMaskBytes * 8);
 pub const BladeMaskInt = BladeMaskBitSet.MaskInt;
 
 /// Utilities for working with blade masks.
-pub const BladeMask = packed struct(BladeMaskInt) {
+pub const BladeMask = struct {
     bitset: BladeMaskBitSet,
+
+    comptime {
+        const this_size = @bitSizeOf(@This());
+        const target_size = @bitSizeOf(BladeMaskInt);
+        if (this_size != target_size) {
+            @compileError(std.fmt.comptimePrint("BladeMask must be exactly the same size as its underlying integer representation ({} != {})", .{ this_size, target_size }));
+        }
+    }
 
     /// Explicit constructor for blade masks from integer bit patterns.
     pub inline fn init(value: anytype) BladeMask {
@@ -33,6 +41,10 @@ pub const BladeMask = packed struct(BladeMaskInt) {
 
     pub inline fn index(mask: BladeMask) usize {
         return @intCast(mask.toInt());
+    }
+
+    pub inline fn eql(self: BladeMask, other: BladeMask) bool {
+        return self.toInt() == other.toInt();
     }
 
     /// Parses a signed blade name and returns its mask when the sign is positive.
@@ -749,6 +761,29 @@ fn outerProductMaskTable(
     return marked;
 }
 
+/// Returns every blade that can appear in the dual of a blade set.
+pub fn dualMasks(
+    comptime dimension: usize,
+    comptime masks: []const BladeMask,
+) [countMarkedMasks(dimension, dualMaskTable(dimension, masks))]BladeMask {
+    return collectMarkedMasks(dimension, dualMaskTable(dimension, masks));
+}
+
+fn dualMaskTable(
+    comptime dimension: usize,
+    comptime masks: []const BladeMask,
+) [bladeCount(dimension)]bool {
+    @setEvalBranchQuota(1_000_000);
+    var marked = std.mem.zeroes([bladeCount(dimension)]bool);
+    const pseudoscalar_mask = bladeCount(dimension) - 1;
+
+    inline for (masks) |mask| {
+        marked[@intCast(mask.bitset.mask ^ pseudoscalar_mask)] = true;
+    }
+
+    return marked;
+}
+
 /// Returns every blade that can appear in the left contraction of two blade sets.
 pub fn leftContractionMasks(
     comptime dimension: usize,
@@ -825,7 +860,7 @@ pub fn sameBladeSet(comptime lhs_masks: []const BladeMask, comptime rhs_masks: [
     if (lhs_masks.len != rhs_masks.len) return false;
 
     inline for (lhs_masks, rhs_masks) |lhs_mask, rhs_mask| {
-        if (lhs_mask != rhs_mask) return false;
+        if (!lhs_mask.eql(rhs_mask)) return false;
     }
 
     return true;

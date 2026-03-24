@@ -5,20 +5,20 @@ pub const ga = @import("ga.zig");
 const algebra = ga.Algebra(ga.euclideanSignature(2));
 pub const h = algebra.Instantiate(f64);
 
-pub const rotors2d = ga.rotors2d;
+pub const rotors = ga.rotors;
 
-pub const RotorError = rotors2d.RotorError;
-pub const radiansFromDegrees = rotors2d.radiansFromDegrees;
-pub const normSquared = rotors2d.normSquared;
-pub const norm = rotors2d.norm;
-pub const normalize = rotors2d.normalize;
-pub const normalized = rotors2d.normalized;
-pub const nearlyEqual = rotors2d.nearlyEqual;
-pub const planarRotor = rotors2d.planarRotor;
-pub const tryRotorFromTo = rotors2d.tryRotorFromTo;
-pub const rotorFromTo = rotors2d.rotorFromTo;
-pub const rotated = rotors2d.rotated;
-pub const rotatedByAngle = rotors2d.rotatedByAngle;
+pub const RotorError = rotors.RotorError;
+pub const radiansFromDegrees = rotors.radiansFromDegrees;
+pub const normSquared = rotors.normSquared;
+pub const norm = rotors.norm;
+pub const normalize = rotors.normalize;
+pub const normalized = rotors.normalized;
+pub const nearlyEqual = rotors.nearlyEqual;
+pub const planarRotor = rotors.planarRotor;
+pub const tryRotorFromTo = rotors.tryRotorFromTo;
+pub const rotorFromTo = rotors.rotorFromTo;
+pub const rotated = rotors.rotated;
+pub const rotatedByAngle = rotors.rotatedByAngle;
 
 test "vga facade keeps ga parity and rotor aliases" {
     const E2 = h.Basis;

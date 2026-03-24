@@ -66,8 +66,8 @@ fn benchmarkRotor2(io: std.Io, iterations: usize) u64 {
     var i: usize = 0;
     while (i < iterations) : (i += 1) {
         angle += 0.0009;
-        const r = ga.rotors2d.planarRotor(f32, angle);
-        v = ga.rotors2d.rotated(v, r);
+        const r = ga.rotors.planarRotor(f32, angle);
+        v = ga.rotors.rotated(v, r);
     }
     const end = timestampNow(io);
 
