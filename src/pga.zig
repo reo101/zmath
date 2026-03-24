@@ -12,23 +12,17 @@ pub const metric_signature = sig;
 /// Ambient dimension of the PGA algebra (4).
 pub const dimension = sig.dimension();
 const degenerate_parser_index: usize = 0;
-const parser_index_map = ga.SignedBladeNamingOptions.ParserIndexMap.fromBasisSpansDegenerateFirst(.init(.{
+const basis_spans = ga.BasisIndexSpans.init(.{
     .positive = .range(1, 3),
-    .negative = null,
-    .degenerate = .singleton(dimension),
-}));
-const canonical_degenerate_index = parser_index_map.canonical_indices[degenerate_parser_index];
+    .degenerate = .singleton(0),
+});
 
 const naming_options: ga.SignedBladeNamingOptions = .{
-    .basis_spans = .init(.{
-        .positive = .range(1, 3),
-        .degenerate = .singleton(canonical_degenerate_index),
-    }),
-    .parser_index_map = parser_index_map,
+    .basis_spans = basis_spans,
 };
 const algebra = ga.AlgebraWithNamingOptions(sig, naming_options);
 
-fn canonicalBasisIndex(comptime parser_index: usize) usize {
+fn basisIndex(comptime parser_index: usize) usize {
     return comptime ga.resolveBasisHelperIndexWithOptions(parser_index, dimension, naming_options) catch unreachable;
 }
 
@@ -87,7 +81,7 @@ test "pga signature has correct dimension and basis-vector squares" {
     try std.testing.expectEqual(.positive, ga.blades.basisSquareClass(sig, 3));
 
     // e0 squares to 0 (degenerate)
-    try std.testing.expectEqual(.degenerate, ga.blades.basisSquareClass(sig, canonicalBasisIndex(degenerate_parser_index)));
+    try std.testing.expectEqual(.degenerate, ga.blades.basisSquareClass(sig, basisIndex(degenerate_parser_index)));
 
     try std.testing.expectEqual(@as(usize, 4), dimension);
 }
@@ -119,7 +113,7 @@ test "geometric product with degenerate vector produces dual-like elements" {
     // e1 * e0 should give a bivector e10 with coefficient +1 (or -1 depending on order)
     const e1e0 = e1.gp(e0);
     // The result lives on the blade mask e1^e0.
-    const e1e0_mask = ga.blades.basisVectorMask(dimension, 1) ^ ga.blades.basisVectorMask(dimension, canonicalBasisIndex(degenerate_parser_index));
+    const e1e0_mask = ga.blades.basisVectorMask(dimension, 1) ^ ga.blades.basisVectorMask(dimension, basisIndex(degenerate_parser_index));
     try std.testing.expect(e1e0.coeff(e1e0_mask) != 0.0);
 
     // e0 * e1 should give the opposite sign
@@ -161,7 +155,7 @@ test "euclidean point representation and join" {
 
 test "fullSignedBladeFromIndicesWithSignature respects degenerate square" {
     // Repeated degenerate index should give zero
-    const degenerate_index = canonicalBasisIndex(degenerate_parser_index);
+    const degenerate_index = basisIndex(degenerate_parser_index);
     const result = ga.fullSignedBladeFromIndicesWithSignature(f64, sig, &.{ degenerate_index, degenerate_index });
     // e0*e0 = 0, so the scalar part must be zero
     try std.testing.expectEqual(@as(f64, 0.0), result.coeff(.init(0)));
@@ -173,7 +167,7 @@ test "pga signed blade parser accepts e0 alias for degenerate basis" {
 
     const E = Basis(f64);
     try std.testing.expect(E.signedBlade("e0").eql(E.e(degenerate_parser_index)));
-    try std.testing.expectError(error.InvalidBasisIndex, ga.resolveBasisHelperIndexWithOptions(canonical_degenerate_index, dimension, naming_options));
+    try std.testing.expectError(error.InvalidBasisIndex, ga.resolveBasisHelperIndexWithOptions(4, dimension, naming_options));
     try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBladeWithOptions("e4", dimension, naming_options));
     try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBladeWithOptions("e14", dimension, naming_options));
 }
