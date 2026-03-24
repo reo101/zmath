@@ -30,7 +30,10 @@ pub const isSignedBlade = blade_parsing.isSignedBlade;
 pub const isSignedBladeWithOptions = blade_parsing.isSignedBladeWithOptions;
 pub const parseSignedBlade = blade_parsing.parseSignedBlade;
 pub const parseSignedBladeWithOptions = blade_parsing.parseSignedBladeWithOptions;
-pub const resolveBasisHelperIndexWithOptions = blade_parsing.resolveBasisHelperIndexWithOptions;
+pub const resolveNamedBasisIndexWithOptions = blade_parsing.resolveNamedBasisIndexWithOptions;
+pub const expectNamedBasisIndexWithOptions = blade_parsing.expectNamedBasisIndexWithOptions;
+pub const resolveNamedBasisHelperIndexWithOptions = blade_parsing.resolveNamedBasisHelperIndexWithOptions;
+pub const expectNamedBasisHelperIndexWithOptions = blade_parsing.expectNamedBasisHelperIndexWithOptions;
 pub const expectSignedBlade = blade_parsing.expectSignedBlade;
 pub const expectSignedBladeWithOptions = blade_parsing.expectSignedBladeWithOptions;
 
@@ -267,14 +270,14 @@ test "ga facade exposes core and specialized modules" {
 
     const sig: MetricSignature = .{ .p = 1, .q = 1 };
     const value = fullSignedBladeFromIndicesWithSignature(i32, sig, &.{ 2, 2 });
-    try std.testing.expectEqual(@as(i32, -1), value.coeff(.init(0)));
+    try std.testing.expectEqual(@as(i32, -1), value.scalarCoeff());
 
     const E2 = Algebra(.euclidean(2)).HelperSurface.Basis(f64);
     const e1 = E2.e(1);
     const half_turn = rotors2d.planarRotor(f64, std.math.pi);
     const rotated_e1 = rotors2d.rotated(e1, half_turn);
-    try std.testing.expect(rotors2d.nearlyEqual(rotated_e1.coeff(.init(0b01)), -1.0, 1e-12));
-    try std.testing.expect(rotors2d.nearlyEqual(rotated_e1.coeff(.init(0b10)), 0.0, 1e-12));
+    try std.testing.expect(rotors2d.nearlyEqual(rotated_e1.coeffNamed("e1"), -1.0, 1e-12));
+    try std.testing.expect(rotors2d.nearlyEqual(rotated_e1.coeffNamed("e2"), 0.0, 1e-12));
 }
 
 test "signature-baked algebra namespace drives metric-dependent products" {
@@ -283,10 +286,10 @@ test "signature-baked algebra namespace drives metric-dependent products" {
 
     const e2 = Cl11.HelperSurface.Basis(i32).e(2);
     const e2_squared = e2.gp(e2);
-    try std.testing.expectEqual(@as(i32, -1), e2_squared.coeff(.init(0)));
+    try std.testing.expectEqual(@as(i32, -1), e2_squared.scalarCoeff());
 }
 
-test "algebra naming options can expose span-mapped parser indices" {
+test "algebra naming options can expose span-mapped named indices" {
     const sig: MetricSignature = .{ .p = 3, .q = 0, .r = 1 };
     const spans = comptime BasisIndexSpans.init(.{
         .positive = .range(1, 3),

@@ -379,6 +379,22 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                 coeffZero(T);
         }
 
+        /// Returns the coefficient for a signed-blade name such as `e12`.
+        /// Uses signature-derived default naming options.
+        pub fn coeffNamed(self: Self, comptime name: []const u8) T {
+            return self.coeffNamedWithOptions(name, blade_parsing.SignedBladeNamingOptions.fromSignature(sig));
+        }
+
+        /// Returns the coefficient for a signed-blade name under naming options.
+        pub fn coeffNamedWithOptions(
+            self: Self,
+            comptime name: []const u8,
+            comptime options: blade_parsing.SignedBladeNamingOptions,
+        ) T {
+            const spec = comptime blade_parsing.expectSignedBladeWithOptions(name, dimension, options);
+            return self.coeff(spec.mask) * @intFromEnum(spec.sign);
+        }
+
         /// Returns the scalar coefficient.
         pub fn scalarCoeff(self: Self) T {
             return self.coeff(BladeMask.init(0));
@@ -576,7 +592,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                     const rhs_grade = blade_ops.bladeGrade(rhs_mask);
                     const target_grade = if (lhs_grade > rhs_grade) lhs_grade - rhs_grade else rhs_grade - lhs_grade;
 
-                    const result_mask =  BladeMask.init(lhs_mask.bitset.xorWith(rhs_mask.bitset).mask);
+                    const result_mask = BladeMask.init(lhs_mask.bitset.xorWith(rhs_mask.bitset).mask);
                     const result_grade = blade_ops.bladeGrade(result_mask);
                     if (result_grade != target_grade) continue;
 
@@ -918,11 +934,11 @@ pub fn BasisWithNamingOptions(
         /// The corresponding grade-2 bivector carrier.
         pub const Bivector = Full.BivectorType;
 
-        /// Returns the one-based basis vector `e{one_based_index}`.
+        /// Returns the basis vector for the configured named basis index.
         pub fn e(
-            comptime index: usize,
-        ) BasisBladeType(T, blade_ops.basisVectorMask(dimension, blade_parsing.expectBasisHelperIndexWithOptions(index, dimension, naming_options)), sig) {
-            const one_based_index = comptime blade_parsing.expectBasisHelperIndexWithOptions(index, dimension, naming_options);
+            comptime named_index: usize,
+        ) BasisBladeType(T, blade_ops.basisVectorMask(dimension, blade_parsing.expectNamedBasisHelperIndexWithOptions(named_index, dimension, naming_options)), sig) {
+            const one_based_index = comptime blade_parsing.expectNamedBasisHelperIndexWithOptions(named_index, dimension, naming_options);
             return basisVector(T, one_based_index, sig);
         }
 
@@ -955,18 +971,32 @@ pub fn BasisWithNamingOptions(
                 ));
             }
 
-            const parser_index = span.start + (ordinal - 1);
-            return comptime blade_parsing.expectBasisHelperIndexWithOptions(parser_index, dimension, naming_options);
+            const named_index = span.start + (ordinal - 1);
+            return comptime blade_parsing.expectNamedBasisHelperIndexWithOptions(named_index, dimension, naming_options);
         }
 
-        /// Returns the blade mask for one basis vector.
-        pub fn mask(comptime one_based_index: usize) BladeMask {
-            return blade_ops.basisVectorMask(dimension, one_based_index);
+        /// Returns the blade mask for one configured named basis index.
+        pub fn mask(comptime named_index: usize) BladeMask {
+            return blade_ops.basisVectorMask(
+                dimension,
+                blade_parsing.expectNamedBasisHelperIndexWithOptions(named_index, dimension, naming_options),
+            );
         }
 
-        /// Returns the blade mask for a list of basis-vector indices.
-        pub fn blade(comptime one_based_indices: []const usize) BladeMask {
-            return blade_ops.basisBladeMask(dimension, one_based_indices);
+        /// Returns the blade mask for configured named basis indices.
+        pub fn blade(comptime named_indices: []const usize) BladeMask {
+            var result_mask: BladeMask = .init(0);
+
+            inline for (named_indices) |named_index| {
+                const one_based_index = comptime blade_parsing.expectNamedBasisHelperIndexWithOptions(named_index, dimension, naming_options);
+                const bit = blade_ops.basisVectorMask(dimension, one_based_index);
+                if (result_mask.bitset.intersectWith(bit.bitset).mask != 0) {
+                    @compileError("repeated basis vectors cancel in the geometric product and are not represented by a blade mask");
+                }
+                result_mask.bitset = result_mask.bitset.unionWith(bit.bitset);
+            }
+
+            return result_mask;
         }
 
         /// Returns a compile-time signed blade such as `e12` or `e_10_2`.
@@ -999,7 +1029,7 @@ test "aliases and signed blades expose more than just plain vectors" {
     try std.testing.expect(E2.signedBlade("e11").eql(Scalar(i32, .euclidean(2)).init(.{1})));
 }
 
-test "basis helper e applies naming index options" {
+test "basis helper e applies named index options" {
     const sig: MetricSignature = .{ .p = 3, .q = 0, .r = 1 };
     const spans = comptime blade_ops.BasisIndexSpans.init(.{
         .positive = blade_ops.BasisIndexSpan.range(1, 3),
@@ -1100,10 +1130,10 @@ test "multivector arithmetic helpers cover sparse and dense carriers" {
 
     const s = Scalar3.init(.{5});
     const sum = v.add(s);
-    try std.testing.expectEqual(@as(i32, 5), sum.coeff(.init(0)));
-    try std.testing.expectEqual(@as(i32, 2), sum.coeff(.init(0b001)));
-    try std.testing.expectEqual(@as(i32, -1), sum.coeff(.init(0b010)));
-    try std.testing.expectEqual(@as(i32, 3), sum.coeff(.init(0b100)));
+    try std.testing.expectEqual(@as(i32, 5), sum.scalarCoeff());
+    try std.testing.expectEqual(@as(i32, 2), sum.coeffNamed("e1"));
+    try std.testing.expectEqual(@as(i32, -1), sum.coeffNamed("e2"));
+    try std.testing.expectEqual(@as(i32, 3), sum.coeffNamed("e3"));
 
     const diff = sum.sub(v);
     try std.testing.expect(diff.eql(s));

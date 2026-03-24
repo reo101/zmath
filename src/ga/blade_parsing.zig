@@ -65,11 +65,11 @@ pub const SignedBladeNamingOptions = struct {
 
     fn resolveNamedBasisIndex(
         comptime self: SignedBladeNamingOptions,
-        raw_index: usize,
+        named_index: usize,
         comptime dimension: usize,
     ) SignedBladeParseError!usize {
         self.assertValid(dimension);
-        return self.basis_spans.resolveBasisIndex(raw_index, dimension) orelse error.InvalidBasisIndex;
+        return self.basis_spans.resolveNamedBasisIndex(named_index, dimension) orelse error.InvalidBasisIndex;
     }
 };
 
@@ -151,10 +151,10 @@ fn invalidSignedBladeCompileError(comptime name: []const u8, comptime dimension:
     ));
 }
 
-fn invalidBasisIndexCompileError(comptime raw_index: usize, comptime dimension: usize, comptime err: SignedBladeParseError) noreturn {
+fn invalidBasisIndexCompileError(comptime named_index: usize, comptime dimension: usize, comptime err: SignedBladeParseError) noreturn {
     @compileError(std.fmt.comptimePrint(
         "invalid basis index `{d}` for this algebra of dimension {d}: {s}",
-        .{ raw_index, dimension, @errorName(err) },
+        .{ named_index, dimension, @errorName(err) },
     ));
 }
 
@@ -177,11 +177,11 @@ fn parseCompactSignedBlade(
             return if (position == 1) error.InvalidBasisIndex else error.InvalidBasisSeparator;
         }
 
-        const raw_index: usize = switch (char) {
+        const named_index: usize = switch (char) {
             '0'...'9' => @as(usize, char - '0'),
             else => return error.InvalidBasisIndex,
         };
-        const basis_index = try options.resolveNamedBasisIndex(raw_index, dimension);
+        const basis_index = try options.resolveNamedBasisIndex(named_index, dimension);
 
         applyParsedIndex(&spec, basis_index, dimension);
     }
@@ -278,40 +278,40 @@ pub fn parseSignedBladeWithOptions(
     };
 }
 
-/// Resolves one raw parser index under naming options.
-pub fn resolveBasisIndexWithOptions(
-    comptime raw_index: usize,
+/// Resolves one named basis index under naming options.
+pub fn resolveNamedBasisIndexWithOptions(
+    comptime named_index: usize,
     comptime dimension: usize,
     comptime options: SignedBladeNamingOptions,
 ) SignedBladeParseError!usize {
-    return options.resolveNamedBasisIndex(raw_index, dimension);
+    return options.resolveNamedBasisIndex(named_index, dimension);
 }
 
-/// Resolves one raw parser index under naming options or emits compile error.
-pub fn expectBasisIndexWithOptions(
-    comptime raw_index: usize,
+/// Resolves one named basis index under naming options or emits compile error.
+pub fn expectNamedBasisIndexWithOptions(
+    comptime named_index: usize,
     comptime dimension: usize,
     comptime options: SignedBladeNamingOptions,
 ) usize {
-    return comptime resolveBasisIndexWithOptions(raw_index, dimension, options) catch |err| invalidBasisIndexCompileError(raw_index, dimension, err);
+    return comptime resolveNamedBasisIndexWithOptions(named_index, dimension, options) catch |err| invalidBasisIndexCompileError(named_index, dimension, err);
 }
 
-/// Resolves one basis-helper index (`Basis.e(index)`) under naming options.
-pub fn resolveBasisHelperIndexWithOptions(
+/// Resolves one basis-helper named index (`Basis.e(index)`) under naming options.
+pub fn resolveNamedBasisHelperIndexWithOptions(
     comptime index: usize,
     comptime dimension: usize,
     comptime options: SignedBladeNamingOptions,
 ) SignedBladeParseError!usize {
-    return options.resolveNamedBasisIndex(index, dimension);
+    return resolveNamedBasisIndexWithOptions(index, dimension, options);
 }
 
-/// Resolves one basis-helper index (`Basis.e(index)`) or emits compile error.
-pub fn expectBasisHelperIndexWithOptions(
+/// Resolves one basis-helper named index (`Basis.e(index)`) or emits compile error.
+pub fn expectNamedBasisHelperIndexWithOptions(
     comptime index: usize,
     comptime dimension: usize,
     comptime options: SignedBladeNamingOptions,
 ) usize {
-    return comptime resolveBasisHelperIndexWithOptions(index, dimension, options) catch |err| invalidBasisIndexCompileError(index, dimension, err);
+    return comptime resolveNamedBasisHelperIndexWithOptions(index, dimension, options) catch |err| invalidBasisIndexCompileError(index, dimension, err);
 }
 
 /// Parses a signed blade or emits a compile error if the spelling is invalid.
@@ -412,13 +412,13 @@ test "basis index resolution with options derives e0 alias from spans" {
         .basis_spans = spans,
     };
 
-    try std.testing.expectEqual(@as(usize, 4), try resolveBasisIndexWithOptions(0, 4, options));
-    try std.testing.expectEqual(@as(usize, 2), try resolveBasisIndexWithOptions(2, 4, options));
-    try std.testing.expectEqual(@as(usize, 4), try resolveBasisHelperIndexWithOptions(0, 4, options));
-    try std.testing.expectError(error.InvalidBasisIndex, resolveBasisIndexWithOptions(4, 4, options));
+    try std.testing.expectEqual(@as(usize, 4), try resolveNamedBasisIndexWithOptions(0, 4, options));
+    try std.testing.expectEqual(@as(usize, 2), try resolveNamedBasisIndexWithOptions(2, 4, options));
+    try std.testing.expectEqual(@as(usize, 4), try resolveNamedBasisHelperIndexWithOptions(0, 4, options));
+    try std.testing.expectError(error.InvalidBasisIndex, resolveNamedBasisIndexWithOptions(4, 4, options));
 }
 
-test "configured parser indices are the only accepted spellings" {
+test "configured named indices are the only accepted spellings" {
     const spans = comptime blades.BasisIndexSpans.init(.{
         .positive = .range(1, 3),
         .degenerate = .singleton(0),
@@ -429,10 +429,10 @@ test "configured parser indices are the only accepted spellings" {
 
     try std.testing.expect(isSignedBladeWithOptions("e0", 4, mapped));
     try std.testing.expect(!isSignedBladeWithOptions("e4", 4, mapped));
-    try std.testing.expectError(error.InvalidBasisIndex, resolveBasisIndexWithOptions(4, 4, mapped));
+    try std.testing.expectError(error.InvalidBasisIndex, resolveNamedBasisIndexWithOptions(4, 4, mapped));
 }
 
-test "unconfigured parser indices are rejected" {
+test "unconfigured named indices are rejected" {
     const options = comptime SignedBladeNamingOptions.euclidean(4);
     try std.testing.expectError(error.InvalidBasisIndex, parseSignedBladeWithOptions("e0", 4, options));
 }
@@ -460,7 +460,7 @@ test "syntax policy can gate prefix and accepted forms" {
 
 test "e0 alias is only enabled by singleton degenerate span" {
     const no_spans = comptime SignedBladeNamingOptions.euclidean(4);
-    try std.testing.expectError(error.InvalidBasisIndex, resolveBasisIndexWithOptions(0, 4, no_spans));
+    try std.testing.expectError(error.InvalidBasisIndex, resolveNamedBasisIndexWithOptions(0, 4, no_spans));
 
     const no_singleton = comptime SignedBladeNamingOptions{
         .basis_spans = .init(.{
@@ -468,7 +468,7 @@ test "e0 alias is only enabled by singleton degenerate span" {
             .degenerate = .range(3, 4),
         }),
     };
-    try std.testing.expectError(error.InvalidBasisIndex, resolveBasisIndexWithOptions(0, 4, no_singleton));
+    try std.testing.expectError(error.InvalidBasisIndex, resolveNamedBasisIndexWithOptions(0, 4, no_singleton));
 
     const singleton = comptime SignedBladeNamingOptions{
         .basis_spans = .init(.{
@@ -476,5 +476,5 @@ test "e0 alias is only enabled by singleton degenerate span" {
             .degenerate = .singleton(0),
         }),
     };
-    try std.testing.expectEqual(@as(usize, 4), try resolveBasisIndexWithOptions(0, 4, singleton));
+    try std.testing.expectEqual(@as(usize, 4), try resolveNamedBasisIndexWithOptions(0, 4, singleton));
 }

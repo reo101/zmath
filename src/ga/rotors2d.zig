@@ -190,13 +190,13 @@ test "2D rotors rotate vectors in the expected orientation" {
     const e2 = E2.e(2);
 
     const quarter_turn = rotatedByAngle(e1, radiansFromDegrees(90.0));
-    try std.testing.expect(nearlyEqual(quarter_turn.coeff(.init(0b01)), 0, 1e-12));
-    try std.testing.expect(nearlyEqual(quarter_turn.coeff(.init(0b10)), e2.coeff(.init(0b10)), 1e-12));
+    try std.testing.expect(nearlyEqual(quarter_turn.coeffNamed("e1"), 0, 1e-12));
+    try std.testing.expect(nearlyEqual(quarter_turn.coeffNamed("e2"), e2.coeffNamed("e2"), 1e-12));
 
     const diagonal = rotorFromTo(e1.add(e2.scale(5)), e2);
     const diagonal_result = rotated(e1.add(e2.scale(5)), diagonal);
-    try std.testing.expect(nearlyEqual(diagonal_result.coeff(.init(0b01)), 0, 1e-12));
-    try std.testing.expect(nearlyEqual(diagonal_result.coeff(.init(0b10)), @sqrt(26.0), 1e-12));
+    try std.testing.expect(nearlyEqual(diagonal_result.coeffNamed("e1"), 0, 1e-12));
+    try std.testing.expect(nearlyEqual(diagonal_result.coeffNamed("e2"), @sqrt(26.0), 1e-12));
 }
 
 test "rotorFromTo handles antiparallel vectors" {
@@ -206,8 +206,8 @@ test "rotorFromTo handles antiparallel vectors" {
     const rotor = rotorFromTo(e1, e1.negate());
     const rotated_e1 = rotated(e1, rotor);
 
-    try std.testing.expect(nearlyEqual(rotated_e1.coeff(.init(0b01)), -1.0, 1e-12));
-    try std.testing.expect(nearlyEqual(rotated_e1.coeff(.init(0b10)), 0.0, 1e-12));
+    try std.testing.expect(nearlyEqual(rotated_e1.coeffNamed("e1"), -1.0, 1e-12));
+    try std.testing.expect(nearlyEqual(rotated_e1.coeffNamed("e2"), 0.0, 1e-12));
 }
 
 test "safe rotor helpers return ZeroVector on invalid input" {
@@ -224,8 +224,8 @@ test "planar rotor stays normalized for multiple angles" {
     inline for ([_]f64{ 0.0, std.math.pi / 3.0, -std.math.pi / 2.0, std.math.pi }) |angle| {
         const rotor = planarRotor(f64, angle);
         const identity = rotor.gp(rotor.reverse());
-        try std.testing.expect(nearlyEqual(identity.coeff(.init(0)), 1.0, 1e-12));
-        try std.testing.expect(nearlyEqual(identity.coeff(.init(0b11)), 0.0, 1e-12));
+        try std.testing.expect(nearlyEqual(identity.scalarCoeff(), 1.0, 1e-12));
+        try std.testing.expect(nearlyEqual(identity.coeffNamed("e12"), 0.0, 1e-12));
     }
 }
 
@@ -241,7 +241,7 @@ test "rotorFromTo maps normalized direction and preserves norm" {
     const rotated_unit = try normalize(rotated_from);
 
     try std.testing.expect(nearlyEqual(rotated_from.scalarProduct(rotated_from), from.scalarProduct(from), 1e-12));
-    try std.testing.expect(nearlyEqual(rotated_unit.coeff(.init(0b01)), to_unit.coeff(.init(0b01)), 1e-12));
-    try std.testing.expect(nearlyEqual(rotated_unit.coeff(.init(0b10)), to_unit.coeff(.init(0b10)), 1e-12));
+    try std.testing.expect(nearlyEqual(rotated_unit.coeffNamed("e1"), to_unit.coeffNamed("e1"), 1e-12));
+    try std.testing.expect(nearlyEqual(rotated_unit.coeffNamed("e2"), to_unit.coeffNamed("e2"), 1e-12));
     try std.testing.expect(nearlyEqual(from_unit.scalarProduct(from_unit), 1.0, 1e-12));
 }

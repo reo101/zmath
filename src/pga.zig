@@ -20,8 +20,8 @@ const naming_options = ga.SignedBladeNamingOptions.withBasisSpans(basis_spans);
 const algebra = ga.AlgebraWithNamingOptions(sig, naming_options);
 pub const helpers = ga.AlgebraHelperExports(algebra.HelperSurface);
 
-fn basisIndex(comptime parser_index: usize) usize {
-    return comptime ga.resolveBasisHelperIndexWithOptions(parser_index, dimension, naming_options) catch unreachable;
+fn namedBasisIndex(comptime named_index: usize) usize {
+    return comptime ga.resolveNamedBasisIndexWithOptions(named_index, dimension, naming_options) catch unreachable;
 }
 
 test "pga signature has correct dimension and basis-vector squares" {
@@ -31,7 +31,7 @@ test "pga signature has correct dimension and basis-vector squares" {
     try std.testing.expectEqual(.positive, sig.basisSquareClass(3));
 
     // e0 squares to 0 (degenerate)
-    try std.testing.expectEqual(.degenerate, sig.basisSquareClass(basisIndex(0)));
+    try std.testing.expectEqual(.degenerate, sig.basisSquareClass(namedBasisIndex(0)));
 
     try std.testing.expectEqual(@as(usize, 4), dimension);
 }
@@ -42,7 +42,7 @@ test "degenerate basis vector squares to zero under geometric product" {
     const result = e0.gp(e0);
 
     // e0 * e0 = 0 in Cl(3,0,1)
-    try std.testing.expectEqual(@as(f64, 0.0), result.coeff(.init(0))); // scalar part
+    try std.testing.expectEqual(@as(f64, 0.0), result.scalarCoeff()); // scalar part
 }
 
 test "positive basis vectors still square to +1" {
@@ -51,7 +51,7 @@ test "positive basis vectors still square to +1" {
     inline for (1..4) |i| {
         const ei = E.e(i);
         const sq = ei.gp(ei);
-        try std.testing.expectEqual(@as(f64, 1.0), sq.coeff(.init(0)));
+        try std.testing.expectEqual(@as(f64, 1.0), sq.scalarCoeff());
     }
 }
 
@@ -63,7 +63,7 @@ test "geometric product with degenerate vector produces dual-like elements" {
     // e1 * e0 should give a bivector e10 with coefficient +1 (or -1 depending on order)
     const e1e0 = e1.gp(e0);
     // The result lives on the blade mask e1^e0.
-    const e1e0_mask = ga.blades.basisVectorMask(dimension, 1) ^ ga.blades.basisVectorMask(dimension, basisIndex(0));
+    const e1e0_mask = E.blade(&.{ 1, 0 });
     try std.testing.expect(e1e0.coeff(e1e0_mask) != 0.0);
 
     // e0 * e1 should give the opposite sign
@@ -96,7 +96,7 @@ test "euclidean point representation and join" {
     const line = p.outerProduct(q);
 
     // The line should have a non-zero e12 component (the direction part)
-    const e12_mask = ga.blades.basisVectorMask(dimension, 1) ^ ga.blades.basisVectorMask(dimension, 2);
+    const e12_mask = E.blade(&.{ 1, 2 });
     try std.testing.expect(line.coeff(e12_mask) != 0.0);
 
     // The line should also have moment components involving e0
@@ -105,10 +105,10 @@ test "euclidean point representation and join" {
 
 test "fullSignedBladeFromIndicesWithSignature respects degenerate square" {
     // Repeated degenerate index should give zero
-    const degenerate_index = basisIndex(0);
+    const degenerate_index = namedBasisIndex(0);
     const result = ga.fullSignedBladeFromIndicesWithSignature(f64, sig, &.{ degenerate_index, degenerate_index });
     // e0*e0 = 0, so the scalar part must be zero
-    try std.testing.expectEqual(@as(f64, 0.0), result.coeff(.init(0)));
+    try std.testing.expectEqual(@as(f64, 0.0), result.scalarCoeff());
 }
 
 test "pga signed blade parser accepts e0 alias for degenerate basis" {
@@ -117,7 +117,7 @@ test "pga signed blade parser accepts e0 alias for degenerate basis" {
 
     const E = helpers.Basis(f64);
     try std.testing.expect(E.signedBlade("e0").eql(E.e(0)));
-    try std.testing.expectError(error.InvalidBasisIndex, ga.resolveBasisHelperIndexWithOptions(4, dimension, naming_options));
+    try std.testing.expectError(error.InvalidBasisIndex, ga.resolveNamedBasisHelperIndexWithOptions(4, dimension, naming_options));
     try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBladeWithOptions("e4", dimension, naming_options));
     try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBladeWithOptions("e14", dimension, naming_options));
 }
