@@ -87,6 +87,7 @@ pub fn Algebra(comptime sig: MetricSignature) type {
 /// Returns a signature-baked algebra namespace with naming options.
 pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_options: SignedBladeNamingOptions) type {
     return struct {
+        pub const Self = @This();
         pub const metric_signature = sig;
         pub const dimension = metric_signature.dimension();
         pub const naming = naming_options;
@@ -165,6 +166,34 @@ pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_o
             indices: []const usize,
         ) multivector.FullMultivector(T, metric_signature) {
             return multivector.fullSignedBladeFromIndicesWithSignature(T, metric_signature, indices);
+        }
+
+        /// Returns a namespace where all type constructors are bound to `T`.
+        pub fn Instantiate(comptime T: type) type {
+            return struct {
+                pub const Scalar = Self.Scalar(T);
+                pub const Vector = Self.Vector(T);
+                pub const Bivector = Self.Bivector(T);
+                pub const Trivector = Self.Trivector(T);
+                pub const Full = Self.FullMultivector(T);
+                pub const Even = Self.EvenMultivector(T);
+                pub const Odd = Self.OddMultivector(T);
+                pub const Pseudoscalar = Self.Pseudoscalar(T);
+                pub const Rotor = Self.Rotor(T);
+                pub const Basis = Self.Basis(T);
+
+                pub fn basisBlade(comptime mask: BladeMask) multivector.BasisBladeType(T, mask, metric_signature) {
+                    return Self.basisBlade(T, mask);
+                }
+
+                pub fn basisVector(comptime index: usize) multivector.BasisBladeType(T, blades.basisVectorMask(metric_signature.dimension(), index), metric_signature) {
+                    return Self.basisVector(T, index);
+                }
+
+                pub fn signedBlade(comptime name: []const u8) multivector.SignedBladeTypeWithOptions(T, name, metric_signature, naming) {
+                    return Self.signedBlade(T, name);
+                }
+            };
         }
     };
 }

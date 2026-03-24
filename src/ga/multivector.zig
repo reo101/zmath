@@ -284,13 +284,13 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         pub const OddType = OddMultivector(T, sig);
 
         /// Related scalar carrier type.
-        pub const ScalarType = GradeType(0);
+        pub const ScalarType = KVector(T, 0, sig);
 
         /// Related grade-1 vector carrier type.
-        pub const VectorType = GradeType(1);
+        pub const VectorType = KVector(T, 1, sig);
 
         /// Related grade-2 bivector carrier type.
-        pub const BivectorType = GradeType(2);
+        pub const BivectorType = KVector(T, 2, sig);
 
         pub const use_simd = canUseLaneWiseSimd(T, blade_masks.len);
         pub const Storage = if (use_simd) @Vector(blade_masks.len, T) else [blade_masks.len]T;

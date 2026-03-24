@@ -18,28 +18,12 @@ const basis_spans = ga.BasisIndexSpans.init(.{
 
 const naming_options = ga.SignedBladeNamingOptions.withBasisSpans(basis_spans);
 const algebra = ga.AlgebraWithNamingOptions(sig, naming_options);
-pub const helpers = algebra;
-
-pub const Multivector = algebra.Multivector;
-pub const Basis = algebra.Basis;
-pub const FullMultivector = algebra.FullMultivector;
-pub const KVector = algebra.KVector;
-pub const EvenMultivector = algebra.EvenMultivector;
-pub const OddMultivector = algebra.OddMultivector;
-pub const Scalar = algebra.Scalar;
-pub const Vector = algebra.Vector;
-pub const Bivector = algebra.Bivector;
-pub const Trivector = algebra.Trivector;
-pub const Pseudoscalar = algebra.Pseudoscalar;
-pub const Rotor = algebra.Rotor;
-pub const basisBlade = algebra.basisBlade;
-pub const basisVector = algebra.basisVector;
-pub const signedBlade = algebra.signedBlade;
-pub const fullSignedBladeFromIndices = algebra.fullSignedBladeFromIndices;
+pub const h = algebra.Instantiate(f64);
 
 fn namedBasisIndex(comptime named_index: usize) usize {
-    return comptime ga.resolveNamedBasisIndex(named_index, dimension, naming_options);
+    return comptime ga.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
 }
+
 
 test "pga signature has correct dimension and basis-vector squares" {
     // e1² = e2² = e3² = +1 (positive)
@@ -54,7 +38,7 @@ test "pga signature has correct dimension and basis-vector squares" {
 }
 
 test "degenerate basis vector squares to zero under geometric product" {
-    const E = helpers.Basis(f64);
+    const E = h.Basis;
     const e0 = E.e(0); // the degenerate direction
     const result = e0.gp(e0);
 
@@ -63,7 +47,7 @@ test "degenerate basis vector squares to zero under geometric product" {
 }
 
 test "positive basis vectors still square to +1" {
-    const E = helpers.Basis(f64);
+    const E = h.Basis;
 
     inline for (1..4) |i| {
         const ei = E.e(i);
@@ -73,7 +57,7 @@ test "positive basis vectors still square to +1" {
 }
 
 test "geometric product with degenerate vector produces dual-like elements" {
-    const E = helpers.Basis(f64);
+    const E = h.Basis;
     const e1 = E.e(1);
     const e0 = E.e(0);
 
@@ -89,14 +73,14 @@ test "geometric product with degenerate vector produces dual-like elements" {
 }
 
 test "ideal point (pure e0 multivector) has zero scalar product with itself" {
-    const E = helpers.Basis(f64);
+    const E = h.Basis;
     const e0 = E.e(0);
     const sp = e0.scalarProduct(e0);
     try std.testing.expectEqual(@as(f64, 0.0), sp);
 }
 
 test "euclidean point representation and join" {
-    const E = helpers.Basis(f64);
+    const E = h.Basis;
     const e1 = E.e(1);
     const e2 = E.e(2);
     const e3 = E.e(3);
@@ -129,12 +113,12 @@ test "fullSignedBladeFromIndicesWithSignature respects degenerate square" {
 }
 
 test "pga signed blade parser accepts e0 alias for degenerate basis" {
-    const parsed = ga.parseSignedBlade("e0", dimension, naming_options);
+    const parsed = ga.parseSignedBlade("e0", dimension, naming_options, false);
     try std.testing.expectEqual(ga.SignedBladeSpec{ .sign = .positive, .mask = .init(0b1000) }, try parsed);
 
-    const E = helpers.Basis(f64);
+    const E = h.Basis;
     try std.testing.expect(E.signedBlade("e0").eql(E.e(0)));
-    try std.testing.expectError(error.InvalidBasisIndex, ga.resolveNamedBasisIndex(4, dimension, naming_options));
-    try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBlade("e4", dimension, naming_options));
-    try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBlade("e14", dimension, naming_options));
+    try std.testing.expectError(error.InvalidBasisIndex, ga.resolveNamedBasisIndex(4, dimension, naming_options, false));
+    try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBlade("e4", dimension, naming_options, false));
+    try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBlade("e14", dimension, naming_options, false));
 }
