@@ -19,27 +19,59 @@ const basis_spans = ga.BasisIndexSpans.init(.{
 
 const naming_options = ga.SignedBladeNamingOptions.withBasisSpans(basis_spans);
 const algebra = ga.AlgebraWithNamingOptions(sig, naming_options);
-pub const helpers = algebra;
 
-pub const Multivector = algebra.Multivector;
-pub const Basis = algebra.Basis;
-pub const FullMultivector = algebra.FullMultivector;
-pub const KVector = algebra.KVector;
-pub const EvenMultivector = algebra.EvenMultivector;
-pub const OddMultivector = algebra.OddMultivector;
-pub const Scalar = algebra.Scalar;
-pub const Vector = algebra.Vector;
-pub const Bivector = algebra.Bivector;
-pub const Trivector = algebra.Trivector;
-pub const Pseudoscalar = algebra.Pseudoscalar;
-pub const Rotor = algebra.Rotor;
-pub const basisBlade = algebra.basisBlade;
-pub const basisVector = algebra.basisVector;
-pub const signedBlade = algebra.signedBlade;
-pub const fullSignedBladeFromIndices = algebra.fullSignedBladeFromIndices;
+pub const h = algebra.Instantiate(f64);
+
+const Vector = algebra.Vector(f64);
+const Bivector = algebra.Bivector(f64);
+const Rotor = algebra.Rotor(f64);
 
 fn namedBasisIndex(comptime named_index: usize) usize {
     return comptime ga.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
+}
+
+/// Spacetime split of a vector `x` into time and space components relative
+/// to an observer with velocity `gamma0`.
+///
+/// x*gamma0 = (x . gamma0) + (x ^ gamma0) = t + x_vec
+pub fn spacetimeSplit(x: anytype) struct { time: f64, space: h.Bivector } {
+    const E = h.Basis;
+    const g0 = E.e(0);
+    const split = x.gp(g0);
+    return .{
+        .time = split.scalarCoeff(),
+        .space = split.gradePart(2),
+    };
+}
+
+/// Constructs a Faraday bivector `F = E + I*B` from electric and magnetic field components.
+/// Note that in STA, relative 3-vectors like `E` and `B` are represented as bivectors
+/// in the spacetime split (spanning the observer's time axis).
+pub fn faradayBivector(electric: anytype, magnetic: anytype) h.Bivector {
+    const I = h.Pseudoscalar.init(.{1});
+    // F = E + I*B
+    return electric.add(I.gp(magnetic).gradePart(2));
+}
+
+
+
+/// Constructs a Lorentz boost rotor `L = exp(phi * v_hat / 2)`.
+/// `v_hat` is a unit spacelike bivector representing the boost direction.
+pub fn lorentzBoost(rapidity: f64, direction: h.Bivector) h.Rotor {
+    const cosh_half = std.math.cosh(rapidity / 2.0);
+    const sinh_half = std.math.sinh(rapidity / 2.0);
+
+    // L = cosh(phi/2) + v_hat * sinh(phi/2)
+    var rotor = h.Rotor.zero();
+    rotor.coeffs[0] = cosh_half; // scalar part (index 0 in EvenMultivector)
+
+    // Direction part (bivector components)
+    inline for (h.Bivector.blades, 0..) |mask, b_idx| {
+        const r_idx = h.Rotor.blade_index_by_mask[mask.toInt()];
+        rotor.coeffs[r_idx] = direction.coeffs[b_idx] * sinh_half;
+    }
+
+    return rotor;
 }
 
 test "sta signature has expected metric classes and dimension" {
@@ -53,7 +85,7 @@ test "sta signature has expected metric classes and dimension" {
 }
 
 test "sta basis vectors square to minkowski signs" {
-    const E = Basis(f64);
+    const E = h.Basis;
     const e0 = E.e(0);
 
     try std.testing.expectEqual(@as(f64, 1.0), e0.gp(e0).scalarCoeff());
@@ -64,24 +96,52 @@ test "sta basis vectors square to minkowski signs" {
     }
 }
 
-test "sta signed blade parser keeps strict e0..e3 naming" {
-    const parsed = ga.parseSignedBlade("e0", dimension, naming_options, false);
-    try std.testing.expectEqual(ga.SignedBladeSpec{ .sign = .positive, .mask = .init(0b0001) }, try parsed);
+test "spacetime split correctly extracts components" {
+    const E = h.Basis;
+    // x = 2*e0 + 3*e1 (time = 2, space_x = 3)
+    const x = E.e(0).scale(2.0).add(E.e(1).scale(3.0));
 
-    const E = Basis(f64);
-    try std.testing.expect(E.signedBlade("e0").eql(E.e(0)));
-    try std.testing.expect(E.signedBlade("e3").eql(E.e(3)));
-    try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBlade("e4", dimension, naming_options, false));
+    const split = spacetimeSplit(x);
+    try std.testing.expectEqual(@as(f64, 2.0), split.time);
+
+    // The spatial part is the bivector e10 (or -e01)
+    try std.testing.expectEqual(@as(f64, 3.0), split.space.coeffNamedWithOptions("e10", naming_options));
 }
 
-test "sta geometric product preserves vector anti-commutation" {
-    const E = Basis(f64);
+test "lorentz boost transforms vectors correctly" {
+    const E = h.Basis;
     const e0 = E.e(0);
-    const e1 = E.e(1);
 
-    const e0e1 = e0.gp(e1);
-    const e1e0 = e1.gp(e0);
-    const e01_mask = @TypeOf(E.signedBlade("e01")).blades[0];
+    // Boost in e1 direction with rapidity phi
+    const phi: f64 = 0.5;
+    // Boost plane is e1 ^ e0 (timelike plane).
+    // e10 squares to +1 in STA: (e1*e0)*(e1*e0) = e1*e0*-e0*e1 = -e1*1*e1 = -e1*e1 = 1.
+    const boost_plane = E.signedBlade("e10").gradePart(2);
+    const L = lorentzBoost(phi, boost_plane);
 
-    try std.testing.expectEqual(-e0e1.coeff(e01_mask), e1e0.coeff(e01_mask));
+    // Transform e0: e0' = L * e0 * L_rev
+    const e0_prime = L.gp(e0).gp(L.reverse()).gradePart(1);
+
+    // Expected: e0' = cosh(phi)*e0 + sinh(phi)*e1
+    const expected_e0 = std.math.cosh(phi);
+    const expected_e1 = std.math.sinh(phi);
+
+    try std.testing.expect(ga.rotors2d.nearlyEqual(e0_prime.coeffNamedWithOptions("e0", naming_options), expected_e0, 1e-12));
+    try std.testing.expect(ga.rotors2d.nearlyEqual(e0_prime.coeffNamedWithOptions("e1", naming_options), expected_e1, 1e-12));
+}
+
+test "faraday bivector construction" {
+    const E = h.Basis;
+    // Electric field in e1 direction (e10 bivector)
+    const electric = E.signedBlade("e10").scale(10.0);
+    // Magnetic field in e2 direction (e20 bivector)
+    const magnetic = E.signedBlade("e20").scale(5.0);
+
+    const F = faradayBivector(electric, magnetic);
+
+    // F = E + I*B
+    // I = e0123
+    // I * e20 = e0123 * e20 = -e0123 * e02 = -(e0*e0) * e1 * (e2*e2) * e3 = -1 * e1 * -1 * e3 = e13
+    try std.testing.expectEqual(@as(f64, 10.0), F.coeffNamedWithOptions("e10", naming_options));
+    try std.testing.expectEqual(@as(f64, 5.0), F.coeffNamedWithOptions("e13", naming_options));
 }

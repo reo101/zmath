@@ -3,24 +3,7 @@ const std = @import("std");
 pub const ga = @import("ga.zig");
 
 const algebra = ga.Algebra(ga.euclideanSignature(2));
-pub const helpers = algebra;
-
-pub const Multivector = algebra.Multivector;
-pub const Basis = algebra.Basis;
-pub const FullMultivector = algebra.FullMultivector;
-pub const KVector = algebra.KVector;
-pub const EvenMultivector = algebra.EvenMultivector;
-pub const OddMultivector = algebra.OddMultivector;
-pub const Scalar = algebra.Scalar;
-pub const Vector = algebra.Vector;
-pub const Bivector = algebra.Bivector;
-pub const Trivector = algebra.Trivector;
-pub const Pseudoscalar = algebra.Pseudoscalar;
-pub const Rotor = algebra.Rotor;
-pub const basisBlade = algebra.basisBlade;
-pub const basisVector = algebra.basisVector;
-pub const signedBlade = algebra.signedBlade;
-pub const fullSignedBladeFromIndices = algebra.fullSignedBladeFromIndices;
+pub const h = algebra.Instantiate(f64);
 
 pub const rotors2d = ga.rotors2d;
 
@@ -38,7 +21,7 @@ pub const rotated = rotors2d.rotated;
 pub const rotatedByAngle = rotors2d.rotatedByAngle;
 
 test "vga facade keeps ga parity and rotor aliases" {
-    const E2 = helpers.Basis(f64);
+    const E2 = h.Basis;
     const e1 = E2.e(1);
     const e2 = E2.e(2);
     const r = planarRotor(f64, radiansFromDegrees(90.0));
