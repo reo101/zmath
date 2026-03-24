@@ -518,7 +518,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                 inline for (Rhs.blades, 0..) |rhs_mask, rhs_index| {
                     if ((lhs_mask.toInt() & rhs_mask.toInt()) != lhs_mask.toInt()) continue;
 
-                    const result_index = comptime Result.blade_index_by_mask[BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt()).index()];
+                    const result_index = comptime Result.blade_index_by_mask[lhs_mask.bitset.xorWith(rhs_mask.bitset).mask];
                     const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, sig);
                     std.debug.assert(result_index < Result.stored_blade_count);
                     result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @intFromEnum(sign);
@@ -540,7 +540,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                 inline for (Rhs.blades, 0..) |rhs_mask, rhs_index| {
                     if ((lhs_mask.toInt() & rhs_mask.toInt()) != rhs_mask.toInt()) continue;
 
-                    const result_index = comptime Result.blade_index_by_mask[BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt()).index()];
+                    const result_index = comptime Result.blade_index_by_mask[lhs_mask.bitset.xorWith(rhs_mask.bitset).mask];
                     const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, sig);
                     std.debug.assert(result_index < Result.stored_blade_count);
                     result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @intFromEnum(sign);
@@ -576,8 +576,8 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                     const rhs_grade = blade_ops.bladeGrade(rhs_mask);
                     const target_grade = if (lhs_grade > rhs_grade) lhs_grade - rhs_grade else rhs_grade - lhs_grade;
 
-                    const result_mask = BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt());
-                    const result_grade = @popCount(result_mask.toInt());
+                    const result_mask =  BladeMask.init(lhs_mask.bitset.xorWith(rhs_mask.bitset).mask);
+                    const result_grade = blade_ops.bladeGrade(result_mask);
                     if (result_grade != target_grade) continue;
 
                     const result_index = Result.blade_index_by_mask[result_mask.index()];
@@ -795,7 +795,7 @@ pub fn DotProductResultType(
             const rhs_grade = blade_ops.bladeGrade(rhs_mask);
             const target_grade = if (lhs_grade > rhs_grade) lhs_grade - rhs_grade else rhs_grade - lhs_grade;
 
-            const result_mask = BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt());
+            const result_mask = BladeMask.init(lhs_mask.bitset.xorWith(rhs_mask.bitset).mask);
             if (blade_ops.bladeGrade(result_mask) == target_grade) {
                 marked[result_mask.index()] = true;
             }
