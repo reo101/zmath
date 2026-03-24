@@ -35,6 +35,7 @@ fn namedBasisIndex(comptime named_index: usize) usize {
 ///
 /// x*gamma0 = (x . gamma0) + (x ^ gamma0) = t + x_vec
 pub fn spacetimeSplit(x: anytype) struct { time: f64, space: h.Bivector } {
+    comptime ga.ensureMultivector(@TypeOf(x));
     const E = h.Basis;
     const g0 = E.e(0);
     const split = x.gp(g0);
@@ -48,6 +49,10 @@ pub fn spacetimeSplit(x: anytype) struct { time: f64, space: h.Bivector } {
 /// Note that in STA, relative 3-vectors like `E` and `B` are represented as bivectors
 /// in the spacetime split (spanning the observer's time axis).
 pub fn faradayBivector(electric: anytype, magnetic: anytype) h.Bivector {
+    comptime {
+        ga.ensureMultivector(@TypeOf(electric));
+        ga.ensureMultivector(@TypeOf(magnetic));
+    }
     const I = h.Pseudoscalar.init(.{1});
     // F = E + I*B
     return electric.add(I.gp(magnetic).gradePart(2));
@@ -105,6 +110,36 @@ pub fn applyGradient(comptime MType: type, partial_derivatives: [4]MType) h.Full
 /// Given a Faraday bivector F and its derivatives, returns the 4-current J.
 pub fn maxwellSource(f_derivatives: [4]h.Bivector) h.Full {
     return applyGradient(h.Bivector, f_derivatives);
+}
+
+/// Performs a duality rotation on a Faraday bivector F by angle theta.
+/// F' = F * exp(I * theta) = F * (cos(theta) + I * sin(theta))
+pub fn dualityRotate(f: anytype, theta: f64) @TypeOf(f.gp(h.Scalar.init(.{0}))) {
+    comptime ga.ensureMultivector(@TypeOf(f));
+    const I = h.Pseudoscalar.init(.{1});
+    // exp(I*theta) = cos(theta) + I*sin(theta)
+    const cos_t = std.math.cos(theta);
+    const sin_t = std.math.sin(theta);
+    const expo = h.Scalar.init(.{cos_t}).add(I.scale(sin_t));
+    return f.gp(expo);
+}
+
+/// In STA, a Dirac spinor is represented by an element of the even subalgebra.
+/// It can be written in the form ψ = √ρ e^{Iβ/2} R, where R is a rotor.
+pub const Spinor = h.Even;
+
+/// Decomposes a spinor into its scalar and pseudoscalar invariants (ρ and β).
+pub fn spinorInvariants(psi: anytype) struct { @"ρ": f64, @"β": f64 } {
+    comptime ga.ensureMultivector(@TypeOf(psi));
+    // psi * reverse(psi) = ρ e^{Iβ} = ρ(cos β + I sin β)
+    const rho_exp_ib = psi.gp(psi.reverse());
+    const re = rho_exp_ib.scalarCoeff();
+    const im = rho_exp_ib.coeff(h.Pseudoscalar.blades[0]);
+
+    return .{
+        .@"ρ" = @sqrt(re * re + im * im),
+        .@"β" = std.math.atan2(im, re),
+    };
 }
 
 /// Computes the proper time interval squared (ds^2) for a differential 4-position.
@@ -217,6 +252,49 @@ test "faraday bivector construction" {
     // I * e20 = e0123 * e20 = -e0123 * e02 = -(e0*e0) * e1 * (e2*e2) * e3 = -1 * e1 * -1 * e3 = e13
     try std.testing.expectEqual(@as(f64, 10.0), F.coeffNamedWithOptions("e10", naming_options));
     try std.testing.expectEqual(@as(f64, 5.0), F.coeffNamedWithOptions("e13", naming_options));
+}
+
+test "duality rotation preserves field invariants" {
+    const E = h.Basis;
+    // F = 10*e10 + 5*e13
+    const electric = E.signedBlade("e10").scale(10.0).gradePart(2);
+    const magnetic = E.signedBlade("e20").scale(5.0).gradePart(2);
+    const F = faradayBivector(electric, magnetic);
+
+    // F^2 = (E^2 - B^2) + 2I(E . B)
+    // E^2 = 100, B^2 = 25 -> Scalar part = 75
+    // E . B = 0 -> Pseudoscalar part = 0
+    const F2 = F.gp(F);
+    try std.testing.expectEqual(@as(f64, 75.0), F2.scalarCoeff());
+
+    // Rotate by 45 degrees
+    const angle = std.math.pi / 4.0;
+    const F_prime = dualityRotate(F, angle);
+
+    // (F')^2 = F^2 * exp(2*I*theta)
+    // The magnitude of the invariant complex number s + Ip should be preserved.
+    const F_prime2 = F_prime.gp(F_prime);
+    const s_prime = F_prime2.scalarCoeff();
+    const p_prime = F_prime2.coeff(h.Pseudoscalar.blades[0]);
+    const mag_prime = @sqrt(s_prime * s_prime + p_prime * p_prime);
+
+    try std.testing.expect(ga.rotors2d.nearlyEqual(mag_prime, 75.0, 1e-12));
+}
+
+test "spinor invariants extract rho and beta" {
+    // Construct simple spinor psi = sqrt(rho) * exp(I * beta / 2)
+    const rho = 4.0;
+    const beta = 0.6;
+
+    const I = h.Pseudoscalar.init(.{1});
+    const expo = h.Scalar.init(.{std.math.cos(beta / 2.0)}).add(I.scale(std.math.sin(beta / 2.0)));
+    const psi = expo.scale(@sqrt(rho));
+
+    const inv = spinorInvariants(psi);
+
+    // Use UTF-8 field names
+    try std.testing.expect(ga.rotors2d.nearlyEqual(inv.@"ρ", rho, 1e-12));
+    try std.testing.expect(ga.rotors2d.nearlyEqual(inv.@"β", beta, 1e-12));
 }
 
 test "4-velocity squares to 1" {
