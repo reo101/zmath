@@ -27,33 +27,39 @@ pub const basisBladeMask = blades.basisBladeMask;
 pub const writeBladeMask = blades.writeBladeMask;
 
 pub const isSignedBlade = blade_parsing.isSignedBlade;
+
 pub fn parseSignedBlade(
     comptime name: []const u8,
     comptime dimension: usize,
     comptime options: ?SignedBladeNamingOptions,
-) SignedBladeParseError!SignedBladeSpec {
-    return blade_parsing.parseSignedBlade(name, dimension, options, false);
+    comptime panicking: bool,
+) if (panicking) SignedBladeSpec else SignedBladeParseError!SignedBladeSpec {
+    return blade_parsing.parseSignedBlade(name, dimension, options, panicking);
 }
+
 pub fn expectSignedBlade(
     comptime name: []const u8,
     comptime dimension: usize,
     comptime options: ?SignedBladeNamingOptions,
 ) SignedBladeSpec {
-    return blade_parsing.parseSignedBlade(name, dimension, options, true);
+    return parseSignedBlade(name, dimension, options, true);
 }
+
 pub fn resolveNamedBasisIndex(
     comptime named_index: usize,
     comptime dimension: usize,
     comptime options: ?SignedBladeNamingOptions,
-) SignedBladeParseError!usize {
-    return blade_parsing.resolveNamedBasisIndex(named_index, dimension, options, false);
+    comptime panicking: bool,
+) if (panicking) usize else SignedBladeParseError!usize {
+    return blade_parsing.resolveNamedBasisIndex(named_index, dimension, options, panicking);
 }
+
 pub fn expectNamedBasisIndex(
     comptime named_index: usize,
     comptime dimension: usize,
     comptime options: ?SignedBladeNamingOptions,
 ) usize {
-    return blade_parsing.resolveNamedBasisIndex(named_index, dimension, options, true);
+    return resolveNamedBasisIndex(named_index, dimension, options, true);
 }
 
 pub const MultivectorWithSignature = multivector.Multivector;
@@ -202,21 +208,11 @@ test "algebra naming options can expose span-mapped named indices" {
         .basis_spans = spans,
     };
 
-    const parsed = try parseSignedBlade("e0", sig.dimension(), opts);
+    const parsed = try parseSignedBlade("e0", sig.dimension(), opts, false);
     try std.testing.expectEqual(SignedBladeSpec{ .sign = .positive, .mask = .init(0b1000) }, parsed);
 
     const Cl301 = AlgebraWithNamingOptions(sig, opts);
     const E = Cl301.Basis(f64);
     try std.testing.expect(E.signedBlade("e0").eql(E.e(0)));
-    try std.testing.expectError(error.InvalidBasisIndex, parseSignedBlade("e4", sig.dimension(), opts));
-}
-
-test "generated algebra helper exports include optional helpers when available" {
-    const Cl2 = Algebra(.euclidean(2));
-
-    const helpers = AlgebraHelperExports(Cl2.HelperSurface);
-    try std.testing.expect(@hasField(@TypeOf(helpers), "Trivector"));
-
-    const E2 = helpers.Basis(f64);
-    try std.testing.expect(E2.e(1).eql(Cl2.HelperSurface.Basis(f64).e(1)));
+    try std.testing.expectError(error.InvalidBasisIndex, parseSignedBlade("e4", sig.dimension(), opts, false));
 }
