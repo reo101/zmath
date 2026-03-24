@@ -2,7 +2,6 @@ const std = @import("std");
 const zmath = @import("zmath");
 const ga = zmath.ga;
 const Cl3 = ga.Algebra(.euclidean(3));
-const H3 = Cl3.HelperSurface;
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -19,8 +18,8 @@ pub fn main(init: std.process.Init) !void {
     }
     try stdout.writeAll("]\n");
 
-    const Vec3 = H3.Vector(f64);
-    const E3 = H3.Basis(f64);
+    const Vec3 = Cl3.Vector(f64);
+    const E3 = Cl3.Basis(f64);
     const v = Vec3.init(.{ 1.0, 2.0, 3.0 });
     const e2 = E3.e(2);
     const e12 = E3.signedBlade("e12");
@@ -33,8 +32,8 @@ pub fn main(init: std.process.Init) !void {
 }
 
 test "example wiring compiles" {
-    const Vec3 = H3.Vector(f64);
+    const Vec3 = Cl3.Vector(f64);
     const v = Vec3.init(.{ 1.0, 2.0, 3.0 });
-    try std.testing.expectEqual(@as(f64, 3.0), v.coeff(ga.BladeMask.parseForDimensionPanicking("e3", Cl3.dimension)));
-    try std.testing.expect(H3.Basis(f64).signedBlade("e21").eql(H3.Bivector(f64).init(.{ -1, 0, 0 })));
+    try std.testing.expectEqual(@as(f64, 3.0), v.coeff(ga.expectSignedBlade("e3", Cl3.dimension, null).mask));
+    try std.testing.expect(Cl3.Basis(f64).signedBlade("e21").eql(Cl3.Bivector(f64).init(.{ -1, 0, 0 })));
 }

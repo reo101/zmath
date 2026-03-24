@@ -158,14 +158,6 @@ fn invalidBasisIndexCompileError(comptime named_index: usize, comptime dimension
     ));
 }
 
-/// Signed-blade syntax cluster:
-/// - compact identifier form: `e12`
-/// - underscore identifier forms: `e1_2`, `e_10_2`
-/// - delimited list forms: `e(10,2)`, `e[10,2]`
-///
-/// The compact form tokenizes one digit at a time, so `e12` means `e1 e2`.
-/// Use a leading underscore when a multi-digit basis index must stay intact,
-/// such as `e_12` for the single basis vector `e12`.
 fn parseCompactSignedBlade(
     comptime name: []const u8,
     comptime dimension: usize,
@@ -189,7 +181,6 @@ fn parseCompactSignedBlade(
     return spec;
 }
 
-/// Parses underscore-separated signed blades such as `e1_2` or `e_10_2`.
 fn parseUnderscoreSignedBlade(
     comptime name: []const u8,
     comptime dimension: usize,
@@ -206,7 +197,6 @@ fn parseUnderscoreSignedBlade(
     }, options);
 }
 
-/// Parses delimited signed blades such as `e(1,2)` or `e[10,2]`.
 fn parseDelimitedSignedBlade(
     comptime name: []const u8,
     comptime dimension: usize,
@@ -233,19 +223,20 @@ pub fn isSignedBlade(
     comptime dimension: usize,
     comptime options: ?SignedBladeNamingOptions,
 ) bool {
-    const opts = options orelse SignedBladeNamingOptions.euclidean(dimension);
+    const opts = comptime options orelse SignedBladeNamingOptions.euclidean(dimension);
     _ = parseSignedBladeImpl(name, dimension, opts) catch return false;
     return true;
 }
 
 /// Parses a signed blade into a canonical sign-plus-mask representation under naming options.
+/// If `panicking` is true, invalid blades will trigger a compile error instead of returning an error union.
 pub fn parseSignedBlade(
     comptime name: []const u8,
     comptime dimension: usize,
     comptime options: ?SignedBladeNamingOptions,
     comptime panicking: bool,
 ) if (panicking) SignedBladeSpec else SignedBladeParseError!SignedBladeSpec {
-    const opts = options orelse SignedBladeNamingOptions.euclidean(dimension);
+    const opts = comptime options orelse SignedBladeNamingOptions.euclidean(dimension);
     if (panicking) {
         return comptime parseSignedBladeImpl(name, dimension, opts) catch |err| invalidSignedBladeCompileError(name, dimension, err);
     } else {
@@ -283,13 +274,14 @@ fn parseSignedBladeImpl(
 }
 
 /// Resolves one named basis index under naming options.
+/// If `panicking` is true, invalid indices will trigger a compile error instead of returning an error union.
 pub fn resolveNamedBasisIndex(
     comptime named_index: usize,
     comptime dimension: usize,
     comptime options: ?SignedBladeNamingOptions,
     comptime panicking: bool,
 ) if (panicking) usize else SignedBladeParseError!usize {
-    const opts = options orelse SignedBladeNamingOptions.euclidean(dimension);
+    const opts = comptime options orelse SignedBladeNamingOptions.euclidean(dimension);
     if (panicking) {
         return comptime opts.resolveNamedBasisIndex(named_index, dimension) catch |err| invalidBasisIndexCompileError(named_index, dimension, err);
     } else {
@@ -298,29 +290,29 @@ pub fn resolveNamedBasisIndex(
 }
 
 test "signed blades keep compact and multi-digit forms distinct" {
-    const compact = try parseSignedBlade("e12", 12, null, false, null, false);
+    const compact = try parseSignedBlade("e12", 12, null, false);
     try std.testing.expectEqual(SignedBladeSpec{ .sign = .positive, .mask = .init(0b011) }, compact);
 
-    const single = try parseSignedBlade("e_12", 12, null, false, null, false);
+    const single = try parseSignedBlade("e_12", 12, null, false);
     try std.testing.expectEqual(
         SignedBladeSpec{ .sign = .positive, .mask = .init(@as(u64, 1) << 11) },
         single,
     );
 
-    const swapped = try parseSignedBlade("e21", 2, null, false, null, false);
+    const swapped = try parseSignedBlade("e21", 2, null, false);
     try std.testing.expectEqual(SignedBladeSpec{ .sign = .negative, .mask = .init(0b011) }, swapped);
 }
 
 test "invalid signed blades produce parse errors" {
     try std.testing.expectError(error.InvalidBasisIndex, parseSignedBlade("e10", 3, null, false));
     try std.testing.expectError(error.InvalidBasisSeparator, parseSignedBlade("e1-2", 3, null, false));
-    try std.testing.expectError(error.TrailingBasisSeparator, parseSignedBlade("e(1,2,)", 3));
+    try std.testing.expectError(error.TrailingBasisSeparator, parseSignedBlade("e(1,2,)", 3, null, false));
 }
 
 test "delimited and underscore forms agree on canonical output" {
-    const from_parens = try parseSignedBlade("e(3,1,2)", 3);
-    const from_brackets = try parseSignedBlade("e[3,1,2]", 3);
-    const from_underscore = try parseSignedBlade("e_3_1_2", 3, null, false, null, false);
+    const from_parens = try parseSignedBlade("e(3,1,2)", 3, null, false);
+    const from_brackets = try parseSignedBlade("e[3,1,2]", 3, null, false);
+    const from_underscore = try parseSignedBlade("e_3_1_2", 3, null, false);
 
     try std.testing.expectEqual(from_parens, from_brackets);
     try std.testing.expectEqual(from_brackets, from_underscore);
@@ -328,10 +320,10 @@ test "delimited and underscore forms agree on canonical output" {
 }
 
 test "isSignedBlade rejects malformed delimiters and separators" {
-    try std.testing.expect(!isSignedBlade("e(1,2]", 3));
+    try std.testing.expect(!isSignedBlade("e(1,2]", 3, null));
     try std.testing.expect(!isSignedBlade("e[1;2]", 3, null));
     try std.testing.expect(!isSignedBlade("e_", 3, null));
-    try std.testing.expect(isSignedBlade("e(1,2)", 3));
+    try std.testing.expect(isSignedBlade("e(1,2)", 3, null));
 }
 
 test "naming options can map e0 through degenerate parser span" {
@@ -343,13 +335,13 @@ test "naming options can map e0 through degenerate parser span" {
         .basis_spans = spans,
     };
 
-    const e0 = try parseSignedBlade("e0", 4, options, false, null, false);
+    const e0 = try parseSignedBlade("e0", 4, options, false);
     try std.testing.expectEqual(SignedBladeSpec{ .sign = .positive, .mask = .init(0b1000) }, e0);
 
-    const e10 = try parseSignedBlade("e10", 4, options, false, null, false);
+    const e10 = try parseSignedBlade("e10", 4, options, false);
     try std.testing.expectEqual(SignedBladeSpec{ .sign = .positive, .mask = .init(0b1001) }, e10);
 
-    const mixed = try parseSignedBladeWithOptions("e(1,0,2)", 4, options);
+    const mixed = try parseSignedBlade("e(1,0,2)", 4, options, false);
     try std.testing.expectEqual(SignedBladeSpec{ .sign = .negative, .mask = .init(0b1011) }, mixed);
 
     try std.testing.expectError(error.InvalidBasisIndex, parseSignedBlade("e0", 4, null, false));
@@ -416,7 +408,7 @@ test "syntax policy can gate prefix and accepted forms" {
 
     try std.testing.expect(isSignedBlade("v12", 3, prefixed));
     try std.testing.expectError(error.MissingBasisPrefix, parseSignedBlade("e12", 3, prefixed, false));
-    try std.testing.expectError(error.InvalidBasisDelimiter, parseSignedBladeWithOptions("v(1,2)", 3, prefixed));
+    try std.testing.expectError(error.InvalidBasisDelimiter, parseSignedBlade("v(1,2)", 3, prefixed, false));
 
     const no_compact = comptime SignedBladeNamingOptions{
         .basis_spans = .init(.{ .positive = .range(1, 12) }),
