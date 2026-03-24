@@ -194,7 +194,7 @@ pub fn SignedBladeTypeWithOptions(
 ) type {
     ensureNumeric(T);
     const dimension = comptime sig.dimension();
-    const spec = comptime blade_parsing.expectSignedBladeWithOptions(name, dimension, naming_options);
+    const spec = comptime blade_parsing.parseSignedBlade(name, dimension, naming_options, true);
     return BasisBladeType(T, spec.mask, sig);
 }
 
@@ -214,7 +214,7 @@ fn signedBladeImpl(
 
     const dimension = comptime sig.dimension();
 
-    const spec = comptime blade_parsing.expectSignedBladeWithOptions(name, dimension, naming_options);
+    const spec = comptime blade_parsing.parseSignedBlade(name, dimension, naming_options, true);
     if (comptime spec.sign.isNegative() and !supportsNegativeCoefficients(T)) {
         @compileError("negative-oriented signed blades require a signed or floating-point coefficient type");
     }
@@ -391,7 +391,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
             comptime name: []const u8,
             comptime options: blade_parsing.SignedBladeNamingOptions,
         ) T {
-            const spec = comptime blade_parsing.expectSignedBladeWithOptions(name, dimension, options);
+            const spec = comptime blade_parsing.parseSignedBlade(name, dimension, options, true);
             return self.coeff(spec.mask) * @intFromEnum(spec.sign);
         }
 
@@ -937,8 +937,8 @@ pub fn BasisWithNamingOptions(
         /// Returns the basis vector for the configured named basis index.
         pub fn e(
             comptime named_index: usize,
-        ) BasisBladeType(T, blade_ops.basisVectorMask(dimension, blade_parsing.expectNamedBasisHelperIndexWithOptions(named_index, dimension, naming_options)), sig) {
-            const one_based_index = comptime blade_parsing.expectNamedBasisHelperIndexWithOptions(named_index, dimension, naming_options);
+        ) BasisBladeType(T, blade_ops.basisVectorMask(dimension, blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true)), sig) {
+            const one_based_index = comptime blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
             return basisVector(T, one_based_index, sig);
         }
 
@@ -972,14 +972,14 @@ pub fn BasisWithNamingOptions(
             }
 
             const named_index = span.start + (ordinal - 1);
-            return comptime blade_parsing.expectNamedBasisHelperIndexWithOptions(named_index, dimension, naming_options);
+            return comptime blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
         }
 
         /// Returns the blade mask for one configured named basis index.
         pub fn mask(comptime named_index: usize) BladeMask {
             return blade_ops.basisVectorMask(
                 dimension,
-                blade_parsing.expectNamedBasisHelperIndexWithOptions(named_index, dimension, naming_options),
+                blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true),
             );
         }
 
@@ -988,7 +988,7 @@ pub fn BasisWithNamingOptions(
             var result_mask: BladeMask = .init(0);
 
             inline for (named_indices) |named_index| {
-                const one_based_index = comptime blade_parsing.expectNamedBasisHelperIndexWithOptions(named_index, dimension, naming_options);
+                const one_based_index = comptime blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
                 const bit = blade_ops.basisVectorMask(dimension, one_based_index);
                 if (result_mask.bitset.intersectWith(bit.bitset).mask != 0) {
                     @compileError("repeated basis vectors cancel in the geometric product and are not represented by a blade mask");

@@ -27,15 +27,34 @@ pub const basisBladeMask = blades.basisBladeMask;
 pub const writeBladeMask = blades.writeBladeMask;
 
 pub const isSignedBlade = blade_parsing.isSignedBlade;
-pub const isSignedBladeWithOptions = blade_parsing.isSignedBladeWithOptions;
-pub const parseSignedBlade = blade_parsing.parseSignedBlade;
-pub const parseSignedBladeWithOptions = blade_parsing.parseSignedBladeWithOptions;
-pub const resolveNamedBasisIndexWithOptions = blade_parsing.resolveNamedBasisIndexWithOptions;
-pub const expectNamedBasisIndexWithOptions = blade_parsing.expectNamedBasisIndexWithOptions;
-pub const resolveNamedBasisHelperIndexWithOptions = blade_parsing.resolveNamedBasisHelperIndexWithOptions;
-pub const expectNamedBasisHelperIndexWithOptions = blade_parsing.expectNamedBasisHelperIndexWithOptions;
-pub const expectSignedBlade = blade_parsing.expectSignedBlade;
-pub const expectSignedBladeWithOptions = blade_parsing.expectSignedBladeWithOptions;
+pub fn parseSignedBlade(
+    comptime name: []const u8,
+    comptime dimension: usize,
+    comptime options: ?SignedBladeNamingOptions,
+) SignedBladeParseError!SignedBladeSpec {
+    return blade_parsing.parseSignedBlade(name, dimension, options, false);
+}
+pub fn expectSignedBlade(
+    comptime name: []const u8,
+    comptime dimension: usize,
+    comptime options: ?SignedBladeNamingOptions,
+) SignedBladeSpec {
+    return blade_parsing.parseSignedBlade(name, dimension, options, true);
+}
+pub fn resolveNamedBasisIndex(
+    comptime named_index: usize,
+    comptime dimension: usize,
+    comptime options: ?SignedBladeNamingOptions,
+) SignedBladeParseError!usize {
+    return blade_parsing.resolveNamedBasisIndex(named_index, dimension, options, false);
+}
+pub fn expectNamedBasisIndex(
+    comptime named_index: usize,
+    comptime dimension: usize,
+    comptime options: ?SignedBladeNamingOptions,
+) usize {
+    return blade_parsing.resolveNamedBasisIndex(named_index, dimension, options, true);
+}
 
 pub const MultivectorWithSignature = multivector.Multivector;
 pub const BasisWithSignature = multivector.Basis;
@@ -54,16 +73,24 @@ pub const basisVectorWithSignature = multivector.basisVector;
 pub const signedBladeWithSignature = multivector.signedBlade;
 pub const signedBladeWithSignatureAndOptions = multivector.signedBladeWithOptions;
 
-fn algebraBoundHelpers(comptime sig: MetricSignature, comptime naming_options: SignedBladeNamingOptions) type {
+/// Returns a signature-baked algebra namespace for a fixed `Cl(p, q, r)`.
+pub fn Algebra(comptime sig: MetricSignature) type {
+    return AlgebraWithNamingOptions(sig, SignedBladeNamingOptions.fromSignature(sig));
+}
+
+/// Returns a signature-baked algebra namespace with naming options.
+pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_options: SignedBladeNamingOptions) type {
     return struct {
-        const metric_signature = sig;
+        pub const metric_signature = sig;
+        pub const dimension = metric_signature.dimension();
+        pub const naming = naming_options;
 
         pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask) type {
             return multivector.Multivector(T, blade_masks, metric_signature);
         }
 
         pub fn Basis(comptime T: type) type {
-            return multivector.BasisWithNamingOptions(T, metric_signature, naming_options);
+            return multivector.BasisWithNamingOptions(T, metric_signature, naming);
         }
 
         pub fn FullMultivector(comptime T: type) type {
@@ -123,8 +150,8 @@ fn algebraBoundHelpers(comptime sig: MetricSignature, comptime naming_options: S
         pub fn signedBlade(
             comptime T: type,
             comptime name: []const u8,
-        ) multivector.SignedBladeTypeWithOptions(T, name, metric_signature, naming_options) {
-            return multivector.signedBladeWithOptions(T, name, metric_signature, naming_options);
+        ) multivector.SignedBladeTypeWithOptions(T, name, metric_signature, naming) {
+            return multivector.signedBladeWithOptions(T, name, metric_signature, naming);
         }
 
         pub fn fullSignedBladeFromIndices(
@@ -136,143 +163,19 @@ fn algebraBoundHelpers(comptime sig: MetricSignature, comptime naming_options: S
     };
 }
 
-fn requiredHelperExportFieldNames() []const []const u8 {
-    return &.{
-        "Multivector",
-        "Basis",
-        "FullMultivector",
-        "KVector",
-        "EvenMultivector",
-        "OddMultivector",
-        "Scalar",
-        "Vector",
-        "Bivector",
-        "Pseudoscalar",
-        "Rotor",
-    };
-}
-
-fn hasAllRequiredHelperExports(comptime AlgebraType: type) bool {
-    inline for (requiredHelperExportFieldNames()) |name| {
-        if (!@hasDecl(AlgebraType, name)) return false;
-    }
-    return true;
-}
-
-fn helperExportFieldNames(comptime AlgebraType: type) []const []const u8 {
-    @setEvalBranchQuota(10_000);
-
-    const required_names = requiredHelperExportFieldNames();
-    const declarations = std.meta.declarations(AlgebraType);
-
-    var optional_count: usize = 0;
-    inline for (declarations) |decl| {
-        if (!isOptionalHelperExportDecl(AlgebraType, decl.name)) continue;
-        optional_count += 1;
-    }
-
-    const total_len = required_names.len + optional_count;
-    var names: [total_len][]const u8 = undefined;
-    var cursor: usize = 0;
-
-    inline for (required_names) |name| {
-        names[cursor] = name;
-        cursor += 1;
-    }
-
-    inline for (declarations) |decl| {
-        if (!isOptionalHelperExportDecl(AlgebraType, decl.name)) continue;
-        names[cursor] = decl.name;
-        cursor += 1;
-    }
-
-    return names[0..];
-}
-
-fn isRequiredHelperExportName(comptime name: []const u8) bool {
-    inline for (requiredHelperExportFieldNames()) |required_name| {
-        if (std.mem.eql(u8, required_name, name)) return true;
-    }
-    return false;
-}
-
-fn isOptionalHelperExportDecl(comptime AlgebraType: type, comptime name: []const u8) bool {
-    if (name.len == 0) return false;
-    if (!std.ascii.isUpper(name[0])) return false;
-    if (isRequiredHelperExportName(name)) return false;
-
-    const value = @field(AlgebraType, name);
-    return @typeInfo(@TypeOf(value)) == .@"fn";
-}
-
-fn algebraHelperExportType(comptime AlgebraType: type) type {
-    const names = helperExportFieldNames(AlgebraType);
-    var field_types: [names.len]type = undefined;
-    var field_attrs: [names.len]std.builtin.Type.StructField.Attributes = undefined;
-
-    inline for (names, &field_types, &field_attrs) |name, *field_type, *field_attr| {
-        field_type.* = @TypeOf(@field(AlgebraType, name));
-        field_attr.* = .{};
-    }
-
-    return @Struct(
-        .auto,
-        null,
-        names,
-        &field_types,
-        &field_attrs,
-    );
-}
-
-/// Generates facade-ready reexports for a signature-baked algebra namespace.
-pub fn AlgebraHelperExports(comptime AlgebraType: type) algebraHelperExportType(AlgebraType) {
-    comptime {
-        if (!hasAllRequiredHelperExports(AlgebraType)) {
-            @compileError("expected an Algebra-like namespace with the helper constructors");
-        }
-    }
-
-    const Result = algebraHelperExportType(AlgebraType);
-    const names = helperExportFieldNames(AlgebraType);
-    var result: Result = undefined;
-
-    inline for (names) |name| {
-        @field(result, name) = @field(AlgebraType, name);
-    }
-
-    return result;
-}
-
-/// Returns a signature-baked algebra namespace for a fixed `Cl(p, q, r)`.
-pub fn Algebra(comptime sig: MetricSignature) type {
-    return AlgebraWithNamingOptions(sig, SignedBladeNamingOptions.fromSignature(sig));
-}
-
-/// Returns a signature-baked algebra namespace with naming options.
-pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_options: SignedBladeNamingOptions) type {
-    return struct {
-        pub const metric_signature = sig;
-        pub const dimension = metric_signature.dimension();
-        pub const signed_blade_naming_options = naming_options;
-        pub const HelperSurface = algebraBoundHelpers(metric_signature, signed_blade_naming_options);
-        /// Alias-only helper type for facade reexports.
-        pub const HelperAliases = AlgebraHelperExports(HelperSurface);
-    };
-}
-
 pub const fullSignedBladeFromIndicesWithSignature = multivector.fullSignedBladeFromIndicesWithSignature;
 pub const writeMultivector = multivector.writeMultivector;
 
 test "ga facade exposes core and specialized modules" {
     try std.testing.expect(choose(5, 2) == blades.choose(5, 2));
     try std.testing.expect(bladeCount(3) == blades.bladeCount(3));
-    try std.testing.expect(isSignedBlade("e(1,2)", 2));
+    try std.testing.expect(isSignedBlade("e(1,2)", 2, null));
 
     const sig: MetricSignature = .{ .p = 1, .q = 1 };
     const value = fullSignedBladeFromIndicesWithSignature(i32, sig, &.{ 2, 2 });
     try std.testing.expectEqual(@as(i32, -1), value.scalarCoeff());
 
-    const E2 = Algebra(.euclidean(2)).HelperSurface.Basis(f64);
+    const E2 = Algebra(.euclidean(2)).Basis(f64);
     const e1 = E2.e(1);
     const half_turn = rotors2d.planarRotor(f64, std.math.pi);
     const rotated_e1 = rotors2d.rotated(e1, half_turn);
@@ -284,7 +187,7 @@ test "signature-baked algebra namespace drives metric-dependent products" {
     const Minkowski11: MetricSignature = .{ .p = 1, .q = 1 };
     const Cl11 = Algebra(Minkowski11);
 
-    const e2 = Cl11.HelperSurface.Basis(i32).e(2);
+    const e2 = Cl11.Basis(i32).e(2);
     const e2_squared = e2.gp(e2);
     try std.testing.expectEqual(@as(i32, -1), e2_squared.scalarCoeff());
 }
@@ -299,13 +202,13 @@ test "algebra naming options can expose span-mapped named indices" {
         .basis_spans = spans,
     };
 
-    const parsed = try parseSignedBladeWithOptions("e0", sig.dimension(), opts);
+    const parsed = try parseSignedBlade("e0", sig.dimension(), opts);
     try std.testing.expectEqual(SignedBladeSpec{ .sign = .positive, .mask = .init(0b1000) }, parsed);
 
     const Cl301 = AlgebraWithNamingOptions(sig, opts);
-    const E = Cl301.HelperSurface.Basis(f64);
+    const E = Cl301.Basis(f64);
     try std.testing.expect(E.signedBlade("e0").eql(E.e(0)));
-    try std.testing.expectError(error.InvalidBasisIndex, parseSignedBladeWithOptions("e4", sig.dimension(), opts));
+    try std.testing.expectError(error.InvalidBasisIndex, parseSignedBlade("e4", sig.dimension(), opts));
 }
 
 test "generated algebra helper exports include optional helpers when available" {

@@ -18,10 +18,27 @@ const basis_spans = ga.BasisIndexSpans.init(.{
 
 const naming_options = ga.SignedBladeNamingOptions.withBasisSpans(basis_spans);
 const algebra = ga.AlgebraWithNamingOptions(sig, naming_options);
-pub const helpers = ga.AlgebraHelperExports(algebra.HelperSurface);
+pub const helpers = algebra;
+
+pub const Multivector = algebra.Multivector;
+pub const Basis = algebra.Basis;
+pub const FullMultivector = algebra.FullMultivector;
+pub const KVector = algebra.KVector;
+pub const EvenMultivector = algebra.EvenMultivector;
+pub const OddMultivector = algebra.OddMultivector;
+pub const Scalar = algebra.Scalar;
+pub const Vector = algebra.Vector;
+pub const Bivector = algebra.Bivector;
+pub const Trivector = algebra.Trivector;
+pub const Pseudoscalar = algebra.Pseudoscalar;
+pub const Rotor = algebra.Rotor;
+pub const basisBlade = algebra.basisBlade;
+pub const basisVector = algebra.basisVector;
+pub const signedBlade = algebra.signedBlade;
+pub const fullSignedBladeFromIndices = algebra.fullSignedBladeFromIndices;
 
 fn namedBasisIndex(comptime named_index: usize) usize {
-    return comptime ga.resolveNamedBasisIndexWithOptions(named_index, dimension, naming_options) catch unreachable;
+    return comptime ga.resolveNamedBasisIndex(named_index, dimension, naming_options);
 }
 
 test "pga signature has correct dimension and basis-vector squares" {
@@ -112,12 +129,12 @@ test "fullSignedBladeFromIndicesWithSignature respects degenerate square" {
 }
 
 test "pga signed blade parser accepts e0 alias for degenerate basis" {
-    const parsed = ga.parseSignedBladeWithOptions("e0", dimension, naming_options);
+    const parsed = ga.parseSignedBlade("e0", dimension, naming_options);
     try std.testing.expectEqual(ga.SignedBladeSpec{ .sign = .positive, .mask = .init(0b1000) }, try parsed);
 
     const E = helpers.Basis(f64);
     try std.testing.expect(E.signedBlade("e0").eql(E.e(0)));
-    try std.testing.expectError(error.InvalidBasisIndex, ga.resolveNamedBasisHelperIndexWithOptions(4, dimension, naming_options));
-    try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBladeWithOptions("e4", dimension, naming_options));
-    try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBladeWithOptions("e14", dimension, naming_options));
+    try std.testing.expectError(error.InvalidBasisIndex, ga.resolveNamedBasisIndex(4, dimension, naming_options));
+    try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBlade("e4", dimension, naming_options));
+    try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBlade("e14", dimension, naming_options));
 }
