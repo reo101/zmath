@@ -7,7 +7,7 @@ fn Alg(n: usize) type {
     return ga.Algebra(.euclidean(n));
 }
 fn Vec(n: usize) type {
-    return Alg(n).GAVector(f32);
+    return Alg(n).Vector(f32);
 }
 
 /// Vertex input position at location 0.

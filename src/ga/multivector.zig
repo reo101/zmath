@@ -270,7 +270,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         pub const ScalarType = GradeType(0);
 
         /// Related grade-1 vector carrier type.
-        pub const GAVectorType = GradeType(1);
+        pub const VectorType = GradeType(1);
 
         /// Related grade-2 bivector carrier type.
         pub const BivectorType = GradeType(2);
@@ -877,7 +877,7 @@ pub fn Scalar(comptime T: type, comptime sig: MetricSignature) type {
 }
 
 /// Grade-1 vector carrier type.
-pub fn GAVector(comptime T: type, comptime sig: MetricSignature) type {
+pub fn Vector(comptime T: type, comptime sig: MetricSignature) type {
     return KVector(T, 1, sig);
 }
 
@@ -1000,8 +1000,8 @@ pub fn BasisWithNamingOptions(
 test "aliases and signed blades expose more than just plain vectors" {
     const E2 = Basis(i32, .euclidean(2));
 
-    try std.testing.expect(E2.e(1).eql(GAVector(i32, .euclidean(2)).init(.{ 1, 0 })));
-    try std.testing.expect(E2.e(2).eql(GAVector(i32, .euclidean(2)).init(.{ 0, 1 })));
+    try std.testing.expect(E2.e(1).eql(Vector(i32, .euclidean(2)).init(.{ 1, 0 })));
+    try std.testing.expect(E2.e(2).eql(Vector(i32, .euclidean(2)).init(.{ 0, 1 })));
     try std.testing.expect(E2.signedBlade("e12").eql(Bivector(i32, .euclidean(2)).init(.{1})));
     try std.testing.expect(E2.signedBlade("e21").eql(Bivector(i32, .euclidean(2)).init(.{-1})));
     try std.testing.expect(E2.signedBlade("e11").eql(Scalar(i32, .euclidean(2)).init(.{1})));
@@ -1053,7 +1053,7 @@ test "geometric products and involutions follow Euclidean VGA relations" {
 
     const mv = FullMultivector(i32, .euclidean(3)).init(.{ 1, 2, 3, 4, 5, 6, 7, 8 });
     try std.testing.expect(mv.gradePart(0).eql(@TypeOf(mv).ScalarType.init(.{1})));
-    try std.testing.expect(mv.gradePart(1).eql(@TypeOf(mv).GAVectorType.init(.{ 2, 3, 5 })));
+    try std.testing.expect(mv.gradePart(1).eql(@TypeOf(mv).VectorType.init(.{ 2, 3, 5 })));
     try std.testing.expect(mv.reverse().eql(@TypeOf(mv).FullType.init(.{ 1, 2, 3, -4, 5, -6, -7, -8 })));
     try std.testing.expect(mv.cliffordConjugate().eql(@TypeOf(mv).FullType.init(.{ 1, -2, -3, -4, -5, -6, -7, 8 })));
 
@@ -1076,14 +1076,14 @@ test "multivector.write matches format output path" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
 
-    const value = GAVector(i32, .euclidean(2)).init(.{ 1, -2 });
+    const value = Vector(i32, .euclidean(2)).init(.{ 1, -2 });
     try value.format(&out.writer);
     try std.testing.expectEqualSlices(u8, "e1 - 2*e2", out.written());
 }
 
 test "signature-aware products support Cl(1,1)" {
     const sig: MetricSignature = .{ .p = 1, .q = 1 };
-    const Vec = GAVector(f64, sig);
+    const Vec = Vector(f64, sig);
     const e1 = Vec.init(.{ 1.0, 0.0 });
     const e2 = Vec.init(.{ 0.0, 1.0 });
 
@@ -1131,7 +1131,7 @@ test "large-dimension full multivector geometric product with scalar identity" {
 test "vga helpers use SIMD storage when appropriate" {
     if (comptime !build_options.enable_simd_fast_paths) return;
 
-    const Vec2 = GAVector(f32, .euclidean(2));
+    const Vec2 = Vector(f32, .euclidean(2));
     const v = Vec2.init(.{ 1.0, 2.0 });
 
     // Check that the underlying storage is a @Vector of the correct size and type.
