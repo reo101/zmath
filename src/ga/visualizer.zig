@@ -1,6 +1,5 @@
 const std = @import("std");
 const zmath = @import("../ga.zig");
-const cga = @import("../flavours/cga.zig");
 
 /// A software canvas for rendering 2D wireframes.
 pub const Canvas = struct {
@@ -69,51 +68,64 @@ pub const Canvas = struct {
     }
 };
 
-pub const ProjectionMode = enum { isometric, perspective, curved, conformal };
+pub const ProjectionMode = enum { perspective, isometric, hyperbolic, spherical };
 
 /// Simple 3D-to-2D projection for the demo.
 pub fn projectSimple(p: anytype, canvas_width: usize, canvas_height: usize, zoom: f32, mode: ProjectionMode) ?[2]f32 {
     zmath.ensureMultivector(@TypeOf(p));
-    
+
     var x_raw = p.coeffNamed("e1");
     var y_raw = p.coeffNamed("e2");
     var z_raw = p.coeffNamed("e3");
 
-    if (mode == .curved) {
-        // Apply a spherical/fisheye distortion
-        const r2 = x_raw * x_raw + y_raw * y_raw + z_raw * z_raw;
-        const distortion = 1.0 + r2 * 0.05;
-        x_raw /= distortion;
-        y_raw /= distortion;
-    } else if (mode == .conformal) {
-        // Map to CGA and invert in a sphere
-        const p_cga = cga.Point.init(x_raw, y_raw, z_raw);
-        // Sphere of radius 10 at origin
-        const S = cga.Sphere.init(0, 0, 0, 10.0);
-        // Spherical inversion: P' = S P S^-1
-        const inv_S = S.inverse() orelse S; // Should not be null for non-zero radius
-        const p_prime_cga = S.gp(p_cga).gp(inv_S).gradePart(1);
-        
-        // Map back to Euclidean (x,y,z)
-        // den = -(P . ninf)
-        const den = -p_prime_cga.dot(cga.ninf).scalarCoeff();
-        if (@abs(den) > 1e-6) {
-            x_raw = p_prime_cga.dot(cga.h.Basis.e(1)).scalarCoeff() / den;
-            y_raw = p_prime_cga.dot(cga.h.Basis.e(2)).scalarCoeff() / den;
-            z_raw = p_prime_cga.dot(cga.h.Basis.e(3)).scalarCoeff() / den;
-        }
+    switch (mode) {
+        .perspective, .isometric => {},
+        .hyperbolic => {
+            // Poincare-ball-like compression into a bounded domain.
+            const r2 = x_raw * x_raw + y_raw * y_raw + z_raw * z_raw;
+            const w = @sqrt(1.0 + r2);
+            const factor = 1.0 / (1.0 + w);
+            x_raw *= factor;
+            y_raw *= factor;
+            z_raw *= factor;
+        },
+        .spherical => {
+            // Stereographic projection from the "south" pole after normalization.
+            // This intentionally creates a strong singularity near the opposite pole.
+            const radius = @sqrt(x_raw * x_raw + y_raw * y_raw + z_raw * z_raw);
+            if (radius <= 1e-6) return null;
+
+            const nx = x_raw / radius;
+            const ny = y_raw / radius;
+            const nz = z_raw / radius;
+
+            const pole_softening: f32 = 0.02;
+            const denom = 1.0 + ny + pole_softening;
+            x_raw = nx / denom;
+            y_raw = nz / denom;
+            z_raw = ny;
+        },
     }
 
-    // Move away from the screen
-    const z_offset: f32 = 10.0;
+    const z_offset: f32 = switch (mode) {
+        // Pull perspective-style modes farther back so depth motion causes
+        // less aggressive zoom-in as geometry approaches the camera.
+        .perspective, .hyperbolic => 30.0,
+        .isometric => 6.0,
+        .spherical => 5.0,
+    };
     const dist = z_raw + z_offset;
-    
-    if ((mode == .perspective or mode == .curved or mode == .conformal) and dist <= 0.1) return null;
 
-    const scale = if (mode == .perspective or mode == .curved or mode == .conformal) (zoom / dist) else (zoom / 5.0);
-    
+    // Near plane clipping
+    if ((mode == .perspective or mode == .hyperbolic or mode == .spherical) and dist <= 0.1) return null;
+
+    // Normalize scale across modes. Spherical gets an extra shrink factor so
+    // the heavily distorted opposite pole stays in frame more often.
+    const base_scale = if (mode == .perspective or mode == .hyperbolic or mode == .spherical) (zoom / dist) else (zoom / z_offset);
+    const scale = if (mode == .spherical) base_scale * 0.10 else base_scale;
+
     const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
-    
+
     const x = (x_raw * scale / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
     const y = (1.0 - y_raw * scale) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);
 
@@ -124,11 +136,11 @@ pub fn projectSimple(p: anytype, canvas_width: usize, canvas_height: usize, zoom
 /// P' = (Eye v Point) ^ Screen
 pub fn projectPGA(camera: anytype, p: anytype, canvas_width: usize, canvas_height: usize, zoom: f32) ?[2]f32 {
     zmath.ensureMultivector(@TypeOf(p));
-    
+
     const ray = camera.eye.join(p);
     const p_prime_mv = ray.wedge(camera.screen);
     const p_prime = p_prime_mv.gradePart(3);
-    
+
     const w = p_prime.coeffNamed("e123");
     if (@abs(w) < 1e-6) return null;
 
@@ -136,7 +148,7 @@ pub fn projectPGA(camera: anytype, p: anytype, canvas_width: usize, canvas_heigh
     const y_coord = p_prime.coeffNamed("e314") / w;
 
     const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
-    
+
     // Scale coordinates to fit roughly in [-1, 1] then map to pixels
     const x = (x_coord * zoom / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
     const y = (1.0 - y_coord * zoom) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);

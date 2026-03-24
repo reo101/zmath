@@ -28,14 +28,14 @@ pub const Point = struct {
             .add(E.e(3).wedge(E.e(1)).wedge(E.e(4)).scale(y))
             .add(E.e(1).wedge(E.e(2)).wedge(E.e(4)).scale(z))
             .add(E.e(1).wedge(E.e(2)).wedge(E.e(3)));
-        
+
         var full = h.Full.zero();
         inline for (h.Full.blades, 0..) |mask, i| {
             full.coeffs[i] = res.coeff(mask);
         }
         return full;
     }
-    
+
     pub fn direction(x: f32, y: f32, z: f32) h.Full {
         const E = h.Basis;
         const res = E.e(2).wedge(E.e(3)).wedge(E.e(4)).scale(x)
@@ -192,7 +192,7 @@ test "pga signed blade parser accepts e0 alias for degenerate basis" {
 test "toMatrix4x4 with identity rotor" {
     const rotor = h.Scalar.init(.{1});
     const mat = toMatrix4x4(rotor);
-    
+
     try std.testing.expectEqual(@as(f32, 1.0), mat[0][0]);
     try std.testing.expectEqual(@as(f32, 0.0), mat[0][1]);
     try std.testing.expectEqual(@as(f32, 1.0), mat[1][1]);
