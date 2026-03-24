@@ -82,16 +82,33 @@ fn simdToCoeffs(comptime T: type, comptime lane_count: usize, vector: @Vector(la
     return @bitCast(vector);
 }
 
-fn scalarProductSigns(
-    comptime T: type,
-    comptime masks: []const BladeMask,
-    comptime sig: MetricSignature,
-) [masks.len]T {
+fn scalarProductSigns(comptime T: type, comptime masks: []const BladeMask, comptime sig: MetricSignature) [masks.len]T {
     var signs: [masks.len]T = undefined;
     inline for (masks, 0..) |mask, index| {
         signs[index] = @intFromEnum(mask.geometricProductClassWithSignature(mask, sig));
     }
     return signs;
+}
+
+fn countMarkedMasks(comptime dimension: usize, comptime marked: [blade_ops.bladeCount(dimension)]bool) usize {
+    var count: usize = 0;
+    inline for (marked) |is_marked| {
+        if (is_marked) count += 1;
+    }
+    return count;
+}
+
+fn collectMarkedMasks(comptime dimension: usize, comptime marked: [blade_ops.bladeCount(dimension)]bool) [countMarkedMasks(dimension, marked)]BladeMask {
+    var masks: [countMarkedMasks(dimension, marked)]BladeMask = undefined;
+    var cursor: usize = 0;
+
+    inline for (marked, 0..) |is_marked, mask| {
+        if (!is_marked) continue;
+        masks[cursor] = BladeMask.init(mask);
+        cursor += 1;
+    }
+
+    return masks;
 }
 
 fn assertCompatibleMultivector(comptime Lhs: type, comptime Rhs: type) void {
@@ -401,7 +418,10 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
 
             var result: Self = .zero();
             inline for (blade_masks, 0..) |_, index| {
-                result.coeffs[index] = self.coeffs[index] / scalar;
+                result.coeffs[index] = switch (@typeInfo(T)) {
+                    .int, .comptime_int => @divTrunc(self.coeffs[index], scalar),
+                    else => self.coeffs[index] / scalar,
+                };
             }
             return result;
         }
@@ -559,10 +579,14 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
             const Result = DotProductResultType(T, blade_masks, Rhs.blades, sig);
             var result = Result.zero();
 
-            inline for (blade_masks, 0..) |lhs_mask, lhs_index| {
+            if (comptime Result.stored_blade_count == 0) {
+                return result;
+            }
+
+            for (blade_masks, 0..) |lhs_mask, lhs_index| {
                 if (lhs_mask.bitset.mask == 0) continue; // scalar dot anything is 0
 
-                inline for (Rhs.blades, 0..) |rhs_mask, rhs_index| {
+                for (Rhs.blades, 0..) |rhs_mask, rhs_index| {
                     if (rhs_mask.bitset.mask == 0) continue; // anything dot scalar is 0
 
                     const lhs_grade = blade_ops.bladeGrade(lhs_mask);
@@ -570,9 +594,10 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                     const target_grade = if (lhs_grade > rhs_grade) lhs_grade - rhs_grade else rhs_grade - lhs_grade;
 
                     const result_mask = BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt());
-                    if (blade_ops.bladeGrade(result_mask) != target_grade) continue;
+                    const result_grade = @popCount(result_mask.toInt());
+                    if (result_grade != target_grade) continue;
 
-                    const result_index = comptime Result.blade_index_by_mask[BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt()).index()];
+                    const result_index = Result.blade_index_by_mask[result_mask.index()];
                     const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, sig);
                     std.debug.assert(result_index < Result.stored_blade_count);
                     result.coeffs[result_index] += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @intFromEnum(sign);
@@ -586,25 +611,9 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         pub fn scalarProduct(self: Self, rhs: anytype) T {
             const Rhs = @TypeOf(rhs);
             comptime assertCompatibleMultivector(Self, Rhs);
-            return self.scalarProductWithSignature(rhs, sig);
-        }
-
-        /// Returns the scalar product under an arbitrary `Cl(p, q, r)` signature.
-        pub fn scalarProductWithSignature(
-            self: Self,
-            rhs: anytype,
-            comptime override_sig: MetricSignature,
-        ) T {
-            const Rhs = @TypeOf(rhs);
-            comptime assertCompatibleMultivector(Self, Rhs);
-            comptime {
-                if (override_sig.dimension() != dimension) {
-                    @compileError("metric signature dimension must match multivector dimension");
-                }
-            }
 
             if (comptime blade_ops.sameBladeSet(blade_masks, Rhs.blades) and canUseLaneWiseSimd(T, Self.stored_blade_count)) {
-                const signs = comptime scalarProductSigns(T, blade_masks, override_sig);
+                const signs = comptime scalarProductSigns(T, blade_masks, sig);
                 const lhs_lanes = coeffsToSimd(T, Self.stored_blade_count, self.coeffs);
                 const rhs_lanes = coeffsToSimd(T, Self.stored_blade_count, rhs.coeffs);
                 const sign_lanes = coeffsToSimd(T, Self.stored_blade_count, signs);
@@ -616,7 +625,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                 const rhs_index = Rhs.blade_index_by_mask[lhs_mask.index()];
                 if (rhs_index == Rhs.missing_blade_index) continue;
 
-                result += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @intFromEnum(lhs_mask.geometricProductClassWithSignature(lhs_mask, override_sig));
+                result += self.coeffs[lhs_index] * rhs.coeffs[rhs_index] * @intFromEnum(lhs_mask.geometricProductClassWithSignature(lhs_mask, sig));
             }
 
             return result;
@@ -810,7 +819,7 @@ pub fn DotProductResultType(
         }
     }
 
-    const masks = blade_ops.collectMarkedMasks(dimension, marked);
+    const masks = collectMarkedMasks(dimension, marked);
     return Multivector(T, masks[0..], sig);
 }
 
@@ -1089,7 +1098,70 @@ test "signature-aware products support Cl(1,1)" {
 
     try std.testing.expect(e1.gpWithSignature(e1, sig).eql(@TypeOf(e1).ScalarType.init(.{1.0})));
     try std.testing.expect(e2.gpWithSignature(e2, sig).eql(@TypeOf(e2).ScalarType.init(.{-1.0})));
-    try std.testing.expectEqual(@as(f64, -1.0), e2.scalarProductWithSignature(e2, sig));
+    try std.testing.expectEqual(@as(f64, -1.0), e2.scalarProduct(e2));
+}
+
+test "multivector arithmetic helpers cover sparse and dense carriers" {
+    const sig = comptime MetricSignature.euclidean(3);
+    const Vec3 = Vector(i32, sig);
+    const Scalar3 = Scalar(i32, sig);
+
+    const sparse_masks = comptime BladeMask.initMany(.{ 0b001, 0b100 });
+    const SparseVec = Multivector(i32, sparse_masks[0..], sig);
+
+    const v = Vec3.init(.{ 2, -1, 3 });
+    try std.testing.expect(v.negate().eql(Vec3.init(.{ -2, 1, -3 })));
+    try std.testing.expect(v.scale(2).eql(Vec3.init(.{ 4, -2, 6 })));
+    try std.testing.expect(v.scale(2).divide(2).eql(v));
+    try std.testing.expectEqual(@as(i32, 0), v.scalarCoeff());
+
+    const s = Scalar3.init(.{5});
+    const sum = v.add(s);
+    try std.testing.expectEqual(@as(i32, 5), sum.coeff(.init(0)));
+    try std.testing.expectEqual(@as(i32, 2), sum.coeff(.init(0b001)));
+    try std.testing.expectEqual(@as(i32, -1), sum.coeff(.init(0b010)));
+    try std.testing.expectEqual(@as(i32, 3), sum.coeff(.init(0b100)));
+
+    const diff = sum.sub(v);
+    try std.testing.expect(diff.eql(s));
+
+    const sparse = SparseVec.init(.{ 2, 4 });
+    try std.testing.expectEqual(@as(i32, 20), sparse.scalarProduct(sparse));
+    try std.testing.expectEqual(@as(i32, 20), sparse.scalarProduct(sparse));
+    try std.testing.expectEqual(@as(i32, 16), v.scalarProduct(sparse));
+}
+
+test "product variants agree with expected blade algebra identities" {
+    const sig = comptime MetricSignature.euclidean(3);
+    const E3 = Basis(i32, sig);
+    const e1 = E3.e(1);
+    const e2 = E3.e(2);
+    const e3 = E3.e(3);
+    const scalar_zero = E3.Scalar.init(.{0});
+    const scalar_one = E3.Scalar.init(.{1});
+
+    const e12 = e1.outerProduct(e2);
+    const e23 = e2.outerProduct(e3);
+    const e123 = e12.outerProduct(e3);
+
+    try std.testing.expect(e1.gp(e1).eql(scalar_one));
+    try std.testing.expect(e1.outerProduct(e1).eql(scalar_zero));
+
+    try std.testing.expect(e1.leftContraction(e12).eql(e2));
+    try std.testing.expect(e12.rightContraction(e2).eql(e1));
+    try std.testing.expect(e1.rightContraction(e12).eql(scalar_zero));
+    try std.testing.expect(e12.leftContraction(e1).eql(scalar_zero));
+
+    try std.testing.expect(e1.dot(e2).eql(E3.Scalar.zero()));
+    try std.testing.expect(e1.dot(e1).eql(scalar_one));
+    try std.testing.expect(e1.dot(e12).eql(e2));
+    try std.testing.expect(e12.dot(e1).eql(e2.negate()));
+    try std.testing.expect(scalar_one.dot(e1).eql(scalar_zero));
+    try std.testing.expect(e1.dot(scalar_one).eql(scalar_zero));
+
+    try std.testing.expectEqual(@as(i32, -1), e12.scalarProduct(e12));
+    try std.testing.expectEqual(@as(i32, -1), e23.scalarProduct(e23));
+    try std.testing.expect(e123.gp(e123).eql(E3.Scalar.init(.{-1})));
 }
 
 test "sparse coefficient lookup and equality across carrier sets" {
