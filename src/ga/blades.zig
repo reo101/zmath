@@ -75,7 +75,7 @@ pub const BladeMask = packed struct(BladeMaskInt) {
     }
 
     /// Returns the signature class produced by the `Cl(p, q, r)` geometric product with `rhs`.
-    pub fn geometricProductClassWithSignature(lhs: BladeMask, rhs: BladeMask, comptime sig: MetricSignature) SignatureClass {
+    pub fn geometricProductClassWithSignature(lhs: BladeMask, rhs: BladeMask, sig: MetricSignature) SignatureClass {
         var sign: SignatureClass = .positive;
         var remaining = lhs.toInt();
         while (remaining != 0) {
@@ -93,7 +93,7 @@ pub const BladeMask = packed struct(BladeMaskInt) {
             }
 
             if (rhs.bitset.isSet(bit_index)) {
-                sign = sign.mul(basisSquareClass(sig, bit_index + 1));
+                sign = sign.mul(sig.basisSquareClass(bit_index + 1));
             }
         }
 
@@ -383,6 +383,30 @@ pub const MetricSignature = struct {
         validateDimension(total_dimension);
         return total_dimension;
     }
+
+    /// Returns the square class of one internal one-based basis index.
+    pub fn basisSquareClass(self: MetricSignature, basis_index: usize) SignatureClass {
+        const sig_dimension = self.dimension();
+        std.debug.assert(1 <= basis_index and basis_index <= sig_dimension);
+
+        return if (basis_index <= self.p)
+            .positive
+        else if (basis_index <= self.p + self.q)
+            .negative
+        else
+            .degenerate;
+    }
+
+    /// Applies one internal one-based basis index to an in-progress signed blade.
+    pub fn applyBasisIndex(self: MetricSignature, spec: *SignedBladeSpec, basis_index: usize) void {
+        const sig_dimension = self.dimension();
+        std.debug.assert(1 <= basis_index and basis_index <= sig_dimension);
+        const bit: BladeMask = .init(@as(BladeMaskInt, 1) << @intCast(basis_index - 1));
+        if (spec.mask.geometricProductClassWithSignature(bit, self).isNegative()) {
+            spec.sign.flip();
+        }
+        spec.mask.bitset = spec.mask.bitset.xorWith(bit.bitset);
+    }
 };
 
 /// Largest ambient dimension that fits inside `BladeMask`.
@@ -404,30 +428,9 @@ fn validateDimension(dimension: usize) void {
     }
 }
 
-/// Returns `p + q + r` for a metric signature.
-pub fn metricDimension(comptime sig: MetricSignature) usize {
-    return sig.dimension();
-}
-
 /// Returns the Euclidean metric signature `Cl(dimension, 0, 0)`.
 pub fn euclideanSignature(comptime dimension: usize) MetricSignature {
     return MetricSignature.euclidean(dimension);
-}
-
-/// Returns the square class of a one-based basis vector in `sig`.
-/// - Returns `.positive` for basis vectors in the positive signature (first `p` vectors)
-/// - Returns `.negative` for basis vectors in the negative signature (next `q` vectors)
-/// - Returns `.degenerate` for basis vectors in the degenerate signature (last `r` vectors)
-pub fn basisSquareClass(comptime sig: MetricSignature, one_based_index: usize) SignatureClass {
-    const dimension = sig.dimension();
-    std.debug.assert(1 <= one_based_index and one_based_index <= dimension);
-
-    return if (one_based_index <= sig.p)
-        .positive
-    else if (one_based_index <= sig.p + sig.q)
-        .negative
-    else
-        .degenerate;
 }
 
 /// Returns the number of basis blades in `Cl(dimension, 0, 0)`.
@@ -470,21 +473,21 @@ pub fn areStrictlyAscendingUnique(comptime masks: []const BladeMask) bool {
     return true;
 }
 
-/// Returns the mask for the one-based basis vector `e{one_based_index}`.
-pub fn basisVectorMask(comptime dimension: usize, one_based_index: usize) BladeMask {
+/// Returns the mask for one internal one-based basis index.
+pub fn basisVectorMask(comptime dimension: usize, basis_index: usize) BladeMask {
     validateDimension(dimension);
-    std.debug.assert(1 <= one_based_index and one_based_index <= dimension);
+    std.debug.assert(1 <= basis_index and basis_index <= dimension);
 
-    return .init(@as(BladeMaskInt, 1) << @intCast(one_based_index - 1));
+    return .init(@as(BladeMaskInt, 1) << @intCast(basis_index - 1));
 }
 
-/// Returns the mask for a basis blade expressed as one-based indices.
-pub fn basisBladeMask(comptime dimension: usize, comptime one_based_indices: []const usize) BladeMask {
+/// Returns the mask for a basis blade expressed as internal one-based indices.
+pub fn basisBladeMask(comptime dimension: usize, comptime basis_indices: []const usize) BladeMask {
     validateDimension(dimension);
 
     var mask: BladeMask = .init(0);
-    inline for (one_based_indices) |one_based_index| {
-        const bit = basisVectorMask(dimension, one_based_index);
+    inline for (basis_indices) |basis_index| {
+        const bit = basisVectorMask(dimension, basis_index);
         if (mask.bitset.intersectWith(bit.bitset).mask != 0) {
             @compileError("repeated basis vectors cancel in the geometric product and are not represented by a blade mask");
         }
@@ -495,19 +498,13 @@ pub fn basisBladeMask(comptime dimension: usize, comptime one_based_indices: []c
 }
 
 /// Folds one basis vector into an in-progress canonical signed blade.
-pub fn applyBasisIndex(spec: *SignedBladeSpec, one_based_index: usize, comptime dimension: usize) void {
-    applyBasisIndexWithSignature(spec, one_based_index, euclideanSignature(dimension));
+pub fn applyBasisIndex(spec: *SignedBladeSpec, basis_index: usize, comptime dimension: usize) void {
+    euclideanSignature(dimension).applyBasisIndex(spec, basis_index);
 }
 
 /// Folds one basis vector into an in-progress canonical signed blade under `sig`.
-pub fn applyBasisIndexWithSignature(spec: *SignedBladeSpec, one_based_index: usize, comptime sig: MetricSignature) void {
-    const dimension = sig.dimension();
-    std.debug.assert(1 <= one_based_index and one_based_index <= dimension);
-    const bit: BladeMask = .init(@as(BladeMaskInt, 1) << @intCast(one_based_index - 1));
-    if (spec.mask.geometricProductClassWithSignature(bit, sig).isNegative()) {
-        spec.sign.flip();
-    }
-    spec.mask.bitset = spec.mask.bitset.xorWith(bit.bitset);
+pub fn applyBasisIndexWithSignature(spec: *SignedBladeSpec, basis_index: usize, comptime sig: MetricSignature) void {
+    sig.applyBasisIndex(spec, basis_index);
 }
 
 /// Returns every blade mask in ascending canonical order.
@@ -916,7 +913,7 @@ test "MetricSignature constructors expose dot-syntax helpers" {
     try std.testing.expectEqual(@as(usize, 3), e3.dimension());
     try std.testing.expectEqual(@as(usize, 2), e2.dimension());
     try std.testing.expectEqual(@as(usize, 2), minkowski11.dimension());
-    try std.testing.expectEqual(.negative, basisSquareClass(minkowski11, 2));
+    try std.testing.expectEqual(.negative, minkowski11.basisSquareClass(2));
 }
 
 test "ascending uniqueness helper handles short and invalid slices" {
