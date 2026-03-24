@@ -35,20 +35,62 @@ pub const BladeMask = packed struct(BladeMaskInt) {
         return @intCast(mask.toInt());
     }
 
+    /// Parses a signed blade name and returns its mask when the sign is positive.
+    ///
+    /// Since this helper returns only `BladeMask`, it rejects negative spellings
+    /// (for example `e21`) with a comptime error instead of discarding the sign.
     pub fn parse(comptime name: []const u8) !BladeMask {
-        return (try parser.parseSignedBlade(name, max_supported_basis_vectors)).mask;
+        comptime {
+            const checked = parser.expectSignedBlade(name, max_supported_basis_vectors);
+            if (checked.sign != .positive) {
+                @compileError("BladeMask.parse expects a positive signed-blade spelling");
+            }
+        }
+
+        const spec = try parser.parseSignedBlade(name, max_supported_basis_vectors);
+        return spec.mask;
     }
 
+    /// Parses a signed blade name within `dimension` and returns its mask when
+    /// the sign is positive.
+    ///
+    /// Since this helper returns only `BladeMask`, it rejects negative spellings
+    /// with a comptime error instead of discarding the sign.
     pub fn parseForDimension(comptime name: []const u8, comptime dimension: usize) !BladeMask {
-        return (try parser.parseSignedBlade(name, dimension)).mask;
+        comptime {
+            const checked = parser.expectSignedBlade(name, dimension);
+            if (checked.sign != .positive) {
+                @compileError("BladeMask.parseForDimension expects a positive signed-blade spelling");
+            }
+        }
+
+        const spec = try parser.parseSignedBlade(name, dimension);
+        return spec.mask;
     }
 
+    /// Parses a signed blade name and panics at comptime on parse failure.
+    ///
+    /// This helper also asserts the parsed sign is positive before returning the
+    /// mask, because the sign is intentionally not part of the return value.
     pub fn parsePanicking(comptime name: []const u8) BladeMask {
-        return parser.expectSignedBlade(name, max_supported_basis_vectors).mask;
+        const spec = comptime parser.expectSignedBlade(name, max_supported_basis_vectors);
+        if (spec.sign != .positive) {
+            @compileError("BladeMask.parsePanicking expects a positive signed-blade spelling");
+        }
+        return spec.mask;
     }
 
+    /// Parses a signed blade name for `dimension` and panics at comptime on
+    /// parse failure.
+    ///
+    /// This helper also asserts the parsed sign is positive before returning the
+    /// mask, because the sign is intentionally not part of the return value.
     pub fn parseForDimensionPanicking(comptime name: []const u8, comptime dimension: usize) BladeMask {
-        return parser.expectSignedBlade(name, dimension).mask;
+        const spec = comptime parser.expectSignedBlade(name, dimension);
+        if (spec.sign != .positive) {
+            @compileError("BladeMask.parseForDimensionPanicking expects a positive signed-blade spelling");
+        }
+        return spec.mask;
     }
 
     /// Returns the orientation sign produced by the Euclidean geometric product with `rhs`.
