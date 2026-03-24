@@ -713,9 +713,9 @@ pub fn fullSignedBladeFromIndicesWithSignature(
     }
 
     var spec = SignedBladeSpec{ .sign = .positive, .mask = BladeMask.init(0) };
-    for (indices) |one_based_index| {
-        std.debug.assert(1 <= one_based_index and one_based_index <= dimension);
-        blade_ops.applyBasisIndexWithSignature(&spec, one_based_index, sig);
+    for (indices) |basis_index| {
+        std.debug.assert(1 <= basis_index and basis_index <= dimension);
+        blade_ops.applyBasisIndexWithSignature(&spec, basis_index, sig);
     }
 
     var result = FullMultivector(T, sig).zero();

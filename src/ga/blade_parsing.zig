@@ -43,14 +43,20 @@ pub const SignedBladeNamingOptions = struct {
     /// Whether bracketed spellings like `e[10,2]` are accepted.
     allow_bracketed_form: bool = true,
 
+    /// Builds naming options from basis spans while keeping parser syntax
+    /// behavior at defaults (`basis_prefix = 'e'`, all forms enabled).
+    pub fn withBasisSpans(basis_spans: blades.BasisIndexSpans) SignedBladeNamingOptions {
+        return .{ .basis_spans = basis_spans };
+    }
+
     /// Default strict one-based naming (`e1..eN`) for dimension-only usage.
     pub fn euclidean(comptime dimension: usize) SignedBladeNamingOptions {
-        return .{ .basis_spans = .init(.{ .positive = .range(1, dimension) }) };
+        return withBasisSpans(.init(.{ .positive = .range(1, dimension) }));
     }
 
     /// Default strict one-based naming derived from a metric signature.
     pub fn fromSignature(comptime sig: blades.MetricSignature) SignedBladeNamingOptions {
-        return .{ .basis_spans = .fromSignature(sig) };
+        return withBasisSpans(.fromSignature(sig));
     }
 
     fn assertValid(self: SignedBladeNamingOptions, comptime dimension: usize) void {
@@ -94,10 +100,10 @@ fn parseBasisIndex(
 
 fn applyParsedIndex(
     spec: *SignedBladeSpec,
-    one_based_index: usize,
+    basis_index: usize,
     comptime dimension: usize,
 ) void {
-    blades.applyBasisIndex(spec, one_based_index, dimension);
+    blades.applyBasisIndex(spec, basis_index, dimension);
 }
 
 const SeparatedBladeSyntax = struct {
@@ -123,8 +129,8 @@ fn parseSeparatedSignedBlade(
     if (position >= syntax.end) return error.EmptySignedBlade;
 
     while (true) {
-        const one_based_index = try parseBasisIndex(name, &position, dimension, options);
-        applyParsedIndex(&spec, one_based_index, dimension);
+        const basis_index = try parseBasisIndex(name, &position, dimension, options);
+        applyParsedIndex(&spec, basis_index, dimension);
 
         if (position == syntax.end) return spec;
         if (name[position] != syntax.separator) return error.InvalidBasisSeparator;
@@ -175,9 +181,9 @@ fn parseCompactSignedBlade(
             '0'...'9' => @as(usize, char - '0'),
             else => return error.InvalidBasisIndex,
         };
-        const one_based_index = try options.resolveNamedBasisIndex(raw_index, dimension);
+        const basis_index = try options.resolveNamedBasisIndex(raw_index, dimension);
 
-        applyParsedIndex(&spec, one_based_index, dimension);
+        applyParsedIndex(&spec, basis_index, dimension);
     }
 
     return spec;
