@@ -158,7 +158,7 @@ pub const SignedBladeSpec = struct {
     mask: BladeMask,
 };
 
-/// Inclusive parser-visible span of basis-vector indices.
+/// Inclusive named-index span of basis-vector indices.
 ///
 /// Spans may include `0` (for names like `e0`) and are mapped onto
 /// internal sequential mask indices in signature-class order.
@@ -239,9 +239,9 @@ pub const BasisIndexSpans = struct {
         return false;
     }
 
-    /// Resolves one parser/programming-visible basis index to an internal
-    /// sequential one-based basis index used by blade masks.
-    pub fn resolveBasisIndex(self: BasisIndexSpans, parser_index: usize, comptime dimension: usize) ?usize {
+    /// Resolves one named basis index to an internal sequential one-based
+    /// basis index used by blade masks.
+    pub fn resolveNamedBasisIndex(self: BasisIndexSpans, named_index: usize, comptime dimension: usize) ?usize {
         @setEvalBranchQuota(10_000);
         self.assertValidForDimension(dimension);
 
@@ -250,8 +250,8 @@ pub const BasisIndexSpans = struct {
             if (self.spanFor(class)) |span| {
                 const span_len = span.len();
 
-                if (span.contains(parser_index)) {
-                    return next_internal_index + (parser_index - span.start);
+                if (span.contains(named_index)) {
+                    return next_internal_index + (named_index - span.start);
                 }
 
                 next_internal_index += span_len;
@@ -310,10 +310,10 @@ pub const BasisIndexSpans = struct {
 
         if (mapped_basis_count > dimension) {
             if (@inComptime()) {
-                @compileError("configured basis spans cover more parser indices than the algebra dimension");
+                @compileError("configured basis spans cover more named indices than the algebra dimension");
             }
             std.debug.panic(
-                "configured basis spans cover {} parser indices, exceeding dimension {}",
+                "configured basis spans cover {} named indices, exceeding dimension {}",
                 .{ mapped_basis_count, dimension },
             );
         }
@@ -939,16 +939,16 @@ test "basis index spans derive from metric signature partitions" {
     try std.testing.expect(!spans.contains(5));
 }
 
-test "basis index spans resolve parser-visible indices to sequential basis indices" {
+test "basis index spans resolve named indices to sequential basis indices" {
     const spans = BasisIndexSpans.init(.{
         .positive = .range(1, 3),
         .degenerate = .singleton(0),
     });
 
-    try std.testing.expectEqual(@as(?usize, 1), spans.resolveBasisIndex(1, 4));
-    try std.testing.expectEqual(@as(?usize, 3), spans.resolveBasisIndex(3, 4));
-    try std.testing.expectEqual(@as(?usize, 4), spans.resolveBasisIndex(0, 4));
-    try std.testing.expectEqual(@as(?usize, null), spans.resolveBasisIndex(4, 4));
+    try std.testing.expectEqual(@as(?usize, 1), spans.resolveNamedBasisIndex(1, 4));
+    try std.testing.expectEqual(@as(?usize, 3), spans.resolveNamedBasisIndex(3, 4));
+    try std.testing.expectEqual(@as(?usize, 4), spans.resolveNamedBasisIndex(0, 4));
+    try std.testing.expectEqual(@as(?usize, null), spans.resolveNamedBasisIndex(4, 4));
 }
 
 test "basis index span helpers construct ranges and singletons" {
