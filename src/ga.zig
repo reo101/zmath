@@ -27,6 +27,8 @@ pub const basisBladeMask = blades.basisBladeMask;
 pub const writeBladeMask = blades.writeBladeMask;
 
 pub const isSignedBlade = blade_parsing.isSignedBlade;
+pub const isMultivectorType = multivector.isMultivectorType;
+pub const ensureMultivector = multivector.ensureMultivector;
 
 pub fn parseSignedBlade(
     comptime name: []const u8,

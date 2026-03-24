@@ -59,8 +59,21 @@ fn isSignedIntType(comptime T: type) bool {
     };
 }
 
-fn isMultivectorType(comptime T: type) bool {
+pub fn isMultivectorType(comptime T: type) bool {
     return @hasDecl(T, "dimensions") and @hasDecl(T, "Coefficient") and @hasDecl(T, "blades") and @hasDecl(T, "metric_signature") and @hasField(T, "coeffs");
+}
+
+pub fn ensureMultivector(comptime T: type) void {
+    const prefix = "type " ++ @typeName(T) ++ " is not a valid multivector carrier: ";
+    if (!@hasDecl(T, "dimensions")) @compileError(prefix ++ "missing public constant 'dimensions'");
+    if (!@hasDecl(T, "Coefficient")) @compileError(prefix ++ "missing public constant 'Coefficient'");
+    if (!@hasDecl(T, "blades")) @compileError(prefix ++ "missing public constant 'blades'");
+    if (!@hasDecl(T, "metric_signature")) @compileError(prefix ++ "missing public constant 'metric_signature'");
+    if (!@hasField(T, "coeffs")) @compileError(prefix ++ "missing field 'coeffs'");
+
+    if (@TypeOf(T.dimensions) != usize) @compileError(prefix ++ "'dimensions' must be a usize");
+    if (@TypeOf(T.blades) != []const BladeMask) @compileError(prefix ++ "'blades' must be a []const BladeMask");
+    if (@TypeOf(T.metric_signature) != MetricSignature) @compileError(prefix ++ "'metric_signature' must be a MetricSignature");
 }
 
 fn isSimdCoeffType(comptime T: type) bool {
