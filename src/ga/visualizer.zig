@@ -1,5 +1,6 @@
 const std = @import("std");
 const zmath = @import("../ga.zig");
+const cga = @import("../flavours/cga.zig");
 
 /// A software canvas for rendering 2D wireframes.
 pub const Canvas = struct {
@@ -68,122 +69,77 @@ pub const Canvas = struct {
     }
 };
 
-/// Projects a point using PGA universal projection formula.
-/// P' = (Eye v Point) ^ Screen
-pub fn projectPGA(camera: anytype, p: anytype, canvas_width: usize, canvas_height: usize) ?[2]f32 {
+pub const ProjectionMode = enum { isometric, perspective, curved, conformal };
+
+/// Simple 3D-to-2D projection for the demo.
+pub fn projectSimple(p: anytype, canvas_width: usize, canvas_height: usize, zoom: f32, mode: ProjectionMode) ?[2]f32 {
     zmath.ensureMultivector(@TypeOf(p));
     
-    // ray = Eye v Point
-    const ray = camera.eye.join(p);
-    
-    // point_on_screen = ray ^ Screen
-    const p_prime_mv = ray.wedge(camera.screen);
-    
-    // The result should be a Point (grade 3 in PGA)
-    const p_prime = p_prime_mv.gradePart(3);
-    
-    // In 3D PGA with a 4D carrier, points are trivectors.
-    // We'll use the indices directly to avoid naming conflicts if necessary,
-    // or use the standard Euclidean names e1, e2, e3, e4.
-    // e123, e124, e134, e234 are the trivectors.
-    const w = p_prime.coeffNamed("e123");
-    if (@abs(w) < 1e-6) return null;
+    var x_raw = p.coeffNamed("e1");
+    var y_raw = p.coeffNamed("e2");
+    var z_raw = p.coeffNamed("e3");
 
-    const x_coord = p_prime.coeffNamed("e234") / w;
-    const y_coord = p_prime.coeffNamed("e134") / w; // Use e134 for y
-    const z_coord = p_prime.coeffNamed("e124") / w;
+    if (mode == .curved) {
+        // Apply a spherical/fisheye distortion
+        const r2 = x_raw * x_raw + y_raw * y_raw + z_raw * z_raw;
+        const distortion = 1.0 + r2 * 0.05;
+        x_raw /= distortion;
+        y_raw /= distortion;
+    } else if (mode == .conformal) {
+        // Map to CGA and invert in a sphere
+        const p_cga = cga.Point.init(x_raw, y_raw, z_raw);
+        // Sphere of radius 10 at origin
+        const S = cga.Sphere.init(0, 0, 0, 10.0);
+        // Spherical inversion: P' = S P S^-1
+        const inv_S = S.inverse() orelse S; // Should not be null for non-zero radius
+        const p_prime_cga = S.gp(p_cga).gp(inv_S).gradePart(1);
+        
+        // Map back to Euclidean (x,y,z)
+        // den = -(P . ninf)
+        const den = -p_prime_cga.dot(cga.ninf).scalarCoeff();
+        if (@abs(den) > 1e-6) {
+            x_raw = p_prime_cga.dot(cga.h.Basis.e(1)).scalarCoeff() / den;
+            y_raw = p_prime_cga.dot(cga.h.Basis.e(2)).scalarCoeff() / den;
+            z_raw = p_prime_cga.dot(cga.h.Basis.e(3)).scalarCoeff() / den;
+        }
+    }
 
-    // Vector from origin to projected point on screen
-    // Note: Screen is at z=0, so z_coord should be near 0
-    _ = z_coord;
+    // Move away from the screen
+    const z_offset: f32 = 10.0;
+    const dist = z_raw + z_offset;
+    
+    if ((mode == .perspective or mode == .curved or mode == .conformal) and dist <= 0.1) return null;
 
-    // Mapping to canvas: 
-    // We'll use a simple scale factor for visibility
-    const zoom: f32 = 10.0;
+    const scale = if (mode == .perspective or mode == .curved or mode == .conformal) (zoom / dist) else (zoom / 5.0);
+    
     const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
     
-    const x = (x_coord * zoom / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
-    const y = (1.0 - y_coord * zoom) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);
+    const x = (x_raw * scale / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
+    const y = (1.0 - y_raw * scale) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);
 
     return .{ x, y };
 }
 
-/// A camera that projects 3D vectors onto a 2D canvas using GA.
-pub fn Camera(comptime T: type) type {
-    return struct {
-        const Self = @This();
-        pos: [3]T,
-        target: [3]T,
-        up: [3]T,
-        fov: T,
+/// Projects a point using PGA universal projection formula.
+/// P' = (Eye v Point) ^ Screen
+pub fn projectPGA(camera: anytype, p: anytype, canvas_width: usize, canvas_height: usize, zoom: f32) ?[2]f32 {
+    zmath.ensureMultivector(@TypeOf(p));
+    
+    const ray = camera.eye.join(p);
+    const p_prime_mv = ray.wedge(camera.screen);
+    const p_prime = p_prime_mv.gradePart(3);
+    
+    const w = p_prime.coeffNamed("e123");
+    if (@abs(w) < 1e-6) return null;
 
-        pub fn init(pos: anytype, target: anytype, up: anytype, fov: T) Self {
-            zmath.ensureMultivector(@TypeOf(pos));
-            zmath.ensureMultivector(@TypeOf(target));
-            zmath.ensureMultivector(@TypeOf(up));
+    const x_coord = p_prime.coeffNamed("e234") / w;
+    const y_coord = p_prime.coeffNamed("e314") / w;
 
-            return .{
-                .pos = .{ pos.coeffNamed("e1"), pos.coeffNamed("e2"), pos.coeffNamed("e3") },
-                .target = .{ target.coeffNamed("e1"), target.coeffNamed("e2"), target.coeffNamed("e3") },
-                .up = .{ up.coeffNamed("e1"), up.coeffNamed("e2"), up.coeffNamed("e3") },
-                .fov = fov,
-            };
-        }
+    const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
+    
+    // Scale coordinates to fit roughly in [-1, 1] then map to pixels
+    const x = (x_coord * zoom / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
+    const y = (1.0 - y_coord * zoom) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);
 
-        /// Projects a 3D point onto a 2D coordinate using perspective projection.
-        pub fn project(self: Self, point: anytype) ?[2]T {
-            return self.projectInternal(point, true);
-        }
-
-        /// Projects a 3D point onto a 2D coordinate using parallel (orthographic) projection.
-        pub fn projectParallel(self: Self, point: anytype) ?[2]T {
-            return self.projectInternal(point, false);
-        }
-
-        fn projectInternal(self: Self, point: anytype, perspective: bool) ?[2]T {
-            zmath.ensureMultivector(@TypeOf(point));
-            
-            const Cl3 = zmath.Algebra(zmath.euclideanSignature(3));
-            const h = Cl3.Instantiate(T);
-
-            const cam_pos = h.Vector.init(.{ self.pos[0], self.pos[1], self.pos[2] });
-            const cam_target = h.Vector.init(.{ self.target[0], self.target[1], self.target[2] });
-            const cam_up = h.Vector.init(.{ self.up[0], self.up[1], self.up[2] });
-
-            const forward = zmath.normalized(cam_target.sub(cam_pos));
-            const relative = point.sub(cam_pos);
-            
-            const depth = relative.dot(forward).scalarCoeff();
-            if (perspective and depth <= 0.1) return null;
-
-            // Planar component (rejection from forward)
-            const planar = relative.sub(forward.scale(depth));
-            
-            const right_mv = zmath.dual(forward.outerProduct(cam_up));
-            const right = zmath.normalized(right_mv.gradePart(1));
-            
-            const up_mv = zmath.dual(right.outerProduct(forward));
-            const actual_up = zmath.normalized(up_mv.gradePart(1));
-
-            const divisor = if (perspective) depth * @tan(self.fov / 2) else 2.0; // Scale factor for ortho
-            const x = planar.dot(right).scalarCoeff() / divisor;
-            const y = planar.dot(actual_up).scalarCoeff() / divisor;
-
-            return .{ x, y };
-        }
-
-        /// Projects a point from an arbitrary dimension onto a 2D plane defined by two unit basis vectors.
-        /// This is a parallel projection.
-        pub fn projectND(point: anytype, e_x: anytype, e_y: anytype) [2]T {
-            zmath.ensureMultivector(@TypeOf(point));
-            zmath.ensureMultivector(@TypeOf(e_x));
-            zmath.ensureMultivector(@TypeOf(e_y));
-            
-            // x = point . e_x, y = point . e_y
-            return .{
-                point.dot(e_x).scalarCoeff(),
-                point.dot(e_y).scalarCoeff(),
-            };
-        }
-    };
+    return .{ x, y };
 }

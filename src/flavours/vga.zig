@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const ga = @import("ga.zig");
+pub const ga = @import("../ga.zig");
 
 const algebra = ga.Algebra(ga.euclideanSignature(2));
 pub const h = algebra.Instantiate(f64);
