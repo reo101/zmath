@@ -1,0 +1,204 @@
+const std = @import("std");
+const ga = @import("../ga.zig");
+
+pub const DirectionProjection = enum {
+    gnomonic,
+    stereographic,
+    orthographic,
+    wrapped,
+};
+
+pub const EuclideanProjection = enum {
+    perspective,
+    isometric,
+};
+
+pub fn directionProjectionLabel(projection: DirectionProjection) []const u8 {
+    return switch (projection) {
+        .gnomonic => "gnom",
+        .stereographic => "stereo",
+        .orthographic => "ortho",
+        .wrapped => "wrap",
+    };
+}
+
+pub fn projectEuclidean(
+    p: anytype,
+    canvas_width: usize,
+    canvas_height: usize,
+    zoom: f32,
+    projection: EuclideanProjection,
+) ?[2]f32 {
+    ga.ensureMultivector(@TypeOf(p));
+
+    const x_raw = p.coeffNamed("e1");
+    const y_raw = p.coeffNamed("e2");
+    const z_raw = p.coeffNamed("e3");
+
+    const z_offset: f32 = switch (projection) {
+        .perspective => 30.0,
+        .isometric => 6.0,
+    };
+    const dist = z_raw + z_offset;
+    if (projection == .perspective and dist <= 0.1) return null;
+
+    const scale = if (projection == .perspective) (zoom / dist) else (zoom / z_offset);
+    const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
+
+    const x = (x_raw * scale / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
+    const y = (1.0 - y_raw * scale) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);
+    return .{ x, y };
+}
+
+pub fn projectDirection(
+    x_dir: f32,
+    y_dir: f32,
+    z_dir: f32,
+    canvas_width: usize,
+    canvas_height: usize,
+    zoom: f32,
+) ?[2]f32 {
+    if (z_dir <= 1e-4) return null;
+
+    const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
+    const x = (x_dir * zoom / (z_dir * aspect) + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
+    const y = (1.0 - y_dir * zoom / z_dir) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);
+    return .{ x, y };
+}
+
+pub fn projectStereographicDirection(
+    x_dir: f32,
+    y_dir: f32,
+    z_dir: f32,
+    canvas_width: usize,
+    canvas_height: usize,
+    zoom: f32,
+) ?[2]f32 {
+    const radius = @sqrt(x_dir * x_dir + y_dir * y_dir + z_dir * z_dir);
+    if (radius <= 1e-6) return null;
+
+    const nx = x_dir / radius;
+    const ny = y_dir / radius;
+    const nz = z_dir / radius;
+    const denom = 1.0 + nz;
+    if (denom <= 1e-4) return null;
+
+    const x_raw = nx * (2.0 / denom);
+    const y_raw = ny * (2.0 / denom);
+    const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
+    const x = (x_raw * zoom / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
+    const y = (1.0 - y_raw * zoom) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);
+    return .{ x, y };
+}
+
+pub fn projectOrthographicDirection(
+    x_dir: f32,
+    y_dir: f32,
+    z_dir: f32,
+    canvas_width: usize,
+    canvas_height: usize,
+    zoom: f32,
+) ?[2]f32 {
+    const radius = @sqrt(x_dir * x_dir + y_dir * y_dir + z_dir * z_dir);
+    if (radius <= 1e-6) return null;
+
+    const nx = x_dir / radius;
+    const ny = y_dir / radius;
+    const nz = z_dir / radius;
+    if (nz <= 1e-4) return null;
+
+    const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
+    const x = (nx * zoom / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
+    const y = (1.0 - ny * zoom) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);
+    return .{ x, y };
+}
+
+pub fn projectAngularDirection(
+    x_dir: f32,
+    y_dir: f32,
+    z_dir: f32,
+    canvas_width: usize,
+    canvas_height: usize,
+    zoom: f32,
+) ?[2]f32 {
+    if (z_dir <= 1e-4) return null;
+
+    const radius = @sqrt(x_dir * x_dir + y_dir * y_dir + z_dir * z_dir);
+    if (radius <= 1e-6) return null;
+
+    const nx = x_dir / radius;
+    const ny = y_dir / radius;
+    const nz = z_dir / radius;
+    const lateral = @sqrt(nx * nx + nz * nz);
+    const x_raw = std.math.atan2(nx, nz);
+    const y_raw = std.math.atan2(ny, @max(lateral, 1e-6));
+
+    const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
+    const x = (x_raw * zoom / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
+    const y = (1.0 - y_raw * zoom) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);
+    return .{ x, y };
+}
+
+pub fn projectWrappedAngularDirection(
+    x_dir: f32,
+    y_dir: f32,
+    z_dir: f32,
+    canvas_width: usize,
+    canvas_height: usize,
+    zoom: f32,
+) ?[2]f32 {
+    const radius = @sqrt(x_dir * x_dir + y_dir * y_dir + z_dir * z_dir);
+    if (radius <= 1e-6) return null;
+
+    const nx = x_dir / radius;
+    const ny = y_dir / radius;
+    const nz = z_dir / radius;
+    const lateral = @sqrt(nx * nx + nz * nz);
+
+    const azimuth = std.math.atan2(nx, nz);
+    const elevation = std.math.atan2(ny, @max(lateral, 1e-6));
+    const x_raw = (azimuth / @as(f32, std.math.pi)) * zoom;
+    const y_raw = (elevation / (@as(f32, std.math.pi) * 0.5)) * zoom;
+
+    const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
+    const x = (x_raw / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
+    const y = (1.0 - y_raw) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);
+    return .{ x, y };
+}
+
+pub fn projectDirectionWith(
+    projection: DirectionProjection,
+    x_dir: f32,
+    y_dir: f32,
+    z_dir: f32,
+    canvas_width: usize,
+    canvas_height: usize,
+    zoom: f32,
+) ?[2]f32 {
+    return switch (projection) {
+        .gnomonic => projectDirection(x_dir, y_dir, z_dir, canvas_width, canvas_height, zoom),
+        .stereographic => projectStereographicDirection(x_dir, y_dir, z_dir, canvas_width, canvas_height, zoom),
+        .orthographic => projectOrthographicDirection(x_dir, y_dir, z_dir, canvas_width, canvas_height, zoom),
+        .wrapped => projectWrappedAngularDirection(x_dir, y_dir, z_dir, canvas_width, canvas_height, zoom),
+    };
+}
+
+/// Projects a point using PGA universal projection formula.
+/// P' = (Eye v Point) ^ Screen
+pub fn projectPGA(camera: anytype, p: anytype, canvas_width: usize, canvas_height: usize, zoom: f32) ?[2]f32 {
+    ga.ensureMultivector(@TypeOf(p));
+
+    const ray = camera.eye.join(p);
+    const p_prime_mv = ray.wedge(camera.screen);
+    const p_prime = p_prime_mv.gradePart(3);
+
+    const w = p_prime.coeffNamed("e123");
+    if (@abs(w) < 1e-6) return null;
+
+    const x_coord = p_prime.coeffNamed("e234") / w;
+    const y_coord = p_prime.coeffNamed("e314") / w;
+    const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
+    const x = (x_coord * zoom / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
+    const y = (1.0 - y_coord * zoom) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);
+    return .{ x, y };
+}
