@@ -155,6 +155,41 @@ pub fn build(b: *std.Build) void {
     const demo_step = b.step("demo", "Run the demo");
     demo_step.dependOn(&demo_run_cmd.step);
 
+    const raylib_dep = b.dependency("raylib", .{
+        .target = target,
+        .optimize = optimize,
+        .linkage = .dynamic,
+        .raudio = false,
+        .rmodels = false,
+        .linux_display_backend = .X11,
+    });
+    const raylib = raylib_dep.artifact("raylib");
+
+    const demo_raylib_exe = b.addExecutable(.{
+        .name = "zmath-demo-raylib",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/demos/raylib_main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{
+                .{
+                    .name = "zmath",
+                    .module = zmath,
+                },
+            },
+        }),
+    });
+    demo_raylib_exe.root_module.linkLibrary(raylib);
+    demo_raylib_exe.root_module.addIncludePath(raylib_dep.path("src"));
+
+    const demo_raylib_build_step = b.step("demo-raylib-build", "Build the raylib demo backend");
+    demo_raylib_build_step.dependOn(&demo_raylib_exe.step);
+
+    const demo_raylib_run_cmd = b.addRunArtifact(demo_raylib_exe);
+    const demo_raylib_step = b.step("demo-raylib", "Run the demo with the raylib backend");
+    demo_raylib_step.dependOn(&demo_raylib_run_cmd.step);
+
     const exe_tests = b.addTest(.{
         .name = "zmath-cli",
         .root_module = exe.root_module,
