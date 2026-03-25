@@ -6,11 +6,11 @@ const epga = @import("zmath").epga;
 pub const Vec3 = [3]f32;
 pub const Vec4 = [4]f32;
 
-pub const Metric = enum { hyperbolic, elliptic };
+pub const Metric = enum { hyperbolic, elliptic, spherical };
 
 pub const Params = struct {
     // Constant-curvature radius `R`.
-    // Hyperbolic curvature is `-1 / R^2`; elliptic curvature is `+1 / R^2`.
+    // Hyperbolic curvature is `-1 / R^2`; elliptic/spherical curvature is `+1 / R^2`.
     radius: f32 = 1.0,
     angular_zoom: f32,
 };
@@ -44,7 +44,7 @@ fn scale4(v: Vec4, s: f32) Vec4 {
 fn metricDot(metric: Metric, a: Vec4, b: Vec4) f32 {
     return switch (metric) {
         .hyperbolic => -a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3],
-        .elliptic => a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3],
+        .elliptic, .spherical => a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3],
     };
 }
 
@@ -87,7 +87,78 @@ pub fn embedPoint(metric: Metric, params: Params, chart: Vec3) ?Vec4 {
             const point = hpga.Point.proper(scaled[0], scaled[1], scaled[2]) orelse return null;
             return hpga.ambientCoords(point);
         },
-        .elliptic => epga.ambientCoords(epga.Point.proper(scaled[0], scaled[1], scaled[2])),
+        .elliptic, .spherical => epga.ambientCoords(epga.Point.proper(scaled[0], scaled[1], scaled[2])),
+    };
+}
+
+pub fn chartCoords(metric: Metric, params: Params, ambient: Vec4) Vec3 {
+    var point = ambient;
+    if (metric == .elliptic and point[0] < 0.0) {
+        point = scale4(point, -1.0);
+    }
+
+    const inv_w = params.radius / @max(point[0], 1e-6);
+    return .{
+        point[1] * inv_w,
+        point[2] * inv_w,
+        point[3] * inv_w,
+    };
+}
+
+fn normalizeAmbient(metric: Metric, ambient: Vec4) Vec4 {
+    const norm2 = metricDot(metric, ambient, ambient);
+    const inv = switch (metric) {
+        .hyperbolic => 1.0 / @sqrt(@max(-norm2, 1e-6)),
+        .elliptic, .spherical => 1.0 / @sqrt(@max(norm2, 1e-6)),
+    };
+    return scale4(ambient, inv);
+}
+
+fn transportedTangent(metric: Metric, old_direction: Vec4, new_direction: Vec4, tangent: Vec4) Vec4 {
+    const along = metricDot(metric, tangent, old_direction);
+    return add4(
+        sub4(tangent, scale4(old_direction, along)),
+        scale4(new_direction, along),
+    );
+}
+
+// Intrinsic geodesic interpolation in the ambient constant-curvature models.
+// References:
+// https://arxiv.org/abs/1310.2713
+// https://arxiv.org/pdf/1602.08562
+pub fn geodesicChartPoint(metric: Metric, params: Params, a_chart: Vec3, b_chart: Vec3, t: f32) ?Vec3 {
+    const a = embedPoint(metric, params, a_chart) orelse return null;
+    var b = embedPoint(metric, params, b_chart) orelse return null;
+
+    return switch (metric) {
+        .hyperbolic => {
+            const cosh_omega = @max(-metricDot(metric, a, b), 1.0);
+            const omega = std.math.acosh(cosh_omega);
+            if (omega <= 1e-5) return a_chart;
+
+            const inv_denom = 1.0 / std.math.sinh(omega);
+            const p = add4(
+                scale4(a, std.math.sinh((1.0 - t) * omega) * inv_denom),
+                scale4(b, std.math.sinh(t * omega) * inv_denom),
+            );
+            return chartCoords(metric, params, normalizeAmbient(metric, p));
+        },
+        .elliptic, .spherical => {
+            if (metric == .elliptic and metricDot(metric, a, b) < 0.0) {
+                b = scale4(b, -1.0);
+            }
+
+            const cos_omega = std.math.clamp(metricDot(metric, a, b), -1.0, 1.0);
+            const omega = std.math.acos(cos_omega);
+            if (omega <= 1e-5) return a_chart;
+
+            const inv_denom = 1.0 / @sin(omega);
+            const p = add4(
+                scale4(a, @sin((1.0 - t) * omega) * inv_denom),
+                scale4(b, @sin(t * omega) * inv_denom),
+            );
+            return chartCoords(metric, params, normalizeAmbient(metric, p));
+        },
     };
 }
 
@@ -103,7 +174,7 @@ fn geodesicDirection(metric: Metric, eye: Vec4, target: Vec4) ?Vec4 {
     const inner = metricDot(metric, eye, adjusted_target);
     const tangent = switch (metric) {
         .hyperbolic => add4(adjusted_target, scale4(eye, inner)),
-        .elliptic => sub4(adjusted_target, scale4(eye, inner)),
+        .elliptic, .spherical => sub4(adjusted_target, scale4(eye, inner)),
     };
     return tryNormalizeTangent(metric, tangent);
 }
@@ -160,39 +231,58 @@ pub fn pitch(camera: *Camera, metric: Metric, angle: f32) void {
 // References:
 // https://arxiv.org/abs/1310.2713
 // https://arxiv.org/pdf/1602.08562
-fn moveAlong(camera: *Camera, metric: Metric, params: Params, direction: *Vec4, distance: f32) void {
+pub fn moveAlongDirection(camera: *Camera, metric: Metric, params: Params, direction: Vec4, distance: f32) void {
     const old_position = camera.position;
-    const old_direction = direction.*;
+    const old_direction = tryNormalizeTangent(metric, projectToTangent(metric, old_position, direction)) orelse return;
+    const old_forward = camera.forward;
+    const old_right = camera.right;
+    const old_up = camera.up;
     const normalized_distance = distance / params.radius;
+    var new_position: Vec4 = undefined;
+    var new_direction: Vec4 = undefined;
 
     switch (metric) {
         .hyperbolic => {
             const c = std.math.cosh(normalized_distance);
             const s = std.math.sinh(normalized_distance);
-            camera.position = add4(scale4(old_position, c), scale4(old_direction, s));
-            direction.* = add4(scale4(old_position, s), scale4(old_direction, c));
+            new_position = add4(scale4(old_position, c), scale4(old_direction, s));
+            new_direction = add4(scale4(old_position, s), scale4(old_direction, c));
         },
-        .elliptic => {
+        .elliptic, .spherical => {
             const c = @cos(normalized_distance);
             const s = @sin(normalized_distance);
-            camera.position = add4(scale4(old_position, c), scale4(old_direction, s));
-            direction.* = add4(scale4(old_direction, c), scale4(old_position, -s));
+            new_position = add4(scale4(old_position, c), scale4(old_direction, s));
+            new_direction = add4(scale4(old_direction, c), scale4(old_position, -s));
         },
     }
 
+    camera.position = new_position;
+    camera.forward = transportedTangent(metric, old_direction, new_direction, old_forward);
+    camera.right = transportedTangent(metric, old_direction, new_direction, old_right);
+    camera.up = transportedTangent(metric, old_direction, new_direction, old_up);
     reorthonormalize(metric, camera);
 }
 
 pub fn moveForward(camera: *Camera, metric: Metric, params: Params, distance: f32) void {
-    moveAlong(camera, metric, params, &camera.forward, distance);
+    moveAlongDirection(camera, metric, params, camera.forward, distance);
 }
 
 pub fn moveRight(camera: *Camera, metric: Metric, params: Params, distance: f32) void {
-    moveAlong(camera, metric, params, &camera.right, distance);
+    moveAlongDirection(camera, metric, params, camera.right, distance);
+}
+
+pub fn worldHeadingDirection(metric: Metric, camera: Camera, x_heading: f32, z_heading: f32) ?Vec4 {
+    const candidate = Vec4{ 0.0, x_heading, 0.0, z_heading };
+    return tryNormalizeTangent(metric, projectToTangent(metric, camera.position, candidate));
+}
+
+fn projectSampleDirection(projection: visualizer.DirectionProjection, x_dir: f32, y_dir: f32, z_dir: f32, canvas_width: usize, canvas_height: usize, zoom: f32) ?[2]f32 {
+    return visualizer.projectDirectionWith(projection, x_dir, y_dir, z_dir, canvas_width, canvas_height, zoom);
 }
 
 pub fn projectPoint(
     metric: Metric,
+    projection: visualizer.DirectionProjection,
     params: Params,
     camera: Camera,
     chart: Vec3,
@@ -206,7 +296,7 @@ pub fn projectPoint(
     const y = metricDot(metric, ray, camera.up);
     const z = metricDot(metric, ray, camera.forward);
 
-    return visualizer.projectAngularDirection(x, y, z, canvas_width, canvas_height, params.angular_zoom);
+    return projectSampleDirection(projection, x, y, z, canvas_width, canvas_height, params.angular_zoom);
 }
 
 pub fn samplePoint(metric: Metric, params: Params, camera: Camera, chart: Vec3) ?Sample {
@@ -217,6 +307,7 @@ pub fn samplePoint(metric: Metric, params: Params, camera: Camera, chart: Vec3) 
     const distance = switch (metric) {
         .hyperbolic => params.radius * std.math.acosh(@max(-inner, 1.0)),
         .elliptic => params.radius * std.math.acos(@min(@abs(inner), 1.0)),
+        .spherical => params.radius * std.math.acos(std.math.clamp(inner, -1.0, 1.0)),
     };
 
     return .{
@@ -227,6 +318,6 @@ pub fn samplePoint(metric: Metric, params: Params, camera: Camera, chart: Vec3) 
     };
 }
 
-pub fn projectSample(sample: Sample, canvas_width: usize, canvas_height: usize, zoom: f32) ?[2]f32 {
-    return visualizer.projectAngularDirection(sample.x_dir, sample.y_dir, sample.z_dir, canvas_width, canvas_height, zoom);
+pub fn projectSample(projection: visualizer.DirectionProjection, sample: Sample, canvas_width: usize, canvas_height: usize, zoom: f32) ?[2]f32 {
+    return projectSampleDirection(projection, sample.x_dir, sample.y_dir, sample.z_dir, canvas_width, canvas_height, zoom);
 }
