@@ -11,6 +11,7 @@ pub const Canvas = struct {
     width: usize,
     height: usize,
     subpixels: []u8,
+    markers: []u8,
     allocator: std.mem.Allocator,
 
     fn subpixelWidth(self: Canvas) usize {
@@ -97,21 +98,26 @@ pub const Canvas = struct {
 
     pub fn init(allocator: std.mem.Allocator, width: usize, height: usize) !Canvas {
         const subpixels = try allocator.alloc(u8, width * height * subpixel_x * subpixel_y);
+        const markers = try allocator.alloc(u8, width * height);
         @memset(subpixels, 0);
+        @memset(markers, 0);
         return .{
             .allocator = allocator,
             .width = width,
             .height = height,
             .subpixels = subpixels,
+            .markers = markers,
         };
     }
 
     pub fn deinit(self: *Canvas) void {
         self.allocator.free(self.subpixels);
+        self.allocator.free(self.markers);
     }
 
     pub fn clear(self: *Canvas) void {
         @memset(self.subpixels, 0);
+        @memset(self.markers, 0);
     }
 
     pub fn setPixel(self: *Canvas, x: isize, y: isize, char: u8) void {
@@ -148,6 +154,17 @@ pub const Canvas = struct {
         }
     }
 
+    pub fn setMarker(self: *Canvas, x_f: f32, y_f: f32, color: MarkerColor) void {
+        const x: isize = @intFromFloat(@round(x_f));
+        const y: isize = @intFromFloat(@round(y_f));
+        const width_i: isize = @intCast(self.width);
+        const height_i: isize = @intCast(self.height);
+        if (x < 0 or x >= width_i or y < 0 or y >= height_i) return;
+
+        const idx: usize = @intCast(y * width_i + x);
+        self.markers[idx] = @intFromEnum(color);
+    }
+
     pub fn writeToWriter(self: Canvas, writer: anytype) !void {
         return self.writeRowsToWriter(writer, self.height);
     }
@@ -158,7 +175,12 @@ pub const Canvas = struct {
         while (y < output_rows) : (y += 1) {
             var x: usize = 0;
             while (x < self.width) : (x += 1) {
-                try writer.writeAll(self.glyphForCell(x, y));
+                const marker = @as(MarkerColor, @enumFromInt(self.markers[y * self.width + x]));
+                switch (marker) {
+                    .none => try writer.writeAll(self.glyphForCell(x, y)),
+                    .near => try writer.writeAll("\x1B[31m●\x1B[0m"),
+                    .far => try writer.writeAll("\x1B[32m●\x1B[0m"),
+                }
             }
             if (y + 1 < output_rows) {
                 try writer.writeByte('\n');
@@ -167,7 +189,14 @@ pub const Canvas = struct {
     }
 };
 
+pub const MarkerColor = enum(u8) {
+    none = 0,
+    near = 1,
+    far = 2,
+};
+
 pub const ProjectionMode = enum { perspective, isometric, hyperbolic, spherical };
+pub const hyperbolic_curvature: f32 = 1.75;
 
 /// Simple 3D-to-2D projection for the demo.
 pub fn projectSimple(p: anytype, canvas_width: usize, canvas_height: usize, zoom: f32, mode: ProjectionMode) ?[2]f32 {
@@ -181,10 +210,9 @@ pub fn projectSimple(p: anytype, canvas_width: usize, canvas_height: usize, zoom
         .perspective, .isometric => {},
         .hyperbolic => {
             // Poincare-ball-like compression into a bounded domain.
-            const curvature: f32 = 1.35;
-            x_raw *= curvature;
-            y_raw *= curvature;
-            z_raw *= curvature;
+            x_raw *= hyperbolic_curvature;
+            y_raw *= hyperbolic_curvature;
+            z_raw *= hyperbolic_curvature;
             const r2 = x_raw * x_raw + y_raw * y_raw + z_raw * z_raw;
             const w = @sqrt(1.0 + r2);
             const factor = 1.0 / (1.0 + w);
@@ -193,19 +221,17 @@ pub fn projectSimple(p: anytype, canvas_width: usize, canvas_height: usize, zoom
             z_raw *= factor;
         },
         .spherical => {
-            // Stereographic projection from the backward viewing direction after normalization.
+            // Project onto the viewing sphere using angular coordinates.
             const radius = @sqrt(x_raw * x_raw + y_raw * y_raw + z_raw * z_raw);
             if (radius <= 1e-6) return null;
 
             const nx = x_raw / radius;
             const ny = y_raw / radius;
             const nz = z_raw / radius;
-
-            const pole_softening: f32 = 0.04;
-            const denom = 1.0 + nz + pole_softening;
-            x_raw = nx / denom;
-            y_raw = ny / denom;
-            z_raw = nz;
+            const lateral = @sqrt(nx * nx + nz * nz);
+            x_raw = std.math.atan2(nx, nz);
+            y_raw = std.math.atan2(ny, @max(lateral, 1e-6));
+            z_raw = 0.0;
         },
     }
 
@@ -213,9 +239,9 @@ pub fn projectSimple(p: anytype, canvas_width: usize, canvas_height: usize, zoom
         // Pull perspective-style modes farther back so depth motion causes
         // less aggressive zoom-in as geometry approaches the camera.
         .perspective => 30.0,
-        .hyperbolic => 11.0,
+        .hyperbolic => 8.8,
         .isometric => 6.0,
-        .spherical => 2.2,
+        .spherical => 1.0,
     };
     const dist = z_raw + z_offset;
 
@@ -224,13 +250,51 @@ pub fn projectSimple(p: anytype, canvas_width: usize, canvas_height: usize, zoom
 
     // Normalize scale across modes. Spherical gets an extra shrink factor so
     // the heavily distorted opposite pole stays in frame more often.
-    const base_scale = if (mode == .perspective or mode == .hyperbolic or mode == .spherical) (zoom / dist) else (zoom / z_offset);
+    const base_scale = if (mode == .perspective or mode == .hyperbolic) (zoom / dist) else (zoom / z_offset);
     const scale = base_scale;
 
     const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
 
     const x = (x_raw * scale / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
     const y = (1.0 - y_raw * scale) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);
+
+    return .{ x, y };
+}
+
+pub fn projectDirection(x_dir: f32, y_dir: f32, z_dir: f32, canvas_width: usize, canvas_height: usize, zoom: f32) ?[2]f32 {
+    if (z_dir <= 1e-4) return null;
+
+    const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
+    const x = (x_dir * zoom / (z_dir * aspect) + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
+    const y = (1.0 - y_dir * zoom / z_dir) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);
+
+    return .{ x, y };
+}
+
+pub fn projectAngularDirection(
+    x_dir: f32,
+    y_dir: f32,
+    z_dir: f32,
+    canvas_width: usize,
+    canvas_height: usize,
+    zoom: f32,
+) ?[2]f32 {
+    if (z_dir <= 1e-4) return null;
+
+    const radius = @sqrt(x_dir * x_dir + y_dir * y_dir + z_dir * z_dir);
+    if (radius <= 1e-6) return null;
+
+    const nx = x_dir / radius;
+    const ny = y_dir / radius;
+    const nz = z_dir / radius;
+    const lateral = @sqrt(nx * nx + nz * nz);
+
+    const x_raw = std.math.atan2(nx, nz);
+    const y_raw = std.math.atan2(ny, @max(lateral, 1e-6));
+
+    const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
+    const x = (x_raw * zoom / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
+    const y = (1.0 - y_raw * zoom) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);
 
     return .{ x, y };
 }
