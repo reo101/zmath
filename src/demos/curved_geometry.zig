@@ -276,6 +276,29 @@ pub fn worldHeadingDirection(metric: Metric, camera: Camera, x_heading: f32, z_h
     return tryNormalizeTangent(metric, projectToTangent(metric, camera.position, candidate));
 }
 
+pub fn orientFromHeadingPitch(
+    metric: Metric,
+    camera: *Camera,
+    x_heading: f32,
+    z_heading: f32,
+    pitch_angle: f32,
+) void {
+    const horizontal_forward = worldHeadingDirection(metric, camera.*, x_heading, z_heading) orelse return;
+    const horizontal_right = worldHeadingDirection(metric, camera.*, z_heading, -x_heading) orelse return;
+    const world_up = orthonormalCandidate(metric, camera.position, .{ 0.0, 0.0, 1.0, 0.0 }, &.{}) orelse
+        orthonormalCandidate(metric, camera.position, .{ 0.0, 0.0, 0.0, 1.0 }, &.{}) orelse
+        return;
+
+    camera.forward = add4(
+        scale4(horizontal_forward, @cos(pitch_angle)),
+        scale4(world_up, @sin(pitch_angle)),
+    );
+    camera.forward = tryNormalizeTangent(metric, projectToTangent(metric, camera.position, camera.forward)) orelse return;
+    camera.right = orthonormalCandidate(metric, camera.position, horizontal_right, &.{camera.forward}) orelse return;
+    camera.up = orthonormalCandidate(metric, camera.position, world_up, &.{ camera.forward, camera.right }) orelse return;
+    reorthonormalize(metric, camera);
+}
+
 fn projectSampleDirection(projection: visualizer.DirectionProjection, x_dir: f32, y_dir: f32, z_dir: f32, canvas_width: usize, canvas_height: usize, zoom: f32) ?[2]f32 {
     return visualizer.projectDirectionWith(projection, x_dir, y_dir, z_dir, canvas_width, canvas_height, zoom);
 }

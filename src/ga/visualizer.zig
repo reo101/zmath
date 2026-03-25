@@ -7,11 +7,15 @@ pub const Canvas = struct {
     const subpixel_y: usize = 4;
     const max_subpixel_intensity: u8 = 4;
     const dot_ramp = [_][]const u8{ " ", "⠁", "⠃", "⠇", "⠏" };
+    const fill_ramp = [_][]const u8{ " ", "░", "▒", "▓", "█" };
 
     width: usize,
     height: usize,
     subpixels: []u8,
     tones: []u8,
+    fill_shades: []u8,
+    fill_tones: []u8,
+    fill_depths: []f32,
     markers: []u8,
     allocator: std.mem.Allocator,
 
@@ -119,9 +123,15 @@ pub const Canvas = struct {
     pub fn init(allocator: std.mem.Allocator, width: usize, height: usize) !Canvas {
         const subpixels = try allocator.alloc(u8, width * height * subpixel_x * subpixel_y);
         const tones = try allocator.alloc(u8, width * height * subpixel_x * subpixel_y);
+        const fill_shades = try allocator.alloc(u8, width * height);
+        const fill_tones = try allocator.alloc(u8, width * height);
+        const fill_depths = try allocator.alloc(f32, width * height);
         const markers = try allocator.alloc(u8, width * height);
         @memset(subpixels, 0);
         @memset(tones, 0);
+        @memset(fill_shades, 0);
+        @memset(fill_tones, 0);
+        @memset(fill_depths, std.math.inf(f32));
         @memset(markers, 0);
         return .{
             .allocator = allocator,
@@ -129,6 +139,9 @@ pub const Canvas = struct {
             .height = height,
             .subpixels = subpixels,
             .tones = tones,
+            .fill_shades = fill_shades,
+            .fill_tones = fill_tones,
+            .fill_depths = fill_depths,
             .markers = markers,
         };
     }
@@ -136,12 +149,18 @@ pub const Canvas = struct {
     pub fn deinit(self: *Canvas) void {
         self.allocator.free(self.subpixels);
         self.allocator.free(self.tones);
+        self.allocator.free(self.fill_shades);
+        self.allocator.free(self.fill_tones);
+        self.allocator.free(self.fill_depths);
         self.allocator.free(self.markers);
     }
 
     pub fn clear(self: *Canvas) void {
         @memset(self.subpixels, 0);
         @memset(self.tones, 0);
+        @memset(self.fill_shades, 0);
+        @memset(self.fill_tones, 0);
+        @memset(self.fill_depths, std.math.inf(f32));
         @memset(self.markers, 0);
     }
 
@@ -190,6 +209,23 @@ pub const Canvas = struct {
         self.markers[idx] = @intFromEnum(color);
     }
 
+    pub fn setFill(self: *Canvas, x_f: f32, y_f: f32, shade: u8, tone: u8, depth: f32) void {
+        if (shade == 0) return;
+
+        const x: isize = @intFromFloat(@round(x_f));
+        const y: isize = @intFromFloat(@round(y_f));
+        const width_i: isize = @intCast(self.width);
+        const height_i: isize = @intCast(self.height);
+        if (x < 0 or x >= width_i or y < 0 or y >= height_i) return;
+
+        const idx: usize = @intCast(y * width_i + x);
+        if (depth >= self.fill_depths[idx]) return;
+
+        self.fill_depths[idx] = depth;
+        self.fill_shades[idx] = @min(shade, fill_ramp.len - 1);
+        self.fill_tones[idx] = tone;
+    }
+
     pub fn writeToWriter(self: Canvas, writer: anytype) !void {
         return self.writeRowsToWriter(writer, self.height);
     }
@@ -201,20 +237,29 @@ pub const Canvas = struct {
             var x: usize = 0;
             while (x < self.width) : (x += 1) {
                 const glyph = self.glyphForCell(x, y);
+                const fill_shade = self.fill_shades[y * self.width + x];
+                const fill_tone = self.fill_tones[y * self.width + x];
                 const marker = @as(MarkerColor, @enumFromInt(self.markers[y * self.width + x]));
                 switch (marker) {
                     .none => {
                         if (std.mem.eql(u8, glyph, " ")) {
-                            try writer.writeAll(glyph);
+                            if (fill_shade == 0) {
+                                try writer.writeAll(glyph);
+                                continue;
+                            }
+
+                            var fill_buf: [32]u8 = undefined;
+                            const fill_glyph = fill_ramp[fill_shade];
+                            const colored_fill = try std.fmt.bufPrint(
+                                &fill_buf,
+                                "\x1B[38;5;{d}m{s}\x1B[0m",
+                                .{ fill_tone, fill_glyph },
+                            );
+                            try writer.writeAll(colored_fill);
                             continue;
                         }
 
                         const tone = self.toneForCell(x, y);
-                        if (tone == 0) {
-                            try writer.writeAll(glyph);
-                            continue;
-                        }
-
                         var buf: [32]u8 = undefined;
                         const colored = try std.fmt.bufPrint(&buf, "\x1B[38;5;{d}m{s}\x1B[0m", .{ tone, glyph });
                         try writer.writeAll(colored);
