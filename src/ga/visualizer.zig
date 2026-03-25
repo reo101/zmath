@@ -11,6 +11,7 @@ pub const Canvas = struct {
     width: usize,
     height: usize,
     subpixels: []u8,
+    tones: []u8,
     markers: []u8,
     allocator: std.mem.Allocator,
 
@@ -22,7 +23,7 @@ pub const Canvas = struct {
         return self.height * subpixel_y;
     }
 
-    fn setSubpixel(self: *Canvas, x: isize, y: isize, intensity: u8) void {
+    fn setSubpixel(self: *Canvas, x: isize, y: isize, intensity: u8, tone: u8) void {
         const width_i: isize = @intCast(self.subpixelWidth());
         const height_i: isize = @intCast(self.subpixelHeight());
         if (x < 0 or x >= width_i or y < 0 or y >= height_i) return;
@@ -30,6 +31,7 @@ pub const Canvas = struct {
         const idx: usize = @intCast(y * width_i + x);
         const remaining = max_subpixel_intensity -| self.subpixels[idx];
         self.subpixels[idx] += @min(remaining, intensity);
+        self.tones[idx] = @max(self.tones[idx], tone);
     }
 
     fn glyphForCell(self: Canvas, cell_x: usize, cell_y: usize) []const u8 {
@@ -96,36 +98,59 @@ pub const Canvas = struct {
         return dot_ramp[@min(occupied, dot_ramp.len - 1)];
     }
 
+    fn toneForCell(self: Canvas, cell_x: usize, cell_y: usize) u8 {
+        const start_x = cell_x * subpixel_x;
+        const start_y = cell_y * subpixel_y;
+        const sub_w = self.subpixelWidth();
+        var tone: u8 = 0;
+
+        var sy: usize = 0;
+        while (sy < subpixel_y) : (sy += 1) {
+            var sx: usize = 0;
+            while (sx < subpixel_x) : (sx += 1) {
+                const idx = (start_y + sy) * sub_w + (start_x + sx);
+                tone = @max(tone, self.tones[idx]);
+            }
+        }
+
+        return tone;
+    }
+
     pub fn init(allocator: std.mem.Allocator, width: usize, height: usize) !Canvas {
         const subpixels = try allocator.alloc(u8, width * height * subpixel_x * subpixel_y);
+        const tones = try allocator.alloc(u8, width * height * subpixel_x * subpixel_y);
         const markers = try allocator.alloc(u8, width * height);
         @memset(subpixels, 0);
+        @memset(tones, 0);
         @memset(markers, 0);
         return .{
             .allocator = allocator,
             .width = width,
             .height = height,
             .subpixels = subpixels,
+            .tones = tones,
             .markers = markers,
         };
     }
 
     pub fn deinit(self: *Canvas) void {
         self.allocator.free(self.subpixels);
+        self.allocator.free(self.tones);
         self.allocator.free(self.markers);
     }
 
     pub fn clear(self: *Canvas) void {
         @memset(self.subpixels, 0);
+        @memset(self.tones, 0);
         @memset(self.markers, 0);
     }
 
     pub fn setPixel(self: *Canvas, x: isize, y: isize, char: u8) void {
         _ = char;
-        self.setSubpixel(x * subpixel_x + @as(isize, subpixel_x / 2), y * subpixel_y + @as(isize, subpixel_y / 2), 1);
+        self.setSubpixel(x * subpixel_x + @as(isize, subpixel_x / 2), y * subpixel_y + @as(isize, subpixel_y / 2), 1, 255);
     }
 
-    pub fn drawLine(self: *Canvas, x0_f: f32, y0_f: f32, x1_f: f32, y1_f: f32, char: u8) void {
+    pub fn drawLine(self: *Canvas, x0_f: f32, y0_f: f32, x1_f: f32, y1_f: f32, char: u8, tone: u8) void {
         _ = char;
 
         var x0: isize = @intFromFloat(@round(x0_f * subpixel_x));
@@ -140,7 +165,7 @@ pub const Canvas = struct {
         var err = @as(isize, @intCast(dx)) + dy;
 
         while (true) {
-            self.setSubpixel(x0, y0, 1);
+            self.setSubpixel(x0, y0, 1, tone);
             if (x0 == x1 and y0 == y1) break;
             const e2 = 2 * err;
             if (e2 >= dy) {
@@ -175,9 +200,25 @@ pub const Canvas = struct {
         while (y < output_rows) : (y += 1) {
             var x: usize = 0;
             while (x < self.width) : (x += 1) {
+                const glyph = self.glyphForCell(x, y);
                 const marker = @as(MarkerColor, @enumFromInt(self.markers[y * self.width + x]));
                 switch (marker) {
-                    .none => try writer.writeAll(self.glyphForCell(x, y)),
+                    .none => {
+                        if (std.mem.eql(u8, glyph, " ")) {
+                            try writer.writeAll(glyph);
+                            continue;
+                        }
+
+                        const tone = self.toneForCell(x, y);
+                        if (tone == 0) {
+                            try writer.writeAll(glyph);
+                            continue;
+                        }
+
+                        var buf: [32]u8 = undefined;
+                        const colored = try std.fmt.bufPrint(&buf, "\x1B[38;5;{d}m{s}\x1B[0m", .{ tone, glyph });
+                        try writer.writeAll(colored);
+                    },
                     .near => try writer.writeAll("\x1B[31m●\x1B[0m"),
                     .far => try writer.writeAll("\x1B[32m●\x1B[0m"),
                 }
@@ -195,8 +236,24 @@ pub const MarkerColor = enum(u8) {
     far = 2,
 };
 
+pub const DirectionProjection = enum {
+    gnomonic,
+    stereographic,
+    orthographic,
+    wrapped,
+};
+
 pub const ProjectionMode = enum { perspective, isometric, hyperbolic, spherical };
 pub const hyperbolic_curvature: f32 = 1.75;
+
+pub fn directionProjectionLabel(projection: DirectionProjection) []const u8 {
+    return switch (projection) {
+        .gnomonic => "gnom",
+        .stereographic => "stereo",
+        .orthographic => "ortho",
+        .wrapped => "wrap",
+    };
+}
 
 /// Simple 3D-to-2D projection for the demo.
 pub fn projectSimple(p: anytype, canvas_width: usize, canvas_height: usize, zoom: f32, mode: ProjectionMode) ?[2]f32 {
@@ -271,6 +328,55 @@ pub fn projectDirection(x_dir: f32, y_dir: f32, z_dir: f32, canvas_width: usize,
     return .{ x, y };
 }
 
+pub fn projectStereographicDirection(
+    x_dir: f32,
+    y_dir: f32,
+    z_dir: f32,
+    canvas_width: usize,
+    canvas_height: usize,
+    zoom: f32,
+) ?[2]f32 {
+    const radius = @sqrt(x_dir * x_dir + y_dir * y_dir + z_dir * z_dir);
+    if (radius <= 1e-6) return null;
+
+    const nx = x_dir / radius;
+    const ny = y_dir / radius;
+    const nz = z_dir / radius;
+    const denom = 1.0 + nz;
+    if (denom <= 1e-4) return null;
+
+    const x_raw = nx * (2.0 / denom);
+    const y_raw = ny * (2.0 / denom);
+    const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
+    const x = (x_raw * zoom / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
+    const y = (1.0 - y_raw * zoom) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);
+
+    return .{ x, y };
+}
+
+pub fn projectOrthographicDirection(
+    x_dir: f32,
+    y_dir: f32,
+    z_dir: f32,
+    canvas_width: usize,
+    canvas_height: usize,
+    zoom: f32,
+) ?[2]f32 {
+    const radius = @sqrt(x_dir * x_dir + y_dir * y_dir + z_dir * z_dir);
+    if (radius <= 1e-6) return null;
+
+    const nx = x_dir / radius;
+    const ny = y_dir / radius;
+    const nz = z_dir / radius;
+    if (nz <= 1e-4) return null;
+
+    const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
+    const x = (nx * zoom / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
+    const y = (1.0 - ny * zoom) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);
+
+    return .{ x, y };
+}
+
 pub fn projectAngularDirection(
     x_dir: f32,
     y_dir: f32,
@@ -297,6 +403,51 @@ pub fn projectAngularDirection(
     const y = (1.0 - y_raw * zoom) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);
 
     return .{ x, y };
+}
+
+pub fn projectWrappedAngularDirection(
+    x_dir: f32,
+    y_dir: f32,
+    z_dir: f32,
+    canvas_width: usize,
+    canvas_height: usize,
+    zoom: f32,
+) ?[2]f32 {
+    const radius = @sqrt(x_dir * x_dir + y_dir * y_dir + z_dir * z_dir);
+    if (radius <= 1e-6) return null;
+
+    const nx = x_dir / radius;
+    const ny = y_dir / radius;
+    const nz = z_dir / radius;
+    const lateral = @sqrt(nx * nx + nz * nz);
+
+    const azimuth = std.math.atan2(nx, nz);
+    const elevation = std.math.atan2(ny, @max(lateral, 1e-6));
+    const x_raw = (azimuth / @as(f32, std.math.pi)) * zoom;
+    const y_raw = (elevation / (@as(f32, std.math.pi) * 0.5)) * zoom;
+
+    const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
+    const x = (x_raw / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
+    const y = (1.0 - y_raw) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);
+
+    return .{ x, y };
+}
+
+pub fn projectDirectionWith(
+    projection: DirectionProjection,
+    x_dir: f32,
+    y_dir: f32,
+    z_dir: f32,
+    canvas_width: usize,
+    canvas_height: usize,
+    zoom: f32,
+) ?[2]f32 {
+    return switch (projection) {
+        .gnomonic => projectDirection(x_dir, y_dir, z_dir, canvas_width, canvas_height, zoom),
+        .stereographic => projectStereographicDirection(x_dir, y_dir, z_dir, canvas_width, canvas_height, zoom),
+        .orthographic => projectOrthographicDirection(x_dir, y_dir, z_dir, canvas_width, canvas_height, zoom),
+        .wrapped => projectWrappedAngularDirection(x_dir, y_dir, z_dir, canvas_width, canvas_height, zoom),
+    };
 }
 
 /// Projects a point using PGA universal projection formula.
