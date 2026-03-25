@@ -248,6 +248,8 @@ pub const fullSignedBladeFromIndicesWithSignature = multivector.fullSignedBladeF
 pub const writeMultivector = multivector.writeMultivector;
 
 test "ga facade exposes core and specialized modules" {
+    _ = expression;
+
     try std.testing.expect(choose(5, 2) == blades.choose(5, 2));
     try std.testing.expect(bladeCount(3) == blades.bladeCount(3));
     try std.testing.expect(isSignedBlade("e(1,2)", 2, null));

@@ -60,7 +60,10 @@ fn isSignedIntType(comptime T: type) bool {
 }
 
 pub fn isMultivectorType(comptime T: type) bool {
-    return @hasDecl(T, "dimensions") and @hasDecl(T, "Coefficient") and @hasDecl(T, "blades") and @hasDecl(T, "metric_signature") and @hasField(T, "coeffs");
+    return switch (@typeInfo(T)) {
+        .@"struct", .@"union", .@"enum", .@"opaque" => @hasDecl(T, "dimensions") and @hasDecl(T, "Coefficient") and @hasDecl(T, "blades") and @hasDecl(T, "metric_signature") and @hasField(T, "coeffs"),
+        else => false,
+    };
 }
 
 pub fn ensureMultivector(comptime T: type) void {
@@ -273,7 +276,6 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
 
         pub const Self = @This();
 
-
         /// Related carrier type for the same coefficient type and signature
         /// but with a different set of stored blade masks.
         pub fn Rebind(comptime new_masks: []const BladeMask) type {
@@ -383,7 +385,6 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         ) !void {
             try self.write(writer);
         }
-
 
         /// Returns the coefficient of a (comptime/runtime) blade mask.
         pub fn coeff(self: Self, mask: BladeMask) T {
@@ -807,7 +808,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
             const rev = self.reverse();
             const denominator_mv = self.gp(rev);
             const denominator = denominator_mv.scalarCoeff();
-            
+
             // Check if it's a pure scalar and non-zero
             const Denom = @TypeOf(denominator_mv);
             const denom_coeffs = denominator_mv.coeffsArray();
@@ -821,7 +822,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
             return rev.scale(1.0 / denominator);
         }
 
-        /// Returns the exponential exp(self). 
+        /// Returns the exponential exp(self).
         /// Currently only implemented for bivectors in Euclidean space
         /// where B^2 is a negative scalar.
         pub fn exp(self: Self) Self {
@@ -829,7 +830,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
             // exp(B) = cos(theta) + (B/theta) * sin(theta)
             const b2_mv = self.gp(self);
             const b2 = b2_mv.scalarCoeff();
-            
+
             // Check if it's a pure scalar
             var is_pure_scalar = true;
             const B2Mv = @TypeOf(b2_mv);
@@ -842,7 +843,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
 
             if (is_pure_scalar and b2 <= 0) {
                 const theta = @sqrt(-b2);
-                
+
                 if (theta == 0) {
                     var res_coeffs = std.mem.zeroes([stored_blade_count]T);
                     if (Self.blade_index_by_mask[0] < stored_blade_count) res_coeffs[Self.blade_index_by_mask[0]] = 1;
@@ -851,17 +852,17 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
 
                 const c = @cos(theta);
                 const s = @sin(theta);
-                
+
                 // Result = cos(theta) + (B/theta) * sin(theta)
                 var res_coeffs = std.mem.zeroes([stored_blade_count]T);
                 if (Self.blade_index_by_mask[0] < stored_blade_count) res_coeffs[Self.blade_index_by_mask[0]] = c;
-                
+
                 inline for (blade_masks, 0..) |mask, i| {
                     if (mask.bitset.mask != 0) {
                         res_coeffs[i] = self.coeff(mask) * (s / theta);
                     }
                 }
-                
+
                 return Self.init(res_coeffs);
             }
 
@@ -930,12 +931,7 @@ pub fn JoinResultType(
     comptime sig: MetricSignature,
 ) type {
     const dimension = comptime sig.dimension();
-    const result_masks = blade_ops.dualMasks(dimension, 
-        &blade_ops.outerProductMasks(dimension, 
-            &blade_ops.dualMasks(dimension, lhs_masks),
-            &blade_ops.dualMasks(dimension, rhs_masks)
-        )
-    );
+    const result_masks = blade_ops.dualMasks(dimension, &blade_ops.outerProductMasks(dimension, &blade_ops.dualMasks(dimension, lhs_masks), &blade_ops.dualMasks(dimension, rhs_masks)));
     return Multivector(T, &result_masks, sig);
 }
 
@@ -1321,7 +1317,6 @@ test "multivector.write matches format output path" {
     try out.writer.print("{f}", .{value});
     try std.testing.expectEqualSlices(u8, "e1 - 2*e2", out.written());
 }
-
 
 test "signature-aware products support Cl(1,1)" {
     const sig: MetricSignature = .{ .p = 1, .q = 1 };
