@@ -14,10 +14,9 @@ const MovementMode = enum { walk, fly };
 const near_clip_z: f32 = 1.2;
 const far_clip_z: f32 = 44.0;
 const euclidean_cube_scale: f32 = 4.0;
+const hyperbolic_cube_chart_scale: f32 = 0.18;
 const spherical_chart_scale: f32 = 0.52;
-const hyperbolic_prism_radius: f32 = 0.22;
-const hyperbolic_prism_half_depth: f32 = 0.14;
-const default_hyperbolic_params = curved.Params{ .radius = hyperbolicRadiusForRightPentagon(hyperbolic_prism_radius), .angular_zoom = 0.72 };
+const default_hyperbolic_params = curved.Params{ .radius = 0.32, .angular_zoom = 0.72 };
 const default_spherical_params = curved.Params{ .radius = 1.48, .angular_zoom = 1.0 };
 const hyperbolic_radius_min: f32 = default_hyperbolic_params.radius * 0.55;
 const hyperbolic_radius_max: f32 = default_hyperbolic_params.radius * 2.20;
@@ -27,20 +26,23 @@ const hyperbolic_near_distance: f32 = 0.08;
 const hyperbolic_far_distance: f32 = 1.55;
 const spherical_near_distance: f32 = 0.08;
 const spherical_far_distance: f32 = std.math.inf(f32);
-
-// For a regular hyperbolic n-gon, the circumradius `rho` satisfies
-// `cosh(rho / R) = cot(pi / n) * cot(alpha / 2)`.
-// Our pentagon lives on a Klein-model ring of Euclidean radius `r = tanh(rho / R)`,
-// so for the chosen chart radius we solve `R = chart_radius / tanh(rho / R)`.
-fn hyperbolicRadiusForRightPentagon(chart_radius: f32) f32 {
-    const half_interior: f32 = @as(f32, std.math.pi) / 4.0;
-    const central_angle: f32 = @as(f32, std.math.pi) / 5.0;
-    const cot_central = @cos(central_angle) / @sin(central_angle);
-    const cot_half_interior = @cos(half_interior) / @sin(half_interior);
-    const normalized_circumradius = std.math.acosh(cot_central * cot_half_interior);
-    const klein_radius = std.math.tanh(normalized_circumradius);
-    return chart_radius / klein_radius;
-}
+const face_fill_steps: usize = 12;
+const cube_faces = [_][4]usize{
+    .{ 0, 2, 3, 1 },
+    .{ 4, 5, 7, 6 },
+    .{ 0, 1, 5, 4 },
+    .{ 2, 6, 7, 3 },
+    .{ 0, 4, 6, 2 },
+    .{ 1, 3, 7, 5 },
+};
+const cube_face_colors = [_]u8{
+    203, // warm front
+    81, // cool back
+    220, // top
+    121, // bottom
+    147, // left
+    45, // right
+};
 
 const CameraState = struct {
     euclid_rotation: f32 = 0.0,
@@ -121,6 +123,130 @@ fn vec3FromVector(v: h.Vector) curved.Vec3 {
         v.coeffNamed("e2"),
         v.coeffNamed("e3"),
     };
+}
+
+fn bilerpQuad(a: h.Vector, b: h.Vector, c: h.Vector, d: h.Vector, u: f32, v: f32) h.Vector {
+    const ab = a.scale(1.0 - u).add(b.scale(u));
+    const dc = d.scale(1.0 - u).add(c.scale(u));
+    return ab.scale(1.0 - v).add(dc.scale(v));
+}
+
+fn faceShade(normal: h.Vector) u8 {
+    const light = safeNormalize(h.Vector.init(.{ 0.45, 0.75, -0.48 }), h.Vector.init(.{ 0, 1, 0 }));
+    const unit_normal = safeNormalize(normal, h.Vector.init(.{ 0, 0, -1 }));
+    const brightness = std.math.clamp(unit_normal.scalarProduct(light), 0.0, 1.0);
+    return 1 + @as(u8, @intFromFloat(brightness * 3.999));
+}
+
+fn faceColor(face_index: usize) u8 {
+    return cube_face_colors[face_index % cube_face_colors.len];
+}
+
+fn shadeEuclideanCube(
+    canvas: *visualizer.Canvas,
+    view_vertices: [8]h.Vector,
+    projection_mode: visualizer.ProjectionMode,
+    width: usize,
+    height: usize,
+    zoom: f32,
+) void {
+    for (cube_faces, 0..) |face, face_index| {
+        const a = view_vertices[face[0]];
+        const b = view_vertices[face[1]];
+        const c = view_vertices[face[2]];
+        const d = view_vertices[face[3]];
+        const normal = gaCross(b.sub(a), d.sub(a));
+        if (normal.coeffNamed("e3") >= -0.02) continue;
+
+        const shade = faceShade(normal);
+        const tone = faceColor(face_index);
+        for (0..face_fill_steps + 1) |ui| {
+            const u = @as(f32, @floatFromInt(ui)) / @as(f32, @floatFromInt(face_fill_steps));
+            for (0..face_fill_steps + 1) |vi| {
+                const v = @as(f32, @floatFromInt(vi)) / @as(f32, @floatFromInt(face_fill_steps));
+                const point = bilerpQuad(a, b, c, d, u, v);
+                const depth = point.coeffNamed("e3");
+                if (depth < near_clip_z or depth > far_clip_z) continue;
+
+                const projected = visualizer.projectSimple(point, width, height, zoom, projection_mode) orelse continue;
+                canvas.setFill(projected[0], projected[1], shade, tone, depth);
+            }
+        }
+    }
+}
+
+fn shadeSphericalCube(
+    canvas: *visualizer.Canvas,
+    chart_vertices: [8]h.Vector,
+    camera: CameraState,
+    width: usize,
+    height: usize,
+    zoom: f32,
+) void {
+    const projection = camera.spherical_projection;
+
+    for (cube_faces, 0..) |face, face_index| {
+        const a = chart_vertices[face[0]];
+        const b = chart_vertices[face[1]];
+        const c = chart_vertices[face[2]];
+        const d = chart_vertices[face[3]];
+        const shade = faceShade(gaCross(b.sub(a), d.sub(a)));
+        const tone = faceColor(face_index);
+
+        for (0..face_fill_steps + 1) |ui| {
+            const u = @as(f32, @floatFromInt(ui)) / @as(f32, @floatFromInt(face_fill_steps));
+            for (0..face_fill_steps + 1) |vi| {
+                const v = @as(f32, @floatFromInt(vi)) / @as(f32, @floatFromInt(face_fill_steps));
+                const point = bilerpQuad(a, b, c, d, u, v);
+                const sample = curved.samplePoint(
+                    .spherical,
+                    camera.spherical_params,
+                    camera.spherical,
+                    vec3FromVector(point),
+                ) orelse continue;
+                const projected = curved.projectSample(projection, sample, width, height, zoom) orelse continue;
+                canvas.setFill(projected[0], projected[1], shade, tone, sample.distance);
+            }
+        }
+    }
+}
+
+fn shadeHyperbolicCube(
+    canvas: *visualizer.Canvas,
+    chart_vertices: [8]h.Vector,
+    camera: CameraState,
+    width: usize,
+    height: usize,
+    zoom: f32,
+) void {
+    const projection = camera.hyper_projection;
+
+    for (cube_faces, 0..) |face, face_index| {
+        const a = chart_vertices[face[0]];
+        const b = chart_vertices[face[1]];
+        const c = chart_vertices[face[2]];
+        const d = chart_vertices[face[3]];
+        const shade = faceShade(gaCross(b.sub(a), d.sub(a)));
+        const tone = faceColor(face_index);
+
+        for (0..face_fill_steps + 1) |ui| {
+            const u = @as(f32, @floatFromInt(ui)) / @as(f32, @floatFromInt(face_fill_steps));
+            for (0..face_fill_steps + 1) |vi| {
+                const v = @as(f32, @floatFromInt(vi)) / @as(f32, @floatFromInt(face_fill_steps));
+                const point = bilerpQuad(a, b, c, d, u, v);
+                const sample = curved.samplePoint(
+                    .hyperbolic,
+                    camera.hyper_params,
+                    camera.hyper,
+                    vec3FromVector(point),
+                ) orelse continue;
+                if (sample.distance < hyperbolic_near_distance or sample.distance > hyperbolic_far_distance) continue;
+
+                const projected = curved.projectSample(projection, sample, width, height, zoom) orelse continue;
+                canvas.setFill(projected[0], projected[1], shade, tone, sample.distance);
+            }
+        }
+    }
 }
 
 fn rotorFromGenerator(B: anytype) h.Rotor {
@@ -298,6 +424,13 @@ fn cycleDirectionProjection(camera: *CameraState, mode: DemoMode) void {
     }
 }
 
+fn syncWalkOrientation(camera: *CameraState) void {
+    const x_heading = @sin(camera.euclid_rotation);
+    const z_heading = @cos(camera.euclid_rotation);
+    curved.orientFromHeadingPitch(.hyperbolic, &camera.hyper, x_heading, z_heading, camera.euclid_pitch);
+    curved.orientFromHeadingPitch(.spherical, &camera.spherical, x_heading, z_heading, camera.euclid_pitch);
+}
+
 fn adjustCameraArrow(camera: *CameraState, arrow: u8) void {
     const pitch_step: f32 = 0.10;
     const rotation_step: f32 = 0.14;
@@ -305,23 +438,39 @@ fn adjustCameraArrow(camera: *CameraState, arrow: u8) void {
     switch (arrow) {
         'A' => {
             camera.euclid_pitch = std.math.clamp(camera.euclid_pitch + pitch_step, -1.10, 1.10);
-            curved.pitch(&camera.hyper, .hyperbolic, pitch_step);
-            curved.pitch(&camera.spherical, .spherical, pitch_step);
+            if (camera.movement_mode == .walk) {
+                syncWalkOrientation(camera);
+            } else {
+                curved.pitch(&camera.hyper, .hyperbolic, pitch_step);
+                curved.pitch(&camera.spherical, .spherical, pitch_step);
+            }
         },
         'B' => {
             camera.euclid_pitch = std.math.clamp(camera.euclid_pitch - pitch_step, -1.10, 1.10);
-            curved.pitch(&camera.hyper, .hyperbolic, -pitch_step);
-            curved.pitch(&camera.spherical, .spherical, -pitch_step);
+            if (camera.movement_mode == .walk) {
+                syncWalkOrientation(camera);
+            } else {
+                curved.pitch(&camera.hyper, .hyperbolic, -pitch_step);
+                curved.pitch(&camera.spherical, .spherical, -pitch_step);
+            }
         },
         'C' => {
             camera.euclid_rotation += rotation_step;
-            curved.yaw(&camera.hyper, .hyperbolic, rotation_step);
-            curved.yaw(&camera.spherical, .spherical, rotation_step);
+            if (camera.movement_mode == .walk) {
+                syncWalkOrientation(camera);
+            } else {
+                curved.yaw(&camera.hyper, .hyperbolic, rotation_step);
+                curved.yaw(&camera.spherical, .spherical, rotation_step);
+            }
         },
         'D' => {
             camera.euclid_rotation -= rotation_step;
-            curved.yaw(&camera.hyper, .hyperbolic, -rotation_step);
-            curved.yaw(&camera.spherical, .spherical, -rotation_step);
+            if (camera.movement_mode == .walk) {
+                syncWalkOrientation(camera);
+            } else {
+                curved.yaw(&camera.hyper, .hyperbolic, -rotation_step);
+                curved.yaw(&camera.spherical, .spherical, -rotation_step);
+            }
         },
         else => {},
     }
@@ -449,6 +598,7 @@ fn handleInputByte(
             },
             'g' => {
                 camera.movement_mode = if (camera.movement_mode == .walk) .fly else .walk;
+                if (camera.movement_mode == .walk) syncWalkOrientation(camera);
                 return false;
             },
             'v' => {
@@ -526,21 +676,6 @@ pub fn main() !void {
         .{ 4, 6 }, .{ 5, 7 }, .{ 6, 7 },
     };
 
-    var hyperbolic_vertices: [10]h.Vector = undefined;
-    var prism_i: usize = 0;
-    while (prism_i < 5) : (prism_i += 1) {
-        const theta = (2.0 * std.math.pi * @as(f32, @floatFromInt(prism_i)) / 5.0) + (std.math.pi / 10.0);
-        const ring = E3.e(1).scale(@cos(theta) * hyperbolic_prism_radius).add(E3.e(2).scale(@sin(theta) * hyperbolic_prism_radius));
-        hyperbolic_vertices[prism_i] = ring.add(E3.e(3).scale(hyperbolic_prism_half_depth));
-        hyperbolic_vertices[prism_i + 5] = ring.sub(E3.e(3).scale(hyperbolic_prism_half_depth));
-    }
-
-    const hyperbolic_edges = [_][2]usize{
-        .{ 0, 1 }, .{ 1, 2 }, .{ 2, 3 }, .{ 3, 4 }, .{ 4, 0 },
-        .{ 5, 6 }, .{ 6, 7 }, .{ 7, 8 }, .{ 8, 9 }, .{ 9, 5 },
-        .{ 0, 5 }, .{ 1, 6 }, .{ 2, 7 }, .{ 3, 8 }, .{ 4, 9 },
-    };
-
     var angle: f32 = 0.0;
     var animate = true;
     var mode: DemoMode = .perspective;
@@ -583,11 +718,17 @@ pub fn main() !void {
         switch (mode) {
             .perspective, .isometric => {
                 const projection_mode: visualizer.ProjectionMode = if (mode == .perspective) .perspective else .isometric;
+                var view_cube_vertices: [cube_vertices.len]h.Vector = undefined;
+                for (cube_vertices, 0..) |vertex, i| {
+                    const rotated = zmath.ga.rotors.rotated(vertex.scale(euclidean_cube_scale), rotor);
+                    view_cube_vertices[i] = cameraSpace(rotated, camera);
+                }
+
+                shadeEuclideanCube(&canvas, view_cube_vertices, projection_mode, width, height, zoom);
+
                 for (cube_edges) |edge| {
-                    const rv0 = zmath.ga.rotors.rotated(cube_vertices[edge[0]].scale(euclidean_cube_scale), rotor);
-                    const rv1 = zmath.ga.rotors.rotated(cube_vertices[edge[1]].scale(euclidean_cube_scale), rotor);
-                    const view_v0 = cameraSpace(rv0, camera);
-                    const view_v1 = cameraSpace(rv1, camera);
+                    const view_v0 = view_cube_vertices[edge[0]];
+                    const view_v1 = view_cube_vertices[edge[1]];
                     const clipped = clipSegmentToDepthRange(view_v0, view_v1, near_clip_z, far_clip_z) orelse continue;
 
                     var prev_p: ?[2]f32 = null;
@@ -625,9 +766,16 @@ pub fn main() !void {
             },
             .hyperbolic => {
                 const projection = camera.hyper_projection;
-                for (hyperbolic_edges) |edge| {
-                    const rv0 = zmath.ga.rotors.rotated(hyperbolic_vertices[edge[0]], rotor);
-                    const rv1 = zmath.ga.rotors.rotated(hyperbolic_vertices[edge[1]], rotor);
+                var chart_cube_vertices: [cube_vertices.len]h.Vector = undefined;
+                for (cube_vertices, 0..) |vertex, i| {
+                    chart_cube_vertices[i] = zmath.ga.rotors.rotated(vertex.scale(hyperbolic_cube_chart_scale), rotor);
+                }
+
+                shadeHyperbolicCube(&canvas, chart_cube_vertices, camera, width, height, zoom);
+
+                for (cube_edges) |edge| {
+                    const rv0 = chart_cube_vertices[edge[0]];
+                    const rv1 = chart_cube_vertices[edge[1]];
                     const v0_chart = vec3FromVector(rv0);
                     const v1_chart = vec3FromVector(rv1);
 
@@ -686,9 +834,16 @@ pub fn main() !void {
             },
             .spherical => {
                 const projection = camera.spherical_projection;
+                var chart_cube_vertices: [cube_vertices.len]h.Vector = undefined;
+                for (cube_vertices, 0..) |vertex, i| {
+                    chart_cube_vertices[i] = zmath.ga.rotors.rotated(vertex.scale(spherical_chart_scale), rotor);
+                }
+
+                shadeSphericalCube(&canvas, chart_cube_vertices, camera, width, height, zoom);
+
                 for (cube_edges) |edge| {
-                    const rv0 = zmath.ga.rotors.rotated(cube_vertices[edge[0]].scale(spherical_chart_scale), rotor);
-                    const rv1 = zmath.ga.rotors.rotated(cube_vertices[edge[1]].scale(spherical_chart_scale), rotor);
+                    const rv0 = chart_cube_vertices[edge[0]];
+                    const rv1 = chart_cube_vertices[edge[1]];
                     const v0_chart = vec3FromVector(rv0);
                     const v1_chart = vec3FromVector(rv1);
                     const shade_far_distance = sphericalShadeFarDistance(camera.spherical_params);
