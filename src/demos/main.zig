@@ -17,8 +17,16 @@ const far_clip_z: f32 = 44.0;
 const euclidean_cube_scale: f32 = 4.0;
 const hyperbolic_cube_chart_scale: f32 = 0.18;
 const spherical_chart_scale: f32 = 0.52;
-const default_hyperbolic_params = curved.Params{ .radius = 0.32, .angular_zoom = 0.72 };
-const default_spherical_params = curved.Params{ .radius = 1.48, .angular_zoom = 1.0 };
+const default_hyperbolic_params = curved.Params{
+    .radius = 0.32,
+    .angular_zoom = 0.72,
+    .chart_model = .conformal,
+};
+const default_spherical_params = curved.Params{
+    .radius = 1.48,
+    .angular_zoom = 1.0,
+    .chart_model = .conformal,
+};
 const hyperbolic_radius_min: f32 = default_hyperbolic_params.radius * 0.55;
 const hyperbolic_radius_max: f32 = default_hyperbolic_params.radius * 2.20;
 const spherical_radius_min: f32 = default_spherical_params.radius * 0.50;
