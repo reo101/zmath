@@ -1,7 +1,8 @@
 const std = @import("std");
 const zmath = @import("zmath");
-const visualizer = zmath.visualizer;
-const curved = @import("curved_geometry.zig");
+const canvas_api = zmath.render.canvas;
+const projection = zmath.render.projection;
+const curved = zmath.geometry.constant_curvature;
 
 const Euclid3 = zmath.ga.Algebra(zmath.ga.euclideanSignature(3));
 const h = Euclid3.Instantiate(f32);
@@ -35,6 +36,12 @@ const cube_faces = [_][4]usize{
     .{ 0, 4, 6, 2 },
     .{ 1, 3, 7, 5 },
 };
+const cube_edges = [_][2]usize{
+    .{ 0, 1 }, .{ 0, 2 }, .{ 0, 4 },
+    .{ 1, 3 }, .{ 1, 5 }, .{ 2, 3 },
+    .{ 2, 6 }, .{ 3, 7 }, .{ 4, 5 },
+    .{ 4, 6 }, .{ 5, 7 }, .{ 6, 7 },
+};
 const cube_face_colors = [_]u8{
     203, // warm front
     81, // cool back
@@ -50,28 +57,29 @@ const CameraState = struct {
     euclid_eye_x: f32 = 0.0,
     euclid_eye_y: f32 = 0.0,
     euclid_eye_z: f32 = -10.5,
-    hyper_params: curved.Params,
-    spherical_params: curved.Params,
     movement_mode: MovementMode,
-    hyper_projection: visualizer.DirectionProjection,
-    spherical_projection: visualizer.DirectionProjection,
-    hyper: curved.Camera,
-    spherical: curved.Camera,
+    hyper: curved.View,
+    spherical: curved.View,
 
-    fn init() CameraState {
+    fn init() !CameraState {
         return .{
-            .hyper_params = default_hyperbolic_params,
-            .spherical_params = default_spherical_params,
             .movement_mode = .walk,
-            .hyper_projection = .gnomonic,
-            .spherical_projection = .wrapped,
-            .hyper = curved.initCamera(
+            .hyper = try curved.View.init(
                 .hyperbolic,
                 default_hyperbolic_params,
+                .gnomonic,
+                .{ .near = hyperbolic_near_distance, .far = hyperbolic_far_distance },
                 .{ 0.0, 0.0, -default_hyperbolic_params.radius * 0.78 },
                 .{ 0.0, 0.0, 0.0 },
             ),
-            .spherical = curved.initCamera(.spherical, default_spherical_params, .{ 0.0, 0.0, -0.82 }, .{ 0.0, 0.0, 0.0 }),
+            .spherical = try curved.View.init(
+                .spherical,
+                default_spherical_params,
+                .wrapped,
+                .{ .near = spherical_near_distance, .far = spherical_far_distance },
+                .{ 0.0, 0.0, -0.82 },
+                .{ 0.0, 0.0, 0.0 },
+            ),
         };
     }
 
@@ -143,9 +151,9 @@ fn faceColor(face_index: usize) u8 {
 }
 
 fn shadeEuclideanCube(
-    canvas: *visualizer.Canvas,
+    canvas: *canvas_api.Canvas,
     view_vertices: [8]h.Vector,
-    projection_mode: visualizer.ProjectionMode,
+    projection_mode: projection.EuclideanProjection,
     width: usize,
     height: usize,
     zoom: f32,
@@ -168,23 +176,19 @@ fn shadeEuclideanCube(
                 const depth = point.coeffNamed("e3");
                 if (depth < near_clip_z or depth > far_clip_z) continue;
 
-                const projected = visualizer.projectSimple(point, width, height, zoom, projection_mode) orelse continue;
+                const projected = projection.projectEuclidean(point, width, height, zoom, projection_mode) orelse continue;
                 canvas.setFill(projected[0], projected[1], shade, tone, depth);
             }
         }
     }
 }
 
-fn shadeSphericalCube(
-    canvas: *visualizer.Canvas,
+fn shadeCurvedCube(
+    canvas: *canvas_api.Canvas,
     chart_vertices: [8]h.Vector,
-    camera: CameraState,
-    width: usize,
-    height: usize,
-    zoom: f32,
+    view: curved.View,
+    screen: curved.Screen,
 ) void {
-    const projection = camera.spherical_projection;
-
     for (cube_faces, 0..) |face, face_index| {
         const a = chart_vertices[face[0]];
         const b = chart_vertices[face[1]];
@@ -192,60 +196,17 @@ fn shadeSphericalCube(
         const d = chart_vertices[face[3]];
         const shade = faceShade(gaCross(b.sub(a), d.sub(a)));
         const tone = faceColor(face_index);
-
-        for (0..face_fill_steps + 1) |ui| {
-            const u = @as(f32, @floatFromInt(ui)) / @as(f32, @floatFromInt(face_fill_steps));
-            for (0..face_fill_steps + 1) |vi| {
-                const v = @as(f32, @floatFromInt(vi)) / @as(f32, @floatFromInt(face_fill_steps));
-                const point = bilerpQuad(a, b, c, d, u, v);
-                const sample = curved.samplePoint(
-                    .spherical,
-                    camera.spherical_params,
-                    camera.spherical,
-                    vec3FromVector(point),
-                ) orelse continue;
-                const projected = curved.projectSample(projection, sample, width, height, zoom) orelse continue;
-                canvas.setFill(projected[0], projected[1], shade, tone, sample.distance);
-            }
-        }
-    }
-}
-
-fn shadeHyperbolicCube(
-    canvas: *visualizer.Canvas,
-    chart_vertices: [8]h.Vector,
-    camera: CameraState,
-    width: usize,
-    height: usize,
-    zoom: f32,
-) void {
-    const projection = camera.hyper_projection;
-
-    for (cube_faces, 0..) |face, face_index| {
-        const a = chart_vertices[face[0]];
-        const b = chart_vertices[face[1]];
-        const c = chart_vertices[face[2]];
-        const d = chart_vertices[face[3]];
-        const shade = faceShade(gaCross(b.sub(a), d.sub(a)));
-        const tone = faceColor(face_index);
-
-        for (0..face_fill_steps + 1) |ui| {
-            const u = @as(f32, @floatFromInt(ui)) / @as(f32, @floatFromInt(face_fill_steps));
-            for (0..face_fill_steps + 1) |vi| {
-                const v = @as(f32, @floatFromInt(vi)) / @as(f32, @floatFromInt(face_fill_steps));
-                const point = bilerpQuad(a, b, c, d, u, v);
-                const sample = curved.samplePoint(
-                    .hyperbolic,
-                    camera.hyper_params,
-                    camera.hyper,
-                    vec3FromVector(point),
-                ) orelse continue;
-                if (sample.distance < hyperbolic_near_distance or sample.distance > hyperbolic_far_distance) continue;
-
-                const projected = curved.projectSample(projection, sample, width, height, zoom) orelse continue;
-                canvas.setFill(projected[0], projected[1], shade, tone, sample.distance);
-            }
-        }
+        view.fillQuad(
+            canvas,
+            .{
+                vec3FromVector(a),
+                vec3FromVector(b),
+                vec3FromVector(c),
+                vec3FromVector(d),
+            },
+            screen,
+            .{ .steps = face_fill_steps, .shade = shade, .tone = tone },
+        );
     }
 }
 
@@ -290,8 +251,8 @@ fn modeZoom(angle: f32, mode: DemoMode, camera: CameraState) f32 {
     return switch (mode) {
         .perspective => 5.75 + 0.20 * @sin(angle * 0.10),
         .isometric => 0.82 + 0.04 * @sin(angle * 0.12),
-        .hyperbolic => camera.hyper_params.angular_zoom + 0.02 * @sin(angle * 0.11),
-        .spherical => camera.spherical_params.angular_zoom,
+        .hyperbolic => camera.hyper.params.angular_zoom + 0.02 * @sin(angle * 0.11),
+        .spherical => camera.spherical.params.angular_zoom,
     };
 }
 
@@ -313,8 +274,8 @@ fn movementModeLabel(mode: MovementMode) []const u8 {
 
 fn currentCurvedProjectionLabel(mode: DemoMode, camera: CameraState) []const u8 {
     return switch (mode) {
-        .hyperbolic => visualizer.directionProjectionLabel(camera.hyper_projection),
-        .spherical => visualizer.directionProjectionLabel(camera.spherical_projection),
+        .hyperbolic => projection.directionProjectionLabel(camera.hyper.projection),
+        .spherical => projection.directionProjectionLabel(camera.spherical.projection),
         else => "-",
     };
 }
@@ -330,8 +291,8 @@ fn nextMode(mode: DemoMode) DemoMode {
 
 const DepthClipResult = struct {
     points: [2]h.Vector,
-    start_marker: visualizer.MarkerColor = .none,
-    end_marker: visualizer.MarkerColor = .none,
+    start_marker: canvas_api.MarkerColor = .none,
+    end_marker: canvas_api.MarkerColor = .none,
 };
 
 fn clipSegmentToDepthRange(v0: h.Vector, v1: h.Vector, near_z: f32, far_z: f32) ?DepthClipResult {
@@ -378,37 +339,8 @@ fn clipSegmentToDepthRange(v0: h.Vector, v1: h.Vector, near_z: f32, far_z: f32) 
     return result;
 }
 
-const CurvedSampleStatus = enum { hidden, visible, clipped_near, clipped_far };
-
-fn curvedSampleStatus(distance: f32, near_distance: f32, far_distance: f32, projected: ?[2]f32) CurvedSampleStatus {
-    if (projected == null) return .hidden;
-    if (distance < near_distance) return .clipped_near;
-    if (distance > far_distance) return .clipped_far;
-    return .visible;
-}
-
-fn shadeTone(distance: f32, near_distance: f32, far_distance: f32) u8 {
-    const span = @max(far_distance - near_distance, 1e-3);
-    const t = std.math.clamp((distance - near_distance) / span, 0.0, 1.0);
-    const near_tone: f32 = 255.0;
-    const far_tone: f32 = 243.0;
-    return @as(u8, @intFromFloat(@round(near_tone + (far_tone - near_tone) * t)));
-}
-
-fn sphericalShadeFarDistance(params: curved.Params) f32 {
-    return @as(f32, std.math.pi) * params.radius;
-}
-
-fn crossesProjectionWrap(a: [2]f32, b: [2]f32, width: usize) bool {
-    return @abs(a[0] - b[0]) > @as(f32, @floatFromInt(width)) * 0.45;
-}
-
-fn shouldBreakProjectionSegment(projection: visualizer.DirectionProjection, a: [2]f32, b: [2]f32, width: usize) bool {
-    return projection == .wrapped and crossesProjectionWrap(a, b, width);
-}
-
-fn nextDirectionProjection(projection: visualizer.DirectionProjection) visualizer.DirectionProjection {
-    return switch (projection) {
+fn nextDirectionProjection(current: projection.DirectionProjection) projection.DirectionProjection {
+    return switch (current) {
         .wrapped => .gnomonic,
         .gnomonic => .stereographic,
         .stereographic => .orthographic,
@@ -418,8 +350,8 @@ fn nextDirectionProjection(projection: visualizer.DirectionProjection) visualize
 
 fn cycleDirectionProjection(camera: *CameraState, mode: DemoMode) void {
     switch (mode) {
-        .hyperbolic => camera.hyper_projection = nextDirectionProjection(camera.hyper_projection),
-        .spherical => camera.spherical_projection = nextDirectionProjection(camera.spherical_projection),
+        .hyperbolic => camera.hyper.projection = nextDirectionProjection(camera.hyper.projection),
+        .spherical => camera.spherical.projection = nextDirectionProjection(camera.spherical.projection),
         else => {},
     }
 }
@@ -427,8 +359,8 @@ fn cycleDirectionProjection(camera: *CameraState, mode: DemoMode) void {
 fn syncWalkOrientation(camera: *CameraState) void {
     const x_heading = @sin(camera.euclid_rotation);
     const z_heading = @cos(camera.euclid_rotation);
-    curved.orientFromHeadingPitch(.hyperbolic, &camera.hyper, x_heading, z_heading, camera.euclid_pitch);
-    curved.orientFromHeadingPitch(.spherical, &camera.spherical, x_heading, z_heading, camera.euclid_pitch);
+    camera.hyper.syncHeadingPitch(x_heading, z_heading, camera.euclid_pitch);
+    camera.spherical.syncHeadingPitch(x_heading, z_heading, camera.euclid_pitch);
 }
 
 fn adjustCameraArrow(camera: *CameraState, arrow: u8) void {
@@ -441,8 +373,8 @@ fn adjustCameraArrow(camera: *CameraState, arrow: u8) void {
             if (camera.movement_mode == .walk) {
                 syncWalkOrientation(camera);
             } else {
-                curved.pitch(&camera.hyper, .hyperbolic, pitch_step);
-                curved.pitch(&camera.spherical, .spherical, pitch_step);
+                camera.hyper.turnPitch(pitch_step);
+                camera.spherical.turnPitch(pitch_step);
             }
         },
         'B' => {
@@ -450,8 +382,8 @@ fn adjustCameraArrow(camera: *CameraState, arrow: u8) void {
             if (camera.movement_mode == .walk) {
                 syncWalkOrientation(camera);
             } else {
-                curved.pitch(&camera.hyper, .hyperbolic, -pitch_step);
-                curved.pitch(&camera.spherical, .spherical, -pitch_step);
+                camera.hyper.turnPitch(-pitch_step);
+                camera.spherical.turnPitch(-pitch_step);
             }
         },
         'C' => {
@@ -459,8 +391,8 @@ fn adjustCameraArrow(camera: *CameraState, arrow: u8) void {
             if (camera.movement_mode == .walk) {
                 syncWalkOrientation(camera);
             } else {
-                curved.yaw(&camera.hyper, .hyperbolic, rotation_step);
-                curved.yaw(&camera.spherical, .spherical, rotation_step);
+                camera.hyper.turnYaw(rotation_step);
+                camera.spherical.turnYaw(rotation_step);
             }
         },
         'D' => {
@@ -468,8 +400,8 @@ fn adjustCameraArrow(camera: *CameraState, arrow: u8) void {
             if (camera.movement_mode == .walk) {
                 syncWalkOrientation(camera);
             } else {
-                curved.yaw(&camera.hyper, .hyperbolic, -rotation_step);
-                curved.yaw(&camera.spherical, .spherical, -rotation_step);
+                camera.hyper.turnYaw(-rotation_step);
+                camera.spherical.turnYaw(-rotation_step);
             }
         },
         else => {},
@@ -488,46 +420,46 @@ fn adjustCameraTranslation(camera: *CameraState, key: u8) void {
     const right_x = cos_rotation;
     const right_z = -sin_rotation;
     const hyper_forward = if (camera.movement_mode == .walk)
-        (curved.worldHeadingDirection(.hyperbolic, camera.hyper, forward_x, forward_z) orelse camera.hyper.forward)
+        (camera.hyper.headingDirection(forward_x, forward_z) orelse camera.hyper.camera.forward)
     else
-        camera.hyper.forward;
+        camera.hyper.camera.forward;
     const hyper_right = if (camera.movement_mode == .walk)
-        (curved.worldHeadingDirection(.hyperbolic, camera.hyper, right_x, right_z) orelse camera.hyper.right)
+        (camera.hyper.headingDirection(right_x, right_z) orelse camera.hyper.camera.right)
     else
-        camera.hyper.right;
+        camera.hyper.camera.right;
     const spherical_forward = if (camera.movement_mode == .walk)
-        (curved.worldHeadingDirection(.spherical, camera.spherical, forward_x, forward_z) orelse camera.spherical.forward)
+        (camera.spherical.headingDirection(forward_x, forward_z) orelse camera.spherical.camera.forward)
     else
-        camera.spherical.forward;
+        camera.spherical.camera.forward;
     const spherical_right = if (camera.movement_mode == .walk)
-        (curved.worldHeadingDirection(.spherical, camera.spherical, right_x, right_z) orelse camera.spherical.right)
+        (camera.spherical.headingDirection(right_x, right_z) orelse camera.spherical.camera.right)
     else
-        camera.spherical.right;
+        camera.spherical.camera.right;
 
     switch (key) {
         'a' => {
             camera.euclid_eye_x -= right_x * euclid_step;
             camera.euclid_eye_z -= right_z * euclid_step;
-            curved.moveAlongDirection(&camera.hyper, .hyperbolic, camera.hyper_params, hyper_right, -hyper_step);
-            curved.moveAlongDirection(&camera.spherical, .spherical, camera.spherical_params, spherical_right, -spherical_step);
+            camera.hyper.moveAlong(hyper_right, -hyper_step);
+            camera.spherical.moveAlong(spherical_right, -spherical_step);
         },
         'd' => {
             camera.euclid_eye_x += right_x * euclid_step;
             camera.euclid_eye_z += right_z * euclid_step;
-            curved.moveAlongDirection(&camera.hyper, .hyperbolic, camera.hyper_params, hyper_right, hyper_step);
-            curved.moveAlongDirection(&camera.spherical, .spherical, camera.spherical_params, spherical_right, spherical_step);
+            camera.hyper.moveAlong(hyper_right, hyper_step);
+            camera.spherical.moveAlong(spherical_right, spherical_step);
         },
         's' => {
             camera.euclid_eye_x -= forward_x * euclid_step;
             camera.euclid_eye_z -= forward_z * euclid_step;
-            curved.moveAlongDirection(&camera.hyper, .hyperbolic, camera.hyper_params, hyper_forward, -hyper_step);
-            curved.moveAlongDirection(&camera.spherical, .spherical, camera.spherical_params, spherical_forward, -spherical_step);
+            camera.hyper.moveAlong(hyper_forward, -hyper_step);
+            camera.spherical.moveAlong(spherical_forward, -spherical_step);
         },
         'w' => {
             camera.euclid_eye_x += forward_x * euclid_step;
             camera.euclid_eye_z += forward_z * euclid_step;
-            curved.moveAlongDirection(&camera.hyper, .hyperbolic, camera.hyper_params, hyper_forward, hyper_step);
-            curved.moveAlongDirection(&camera.spherical, .spherical, camera.spherical_params, spherical_forward, spherical_step);
+            camera.hyper.moveAlong(hyper_forward, hyper_step);
+            camera.spherical.moveAlong(spherical_forward, spherical_step);
         },
         else => {},
     }
@@ -537,14 +469,6 @@ fn vec3Length(v: curved.Vec3) f32 {
     return @sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
 }
 
-fn rebuildCurvedCamera(metric: curved.Metric, params: curved.Params, camera: *curved.Camera, look_ahead: f32) void {
-    const eye_chart = curved.chartCoords(metric, params, camera.position);
-    var probe = camera.*;
-    curved.moveForward(&probe, metric, params, look_ahead);
-    const target_chart = curved.chartCoords(metric, params, probe.position);
-    camera.* = curved.initCamera(metric, params, eye_chart, target_chart);
-}
-
 fn adjustCurvature(camera: *CameraState, mode: DemoMode, more_curved: bool) void {
     const tighten: f32 = 0.92;
     const loosen: f32 = 1.08;
@@ -552,26 +476,43 @@ fn adjustCurvature(camera: *CameraState, mode: DemoMode, more_curved: bool) void
 
     switch (mode) {
         .hyperbolic => {
-            const eye_chart = curved.chartCoords(.hyperbolic, camera.hyper_params, camera.hyper.position);
+            const eye_chart = curved.chartCoords(.hyperbolic, camera.hyper.params, camera.hyper.camera.position);
             const eye_radius_floor = vec3Length(eye_chart) + 0.04;
             const lower = @max(hyperbolic_radius_min, eye_radius_floor);
             const upper = @max(lower, hyperbolic_radius_max);
-            camera.hyper_params.radius = std.math.clamp(
-                camera.hyper_params.radius * scale,
-                lower,
-                upper,
-            );
-            rebuildCurvedCamera(.hyperbolic, camera.hyper_params, &camera.hyper, 0.18);
+            const next_radius = std.math.clamp(camera.hyper.params.radius * scale, lower, upper);
+            camera.hyper.adjustRadius(next_radius, 0.18) catch {};
         },
         .spherical => {
-            camera.spherical_params.radius = std.math.clamp(
-                camera.spherical_params.radius * scale,
-                spherical_radius_min,
-                spherical_radius_max,
-            );
-            rebuildCurvedCamera(.spherical, camera.spherical_params, &camera.spherical, 0.18);
+            const next_radius = std.math.clamp(camera.spherical.params.radius * scale, spherical_radius_min, spherical_radius_max);
+            camera.spherical.adjustRadius(next_radius, 0.18) catch {};
         },
         else => {},
+    }
+}
+
+fn curvedScreen(width: usize, height: usize, zoom: f32) curved.Screen {
+    return .{
+        .width = width,
+        .height = height,
+        .zoom = zoom,
+    };
+}
+
+fn drawCurvedCubeEdges(
+    canvas: *canvas_api.Canvas,
+    chart_vertices: [8]h.Vector,
+    view: curved.View,
+    screen: curved.Screen,
+) void {
+    for (cube_edges) |edge| {
+        view.drawEdge(
+            canvas,
+            vec3FromVector(chart_vertices[edge[0]]),
+            vec3FromVector(chart_vertices[edge[1]]),
+            screen,
+            .{},
+        );
     }
 }
 
@@ -655,7 +596,7 @@ pub fn main() !void {
         height = ws.row;
     }
 
-    var canvas = try visualizer.Canvas.init(allocator, width, height);
+    var canvas = try canvas_api.Canvas.init(allocator, width, height);
     defer canvas.deinit();
 
     const cube_vertices = [_]h.Vector{
@@ -669,17 +610,10 @@ pub fn main() !void {
         E3.e(1).negate().sub(E3.e(2)).sub(E3.e(3)),
     };
 
-    const cube_edges = [_][2]usize{
-        .{ 0, 1 }, .{ 0, 2 }, .{ 0, 4 },
-        .{ 1, 3 }, .{ 1, 5 }, .{ 2, 3 },
-        .{ 2, 6 }, .{ 3, 7 }, .{ 4, 5 },
-        .{ 4, 6 }, .{ 5, 7 }, .{ 6, 7 },
-    };
-
     var angle: f32 = 0.0;
     var animate = true;
     var mode: DemoMode = .perspective;
-    var camera = CameraState.init();
+    var camera = try CameraState.init();
     var escape_state: EscapeState = .idle;
 
     var threaded = std.Io.Threaded.init(allocator, .{});
@@ -717,7 +651,7 @@ pub fn main() !void {
 
         switch (mode) {
             .perspective, .isometric => {
-                const projection_mode: visualizer.ProjectionMode = if (mode == .perspective) .perspective else .isometric;
+                const projection_mode: projection.EuclideanProjection = if (mode == .perspective) .perspective else .isometric;
                 var view_cube_vertices: [cube_vertices.len]h.Vector = undefined;
                 for (cube_vertices, 0..) |vertex, i| {
                     const rotated = zmath.ga.rotors.rotated(vertex.scale(euclidean_cube_scale), rotor);
@@ -737,11 +671,14 @@ pub fn main() !void {
                         const t = @as(f32, @floatFromInt(i)) / 50.0;
                         const vt = clipped.points[0].scale(1.0 - t).add(clipped.points[1].scale(t));
                         const depth = vt.coeffNamed("e3");
-                        const pt = visualizer.projectSimple(vt, width, height, zoom, projection_mode);
+                        const pt = projection.projectEuclidean(vt, width, height, zoom, projection_mode);
                         if (pt) |p| {
                             if (prev_p) |pp| {
                                 if (prev_depth) |pd| {
-                                    canvas.drawLine(pp[0], pp[1], p[0], p[1], '#', shadeTone((pd + depth) * 0.5, near_clip_z, far_clip_z));
+                                    const avg_depth = (pd + depth) * 0.5;
+                                    const t_depth = std.math.clamp((avg_depth - near_clip_z) / @max(far_clip_z - near_clip_z, 1e-3), 0.0, 1.0);
+                                    const tone = @as(u8, @intFromFloat(@round(255.0 + (243.0 - 255.0) * t_depth)));
+                                    canvas.drawLine(pp[0], pp[1], p[0], p[1], '#', tone);
                                 }
                             }
                             prev_p = p;
@@ -753,160 +690,43 @@ pub fn main() !void {
                     }
 
                     if (clipped.start_marker != .none) {
-                        if (visualizer.projectSimple(clipped.points[0], width, height, zoom, projection_mode)) |p| {
+                        if (projection.projectEuclidean(clipped.points[0], width, height, zoom, projection_mode)) |p| {
                             canvas.setMarker(p[0], p[1], clipped.start_marker);
                         }
                     }
                     if (clipped.end_marker != .none) {
-                        if (visualizer.projectSimple(clipped.points[1], width, height, zoom, projection_mode)) |p| {
+                        if (projection.projectEuclidean(clipped.points[1], width, height, zoom, projection_mode)) |p| {
                             canvas.setMarker(p[0], p[1], clipped.end_marker);
                         }
                     }
                 }
             },
             .hyperbolic => {
-                const projection = camera.hyper_projection;
                 var chart_cube_vertices: [cube_vertices.len]h.Vector = undefined;
                 for (cube_vertices, 0..) |vertex, i| {
                     chart_cube_vertices[i] = zmath.ga.rotors.rotated(vertex.scale(hyperbolic_cube_chart_scale), rotor);
                 }
 
-                shadeHyperbolicCube(&canvas, chart_cube_vertices, camera, width, height, zoom);
-
-                for (cube_edges) |edge| {
-                    const rv0 = chart_cube_vertices[edge[0]];
-                    const rv1 = chart_cube_vertices[edge[1]];
-                    const v0_chart = vec3FromVector(rv0);
-                    const v1_chart = vec3FromVector(rv1);
-
-                    var prev_p: ?[2]f32 = null;
-                    var prev_distance: ?f32 = null;
-                    var prev_status: CurvedSampleStatus = .hidden;
-                    for (0..65) |i| {
-                        const t = @as(f32, @floatFromInt(i)) / 64.0;
-                        const vt = curved.geodesicChartPoint(.hyperbolic, camera.hyper_params, v0_chart, v1_chart, t) orelse {
-                            prev_p = null;
-                            prev_distance = null;
-                            prev_status = .hidden;
-                            continue;
-                        };
-                        const sample = curved.samplePoint(.hyperbolic, camera.hyper_params, camera.hyper, vt) orelse {
-                            prev_p = null;
-                            prev_distance = null;
-                            prev_status = .hidden;
-                            continue;
-                        };
-                        const projected = curved.projectSample(projection, sample, width, height, zoom);
-                        const status = curvedSampleStatus(sample.distance, hyperbolic_near_distance, hyperbolic_far_distance, projected);
-
-                        if (projected) |p| {
-                            if (prev_status == .visible and status == .visible) {
-                                if (prev_p) |pp| {
-                                    if (prev_distance) |pd| {
-                                        if (!shouldBreakProjectionSegment(projection, pp, p, width)) {
-                                            canvas.drawLine(pp[0], pp[1], p[0], p[1], '#', shadeTone((pd + sample.distance) * 0.5, hyperbolic_near_distance, hyperbolic_far_distance));
-                                        }
-                                    }
-                                }
-                            } else if (prev_status == .visible and status == .clipped_near) {
-                                if (prev_p) |pp| canvas.setMarker(pp[0], pp[1], .near);
-                            } else if (prev_status == .visible and status == .clipped_far) {
-                                if (prev_p) |pp| canvas.setMarker(pp[0], pp[1], .far);
-                            } else if (prev_status == .clipped_near and status == .visible) {
-                                canvas.setMarker(p[0], p[1], .near);
-                            } else if (prev_status == .clipped_far and status == .visible) {
-                                canvas.setMarker(p[0], p[1], .far);
-                            }
-                            if (status == .visible) {
-                                prev_p = p;
-                                prev_distance = sample.distance;
-                            } else {
-                                prev_p = null;
-                                prev_distance = null;
-                            }
-                        } else {
-                            prev_p = null;
-                            prev_distance = null;
-                        }
-                        prev_status = status;
-                    }
-                }
+                const screen = curvedScreen(width, height, zoom);
+                shadeCurvedCube(&canvas, chart_cube_vertices, camera.hyper, screen);
+                drawCurvedCubeEdges(&canvas, chart_cube_vertices, camera.hyper, screen);
             },
             .spherical => {
-                const projection = camera.spherical_projection;
                 var chart_cube_vertices: [cube_vertices.len]h.Vector = undefined;
                 for (cube_vertices, 0..) |vertex, i| {
                     chart_cube_vertices[i] = zmath.ga.rotors.rotated(vertex.scale(spherical_chart_scale), rotor);
                 }
 
-                shadeSphericalCube(&canvas, chart_cube_vertices, camera, width, height, zoom);
-
-                for (cube_edges) |edge| {
-                    const rv0 = chart_cube_vertices[edge[0]];
-                    const rv1 = chart_cube_vertices[edge[1]];
-                    const v0_chart = vec3FromVector(rv0);
-                    const v1_chart = vec3FromVector(rv1);
-                    const shade_far_distance = sphericalShadeFarDistance(camera.spherical_params);
-
-                    var prev_p: ?[2]f32 = null;
-                    var prev_distance: ?f32 = null;
-                    var prev_status: CurvedSampleStatus = .hidden;
-                    for (0..65) |i| {
-                        const t = @as(f32, @floatFromInt(i)) / 64.0;
-                        const vt = curved.geodesicChartPoint(.spherical, camera.spherical_params, v0_chart, v1_chart, t) orelse {
-                            prev_p = null;
-                            prev_distance = null;
-                            prev_status = .hidden;
-                            continue;
-                        };
-                        const sample = curved.samplePoint(.spherical, camera.spherical_params, camera.spherical, vt) orelse {
-                            prev_p = null;
-                            prev_distance = null;
-                            prev_status = .hidden;
-                            continue;
-                        };
-                        const projected = curved.projectSample(projection, sample, width, height, zoom);
-                        const status = curvedSampleStatus(sample.distance, spherical_near_distance, spherical_far_distance, projected);
-
-                        if (projected) |p| {
-                            if (prev_status == .visible and status == .visible) {
-                                if (prev_p) |pp| {
-                                    if (prev_distance) |pd| {
-                                        if (!shouldBreakProjectionSegment(projection, pp, p, width)) {
-                                            canvas.drawLine(pp[0], pp[1], p[0], p[1], '#', shadeTone((pd + sample.distance) * 0.5, spherical_near_distance, shade_far_distance));
-                                        }
-                                    }
-                                }
-                            } else if (prev_status == .visible and status == .clipped_near) {
-                                if (prev_p) |pp| canvas.setMarker(pp[0], pp[1], .near);
-                            } else if (prev_status == .visible and status == .clipped_far) {
-                                if (prev_p) |pp| canvas.setMarker(pp[0], pp[1], .far);
-                            } else if (prev_status == .clipped_near and status == .visible) {
-                                canvas.setMarker(p[0], p[1], .near);
-                            } else if (prev_status == .clipped_far and status == .visible) {
-                                canvas.setMarker(p[0], p[1], .far);
-                            }
-                            if (status == .visible) {
-                                prev_p = p;
-                                prev_distance = sample.distance;
-                            } else {
-                                prev_p = null;
-                                prev_distance = null;
-                            }
-                        } else {
-                            prev_p = null;
-                            prev_distance = null;
-                        }
-                        prev_status = status;
-                    }
-                }
+                const screen = curvedScreen(width, height, zoom);
+                shadeCurvedCube(&canvas, chart_cube_vertices, camera.spherical, screen);
+                drawCurvedCubeEdges(&canvas, chart_cube_vertices, camera.spherical, screen);
             },
         }
 
         try stdout.writeAll("\x1B[H");
         try stdout.print(
             "{s} Z:{d:.2} C:{d:.2}/{d:.2} V:{s} M:{s} A:{s} SPC/P/G/V/WASD/Ar/+/-/Q\n",
-            .{ projectionModeLabel(mode), zoom, camera.hyper_params.radius, camera.spherical_params.radius, currentCurvedProjectionLabel(mode, camera), movementModeLabel(camera.movement_mode), if (animate) "on" else "off" },
+            .{ projectionModeLabel(mode), zoom, camera.hyper.params.radius, camera.spherical.params.radius, currentCurvedProjectionLabel(mode, camera), movementModeLabel(camera.movement_mode), if (animate) "on" else "off" },
         );
         try canvas.writeRowsToWriter(stdout, canvas.height - 1);
         try stdout.flush();

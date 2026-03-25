@@ -10,6 +10,8 @@ pub const hpga = @import("flavours/hpga.zig");
 pub const epga = @import("flavours/epga.zig");
 pub const sta = @import("flavours/sta.zig");
 pub const cga = @import("flavours/cga.zig");
+pub const geometry = @import("geometry.zig");
+pub const render = @import("render.zig");
 pub const visualizer = @import("ga/visualizer.zig");
 
 test "root surface links ga and vga entrypoints" {

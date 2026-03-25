@@ -1,7 +1,7 @@
 const std = @import("std");
-const visualizer = @import("zmath").visualizer;
-const hpga = @import("zmath").hpga;
-const epga = @import("zmath").epga;
+const render = @import("../render.zig");
+const hpga = @import("../flavours/hpga.zig");
+const epga = @import("../flavours/epga.zig");
 
 pub const Vec3 = [3]f32;
 pub const Vec4 = [4]f32;
@@ -13,6 +13,17 @@ pub const Params = struct {
     // Hyperbolic curvature is `-1 / R^2`; elliptic/spherical curvature is `+1 / R^2`.
     radius: f32 = 1.0,
     angular_zoom: f32,
+};
+
+pub const DistanceClip = struct {
+    near: f32 = 0.0,
+    far: f32 = std.math.inf(f32),
+};
+
+pub const Screen = struct {
+    width: usize,
+    height: usize,
+    zoom: f32,
 };
 
 pub const Camera = struct {
@@ -29,6 +40,201 @@ pub const Sample = struct {
     z_dir: f32,
 };
 
+pub const SampleStatus = enum { hidden, visible, clipped_near, clipped_far };
+
+pub const ProjectedSample = struct {
+    distance: f32 = 0.0,
+    projected: ?[2]f32 = null,
+    status: SampleStatus = .hidden,
+};
+
+pub const EdgeStyle = struct {
+    steps: usize = 64,
+    char: u8 = '#',
+    near_tone: u8 = 255,
+    far_tone: u8 = 243,
+    shade_far_distance: ?f32 = null,
+    break_wrapped: bool = true,
+};
+
+pub const FillStyle = struct {
+    steps: usize = 12,
+    shade: u8,
+    tone: u8,
+};
+
+pub const CameraError = error{
+    InvalidChartPoint,
+    DegenerateDirection,
+};
+
+pub const View = struct {
+    metric: Metric,
+    params: Params,
+    projection: render.projection.DirectionProjection,
+    clip: DistanceClip,
+    camera: Camera,
+
+    pub fn init(
+        metric: Metric,
+        params: Params,
+        projection: render.projection.DirectionProjection,
+        clip: DistanceClip,
+        eye_chart: Vec3,
+        target_chart: Vec3,
+    ) CameraError!View {
+        return .{
+            .metric = metric,
+            .params = params,
+            .projection = projection,
+            .clip = clip,
+            .camera = try initCamera(metric, params, eye_chart, target_chart),
+        };
+    }
+
+    pub fn turnYaw(self: *View, angle: f32) void {
+        yaw(&self.camera, self.metric, angle);
+    }
+
+    pub fn turnPitch(self: *View, angle: f32) void {
+        pitch(&self.camera, self.metric, angle);
+    }
+
+    pub fn moveAlong(self: *View, direction: Vec4, distance: f32) void {
+        moveAlongDirection(&self.camera, self.metric, self.params, direction, distance);
+    }
+
+    pub fn moveForwardBy(self: *View, distance: f32) void {
+        moveForward(&self.camera, self.metric, self.params, distance);
+    }
+
+    pub fn moveRightBy(self: *View, distance: f32) void {
+        moveRight(&self.camera, self.metric, self.params, distance);
+    }
+
+    pub fn headingDirection(self: View, x_heading: f32, z_heading: f32) ?Vec4 {
+        return worldHeadingDirection(self.metric, self.camera, x_heading, z_heading);
+    }
+
+    pub fn syncHeadingPitch(self: *View, x_heading: f32, z_heading: f32, pitch_angle: f32) void {
+        orientFromHeadingPitch(self.metric, &self.camera, x_heading, z_heading, pitch_angle);
+    }
+
+    pub fn adjustRadius(self: *View, radius: f32, look_ahead: f32) CameraError!void {
+        if (radius <= 1e-6) return error.InvalidChartPoint;
+
+        self.params.radius = radius;
+        const eye_chart = chartCoords(self.metric, self.params, self.camera.position);
+        var probe = self.camera;
+        moveForward(&probe, self.metric, self.params, look_ahead);
+        const target_chart = chartCoords(self.metric, self.params, probe.position);
+        self.camera = try initCamera(self.metric, self.params, eye_chart, target_chart);
+    }
+
+    pub fn shadeFarDistance(self: View) f32 {
+        return if (self.metric == .spherical) (@as(f32, std.math.pi) * self.params.radius) else self.clip.far;
+    }
+
+    pub fn sampleProjectedPoint(self: View, chart: Vec3, screen: Screen) ProjectedSample {
+        const point_sample = samplePoint(self.metric, self.params, self.camera, chart) orelse return .{};
+        const projected = projectSample(self.projection, point_sample, screen.width, screen.height, screen.zoom);
+        return .{
+            .distance = point_sample.distance,
+            .projected = projected,
+            .status = sampleStatus(point_sample.distance, self.clip, projected),
+        };
+    }
+
+    pub fn drawEdge(
+        self: View,
+        canvas: *render.canvas.Canvas,
+        a_chart: Vec3,
+        b_chart: Vec3,
+        screen: Screen,
+        style: EdgeStyle,
+    ) void {
+        var prev_point: ?[2]f32 = null;
+        var prev_distance: ?f32 = null;
+        var prev_status: SampleStatus = .hidden;
+        const shade_far_distance = style.shade_far_distance orelse self.shadeFarDistance();
+
+        for (0..style.steps + 1) |i| {
+            const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(style.steps));
+            const chart = geodesicChartPoint(self.metric, self.params, a_chart, b_chart, t) orelse {
+                prev_point = null;
+                prev_distance = null;
+                prev_status = .hidden;
+                continue;
+            };
+            const sample = self.sampleProjectedPoint(chart, screen);
+            if (sample.projected) |p| {
+                if (prev_status == .visible and sample.status == .visible) {
+                    if (prev_point) |pp| {
+                        if (prev_distance) |pd| {
+                            if (!style.break_wrapped or !shouldBreakProjectionSegment(self.projection, pp, p, screen.width)) {
+                                canvas.drawLine(
+                                    pp[0],
+                                    pp[1],
+                                    p[0],
+                                    p[1],
+                                    style.char,
+                                    toneForDistance(pd + (sample.distance - pd) * 0.5, self.clip.near, shade_far_distance, style.near_tone, style.far_tone),
+                                );
+                            }
+                        }
+                    }
+                } else if (prev_status == .visible and sample.status == .clipped_near) {
+                    if (prev_point) |pp| canvas.setMarker(pp[0], pp[1], .near);
+                } else if (prev_status == .visible and sample.status == .clipped_far) {
+                    if (prev_point) |pp| canvas.setMarker(pp[0], pp[1], .far);
+                } else if (prev_status == .clipped_near and sample.status == .visible) {
+                    canvas.setMarker(p[0], p[1], .near);
+                } else if (prev_status == .clipped_far and sample.status == .visible) {
+                    canvas.setMarker(p[0], p[1], .far);
+                }
+
+                if (sample.status == .visible) {
+                    prev_point = p;
+                    prev_distance = sample.distance;
+                } else {
+                    prev_point = null;
+                    prev_distance = null;
+                }
+            } else {
+                prev_point = null;
+                prev_distance = null;
+            }
+            prev_status = sample.status;
+        }
+    }
+
+    pub fn fillQuad(
+        self: View,
+        canvas: *render.canvas.Canvas,
+        quad: [4]Vec3,
+        screen: Screen,
+        style: FillStyle,
+    ) void {
+        const a = quad[0];
+        const b = quad[1];
+        const c = quad[2];
+        const d = quad[3];
+
+        for (0..style.steps + 1) |ui| {
+            const u = @as(f32, @floatFromInt(ui)) / @as(f32, @floatFromInt(style.steps));
+            for (0..style.steps + 1) |vi| {
+                const v = @as(f32, @floatFromInt(vi)) / @as(f32, @floatFromInt(style.steps));
+                const point = bilerpQuad(a, b, c, d, u, v);
+                const sample = self.sampleProjectedPoint(point, screen);
+                if (sample.status != .visible) continue;
+                if (sample.projected) |p| {
+                    canvas.setFill(p[0], p[1], style.shade, style.tone, sample.distance);
+                }
+            }
+        }
+    }
+};
+
 fn add4(a: Vec4, b: Vec4) Vec4 {
     return .{ a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3] };
 }
@@ -39,6 +245,20 @@ fn sub4(a: Vec4, b: Vec4) Vec4 {
 
 fn scale4(v: Vec4, s: f32) Vec4 {
     return .{ v[0] * s, v[1] * s, v[2] * s, v[3] * s };
+}
+
+fn bilerpQuad(a: Vec3, b: Vec3, c: Vec3, d: Vec3, u: f32, v: f32) Vec3 {
+    const ab = lerp3(a, b, u);
+    const dc = lerp3(d, c, u);
+    return lerp3(ab, dc, v);
+}
+
+fn lerp3(a: Vec3, b: Vec3, t: f32) Vec3 {
+    return .{
+        a[0] * (1.0 - t) + b[0] * t,
+        a[1] * (1.0 - t) + b[1] * t,
+        a[2] * (1.0 - t) + b[2] * t,
+    };
 }
 
 fn metricDot(metric: Metric, a: Vec4, b: Vec4) f32 {
@@ -71,7 +291,7 @@ fn orthonormalCandidate(metric: Metric, position: Vec4, candidate: Vec4, refs: [
 // Normalized homogeneous points for the projective models:
 // - hyperbolic `H^3`: unit hyperboloid / Klein chart
 // - elliptic `E^3`: unit 3-sphere / projective chart
-// See Gunn, "Geometry in the 3-Sphere from a Clifford Perspective"
+// See Gunn, "Geometry in the 3-Sphere from a Clifford Perspective"
 // https://arxiv.org/abs/1310.2713
 // and Gunn, "Geometry in the Hyperbolic Plane and Beyond"
 // https://arxiv.org/pdf/1602.08562
@@ -185,16 +405,16 @@ fn reorthonormalize(metric: Metric, camera: *Camera) void {
     camera.up = orthonormalCandidate(metric, camera.position, camera.up, &.{ camera.forward, camera.right }) orelse camera.up;
 }
 
-pub fn initCamera(metric: Metric, params: Params, eye_chart: Vec3, target_chart: Vec3) Camera {
-    const position = embedPoint(metric, params, eye_chart) orelse unreachable;
-    const target = embedPoint(metric, params, target_chart) orelse unreachable;
-    const forward = geodesicDirection(metric, position, target) orelse unreachable;
+pub fn initCamera(metric: Metric, params: Params, eye_chart: Vec3, target_chart: Vec3) CameraError!Camera {
+    const position = embedPoint(metric, params, eye_chart) orelse return error.InvalidChartPoint;
+    const target = embedPoint(metric, params, target_chart) orelse return error.InvalidChartPoint;
+    const forward = geodesicDirection(metric, position, target) orelse return error.DegenerateDirection;
     const up = orthonormalCandidate(metric, position, .{ 0.0, 0.0, 1.0, 0.0 }, &.{forward}) orelse
         orthonormalCandidate(metric, position, .{ 0.0, 0.0, 0.0, 1.0 }, &.{forward}) orelse
-        unreachable;
+        return error.DegenerateDirection;
     const right = orthonormalCandidate(metric, position, .{ 0.0, 1.0, 0.0, 0.0 }, &.{ forward, up }) orelse
         orthonormalCandidate(metric, position, .{ 0.0, 0.0, 0.0, 1.0 }, &.{ forward, up }) orelse
-        unreachable;
+        return error.DegenerateDirection;
 
     var camera = Camera{
         .position = position,
@@ -299,13 +519,9 @@ pub fn orientFromHeadingPitch(
     reorthonormalize(metric, camera);
 }
 
-fn projectSampleDirection(projection: visualizer.DirectionProjection, x_dir: f32, y_dir: f32, z_dir: f32, canvas_width: usize, canvas_height: usize, zoom: f32) ?[2]f32 {
-    return visualizer.projectDirectionWith(projection, x_dir, y_dir, z_dir, canvas_width, canvas_height, zoom);
-}
-
 pub fn projectPoint(
     metric: Metric,
-    projection: visualizer.DirectionProjection,
+    projection: render.projection.DirectionProjection,
     params: Params,
     camera: Camera,
     chart: Vec3,
@@ -318,8 +534,7 @@ pub fn projectPoint(
     const x = metricDot(metric, ray, camera.right);
     const y = metricDot(metric, ray, camera.up);
     const z = metricDot(metric, ray, camera.forward);
-
-    return projectSampleDirection(projection, x, y, z, canvas_width, canvas_height, params.angular_zoom);
+    return render.projection.projectDirectionWith(projection, x, y, z, canvas_width, canvas_height, params.angular_zoom);
 }
 
 pub fn samplePoint(metric: Metric, params: Params, camera: Camera, chart: Vec3) ?Sample {
@@ -341,6 +556,86 @@ pub fn samplePoint(metric: Metric, params: Params, camera: Camera, chart: Vec3) 
     };
 }
 
-pub fn projectSample(projection: visualizer.DirectionProjection, sample: Sample, canvas_width: usize, canvas_height: usize, zoom: f32) ?[2]f32 {
-    return projectSampleDirection(projection, sample.x_dir, sample.y_dir, sample.z_dir, canvas_width, canvas_height, zoom);
+pub fn projectSample(
+    projection: render.projection.DirectionProjection,
+    point_sample: Sample,
+    canvas_width: usize,
+    canvas_height: usize,
+    zoom: f32,
+) ?[2]f32 {
+    return render.projection.projectDirectionWith(
+        projection,
+        point_sample.x_dir,
+        point_sample.y_dir,
+        point_sample.z_dir,
+        canvas_width,
+        canvas_height,
+        zoom,
+    );
+}
+
+fn sampleStatus(distance: f32, clip: DistanceClip, projected: ?[2]f32) SampleStatus {
+    if (projected == null) return .hidden;
+    if (distance < clip.near) return .clipped_near;
+    if (distance > clip.far) return .clipped_far;
+    return .visible;
+}
+
+fn toneForDistance(distance: f32, near_distance: f32, far_distance: f32, near_tone: u8, far_tone: u8) u8 {
+    const span = @max(far_distance - near_distance, 1e-3);
+    const t = std.math.clamp((distance - near_distance) / span, 0.0, 1.0);
+    const near_f = @as(f32, @floatFromInt(near_tone));
+    const far_f = @as(f32, @floatFromInt(far_tone));
+    return @as(u8, @intFromFloat(@round(near_f + (far_f - near_f) * t)));
+}
+
+fn crossesProjectionWrap(a: [2]f32, b: [2]f32, width: usize) bool {
+    return @abs(a[0] - b[0]) > @as(f32, @floatFromInt(width)) * 0.45;
+}
+
+fn shouldBreakProjectionSegment(
+    projection: render.projection.DirectionProjection,
+    a: [2]f32,
+    b: [2]f32,
+    width: usize,
+) bool {
+    return projection == .wrapped and crossesProjectionWrap(a, b, width);
+}
+
+test "hyperbolic and spherical views initialize and sample" {
+    var hyper = try View.init(
+        .hyperbolic,
+        .{ .radius = 0.32, .angular_zoom = 0.72 },
+        .gnomonic,
+        .{ .near = 0.08, .far = 1.55 },
+        .{ 0.0, 0.0, -0.22 },
+        .{ 0.0, 0.0, 0.0 },
+    );
+    const hyper_sample = hyper.sampleProjectedPoint(.{ 0.05, 0.02, 0.01 }, .{ .width = 80, .height = 40, .zoom = hyper.params.angular_zoom });
+    try std.testing.expect(hyper_sample.status != .hidden);
+
+    var spherical = try View.init(
+        .spherical,
+        .{ .radius = 1.48, .angular_zoom = 1.0 },
+        .wrapped,
+        .{ .near = 0.08, .far = std.math.inf(f32) },
+        .{ 0.0, 0.0, -0.82 },
+        .{ 0.0, 0.0, 0.0 },
+    );
+    const spherical_sample = spherical.sampleProjectedPoint(.{ 0.12, -0.07, 0.15 }, .{ .width = 80, .height = 40, .zoom = spherical.params.angular_zoom });
+    try std.testing.expect(spherical_sample.projected != null);
+}
+
+test "adjustRadius preserves a valid camera" {
+    var view = try View.init(
+        .spherical,
+        .{ .radius = 1.48, .angular_zoom = 1.0 },
+        .wrapped,
+        .{ .near = 0.08, .far = std.math.inf(f32) },
+        .{ 0.0, 0.0, -0.82 },
+        .{ 0.0, 0.0, 0.0 },
+    );
+    try view.adjustRadius(1.15, 0.18);
+    const sample = view.sampleProjectedPoint(.{ 0.10, 0.05, 0.10 }, .{ .width = 80, .height = 40, .zoom = view.params.angular_zoom });
+    try std.testing.expect(sample.projected != null);
 }
