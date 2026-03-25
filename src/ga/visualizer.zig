@@ -3,40 +3,129 @@ const zmath = @import("../ga.zig");
 
 /// A software canvas for rendering 2D wireframes.
 pub const Canvas = struct {
+    const subpixel_x: usize = 2;
+    const subpixel_y: usize = 4;
+    const max_subpixel_intensity: u8 = 4;
+    const dot_ramp = [_][]const u8{ " ", "⠁", "⠃", "⠇", "⠏" };
+
     width: usize,
     height: usize,
-    pixels: []u8,
+    subpixels: []u8,
     allocator: std.mem.Allocator,
 
+    fn subpixelWidth(self: Canvas) usize {
+        return self.width * subpixel_x;
+    }
+
+    fn subpixelHeight(self: Canvas) usize {
+        return self.height * subpixel_y;
+    }
+
+    fn setSubpixel(self: *Canvas, x: isize, y: isize, intensity: u8) void {
+        const width_i: isize = @intCast(self.subpixelWidth());
+        const height_i: isize = @intCast(self.subpixelHeight());
+        if (x < 0 or x >= width_i or y < 0 or y >= height_i) return;
+
+        const idx: usize = @intCast(y * width_i + x);
+        const remaining = max_subpixel_intensity -| self.subpixels[idx];
+        self.subpixels[idx] += @min(remaining, intensity);
+    }
+
+    fn glyphForCell(self: Canvas, cell_x: usize, cell_y: usize) []const u8 {
+        const start_x = cell_x * subpixel_x;
+        const start_y = cell_y * subpixel_y;
+        const sub_w = self.subpixelWidth();
+        var occupied: usize = 0;
+        var sum_x: f32 = 0;
+        var sum_y: f32 = 0;
+
+        var sy: usize = 0;
+        while (sy < subpixel_y) : (sy += 1) {
+            var sx: usize = 0;
+            while (sx < subpixel_x) : (sx += 1) {
+                const sample = self.subpixels[(start_y + sy) * sub_w + (start_x + sx)];
+                // Collapse overdraw into binary subpixel coverage for character selection.
+                if (sample > 0) {
+                    occupied += 1;
+                    sum_x += @as(f32, @floatFromInt(sx)) * 2.0 - 1.0;
+                    sum_y += @as(f32, @floatFromInt(sy)) * 2.0 - 3.0;
+                }
+            }
+        }
+
+        if (occupied == 0) return " ";
+        if (occupied <= 2) return dot_ramp[occupied];
+
+        const inv_count = 1.0 / @as(f32, @floatFromInt(occupied));
+        const mean_x = sum_x * inv_count;
+        const mean_y = sum_y * inv_count;
+
+        var sxx: f32 = 0;
+        var syy: f32 = 0;
+        var sxy: f32 = 0;
+
+        sy = 0;
+        while (sy < subpixel_y) : (sy += 1) {
+            var sx: usize = 0;
+            while (sx < subpixel_x) : (sx += 1) {
+                const sample = self.subpixels[(start_y + sy) * sub_w + (start_x + sx)];
+                if (sample == 0) continue;
+
+                const x = @as(f32, @floatFromInt(sx)) * 2.0 - 1.0;
+                const y = @as(f32, @floatFromInt(sy)) * 2.0 - 3.0;
+                const dx = x - mean_x;
+                const dy = y - mean_y;
+                sxx += dx * dx;
+                syy += dy * dy;
+                sxy += dx * dy;
+            }
+        }
+
+        if (@abs(sxy) > (sxx + syy) * 0.25) {
+            return if (sxy < 0) "╱" else "╲";
+        }
+        if (syy > sxx * 1.35) {
+            return if (occupied >= 6) "┃" else "│";
+        }
+        if (sxx > syy * 1.35) {
+            return if (occupied >= 6) "━" else "─";
+        }
+        if (occupied >= 6) return "┼";
+
+        return dot_ramp[@min(occupied, dot_ramp.len - 1)];
+    }
+
     pub fn init(allocator: std.mem.Allocator, width: usize, height: usize) !Canvas {
-        const pixels = try allocator.alloc(u8, width * height);
-        @memset(pixels, ' ');
+        const subpixels = try allocator.alloc(u8, width * height * subpixel_x * subpixel_y);
+        @memset(subpixels, 0);
         return .{
             .allocator = allocator,
             .width = width,
             .height = height,
-            .pixels = pixels,
+            .subpixels = subpixels,
         };
     }
 
     pub fn deinit(self: *Canvas) void {
-        self.allocator.free(self.pixels);
+        self.allocator.free(self.subpixels);
     }
 
     pub fn clear(self: *Canvas) void {
-        @memset(self.pixels, ' ');
+        @memset(self.subpixels, 0);
     }
 
     pub fn setPixel(self: *Canvas, x: isize, y: isize, char: u8) void {
-        if (x < 0 or x >= self.width or y < 0 or y >= self.height) return;
-        self.pixels[@intCast(y * @as(isize, @intCast(self.width)) + x)] = char;
+        _ = char;
+        self.setSubpixel(x * subpixel_x + @as(isize, subpixel_x / 2), y * subpixel_y + @as(isize, subpixel_y / 2), 1);
     }
 
     pub fn drawLine(self: *Canvas, x0_f: f32, y0_f: f32, x1_f: f32, y1_f: f32, char: u8) void {
-        var x0: isize = @intFromFloat(@round(x0_f));
-        var y0: isize = @intFromFloat(@round(y0_f));
-        const x1: isize = @intFromFloat(@round(x1_f));
-        const y1: isize = @intFromFloat(@round(y1_f));
+        _ = char;
+
+        var x0: isize = @intFromFloat(@round(x0_f * subpixel_x));
+        var y0: isize = @intFromFloat(@round(y0_f * subpixel_y));
+        const x1: isize = @intFromFloat(@round(x1_f * subpixel_x));
+        const y1: isize = @intFromFloat(@round(y1_f * subpixel_y));
 
         const dx = @abs(x1 - x0);
         const dy = -@as(isize, @intCast(@abs(y1 - y0)));
@@ -45,7 +134,7 @@ pub const Canvas = struct {
         var err = @as(isize, @intCast(dx)) + dy;
 
         while (true) {
-            self.setPixel(x0, y0, char);
+            self.setSubpixel(x0, y0, 1);
             if (x0 == x1 and y0 == y1) break;
             const e2 = 2 * err;
             if (e2 >= dy) {
@@ -60,9 +149,17 @@ pub const Canvas = struct {
     }
 
     pub fn writeToWriter(self: Canvas, writer: anytype) !void {
+        return self.writeRowsToWriter(writer, self.height);
+    }
+
+    pub fn writeRowsToWriter(self: Canvas, writer: anytype, rows: usize) !void {
+        const output_rows = @min(rows, self.height);
         var y: usize = 0;
-        while (y < self.height) : (y += 1) {
-            try writer.writeAll(self.pixels[y * self.width .. (y + 1) * self.width]);
+        while (y < output_rows) : (y += 1) {
+            var x: usize = 0;
+            while (x < self.width) : (x += 1) {
+                try writer.writeAll(self.glyphForCell(x, y));
+            }
             try writer.writeByte('\n');
         }
     }
