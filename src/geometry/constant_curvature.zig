@@ -8,11 +8,22 @@ pub const Vec4 = [4]f32;
 
 pub const Metric = enum { hyperbolic, elliptic, spherical };
 
+pub const ChartModel = enum {
+    projective,
+    conformal,
+};
+
+pub const CameraModel = enum {
+    linear,
+    conformal,
+};
+
 pub const Params = struct {
     // Constant-curvature radius `R`.
     // Hyperbolic curvature is `-1 / R^2`; elliptic/spherical curvature is `+1 / R^2`.
     radius: f32 = 1.0,
     angular_zoom: f32,
+    chart_model: ChartModel = .projective,
 };
 
 pub const DistanceClip = struct {
@@ -41,6 +52,13 @@ pub const Sample = struct {
 };
 
 pub const SampleStatus = enum { hidden, visible, clipped_near, clipped_far };
+
+const RelativeCoords = struct {
+    w: f32,
+    x: f32,
+    y: f32,
+    z: f32,
+};
 
 pub const ProjectedSample = struct {
     distance: f32 = 0.0,
@@ -143,6 +161,10 @@ pub const View = struct {
             .projected = projected,
             .status = sampleStatus(point_sample.distance, self.clip, projected),
         };
+    }
+
+    pub fn cameraModelPoint(self: View, chart: Vec3, model: CameraModel) ?Vec3 {
+        return modelPointForCamera(self.metric, self.params, self.camera, chart, model);
     }
 
     pub fn drawEdge(
@@ -261,6 +283,18 @@ fn lerp3(a: Vec3, b: Vec3, t: f32) Vec3 {
     };
 }
 
+fn chartScale(params: Params) f32 {
+    return params.radius * switch (params.chart_model) {
+        .projective => @as(f32, 1.0),
+        .conformal => @as(f32, 2.0),
+    };
+}
+
+fn safeDivDenom(value: f32) f32 {
+    if (@abs(value) > 1e-6) return value;
+    return if (value < 0.0) -1e-6 else 1e-6;
+}
+
 fn metricDot(metric: Metric, a: Vec4, b: Vec4) f32 {
     return switch (metric) {
         .hyperbolic => -a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3],
@@ -296,18 +330,49 @@ fn orthonormalCandidate(metric: Metric, position: Vec4, candidate: Vec4, refs: [
 // and Gunn, "Geometry in the Hyperbolic Plane and Beyond"
 // https://arxiv.org/pdf/1602.08562
 pub fn embedPoint(metric: Metric, params: Params, chart: Vec3) ?Vec4 {
+    const scale = chartScale(params);
     const scaled = Vec3{
-        chart[0] / params.radius,
-        chart[1] / params.radius,
-        chart[2] / params.radius,
+        chart[0] / scale,
+        chart[1] / scale,
+        chart[2] / scale,
     };
+    const r2 = scaled[0] * scaled[0] + scaled[1] * scaled[1] + scaled[2] * scaled[2];
 
     return switch (metric) {
-        .hyperbolic => {
-            const point = hpga.Point.proper(scaled[0], scaled[1], scaled[2]) orelse return null;
-            return hpga.ambientCoords(point);
+        .hyperbolic => switch (params.chart_model) {
+            .projective => {
+                const point = hpga.Point.proper(scaled[0], scaled[1], scaled[2]) orelse return null;
+                return hpga.ambientCoords(point);
+            },
+            // Hyperbolica devlog #3 uses the conformal Poincare ball internally.
+            // https://www.youtube.com/watch?v=pXWRYpdYc7Q
+            .conformal => {
+                if (r2 >= 1.0) return null;
+                const denom = 1.0 - r2;
+                return .{
+                    (1.0 + r2) / denom,
+                    2.0 * scaled[0] / denom,
+                    2.0 * scaled[1] / denom,
+                    2.0 * scaled[2] / denom,
+                };
+            },
         },
-        .elliptic, .spherical => epga.ambientCoords(epga.Point.proper(scaled[0], scaled[1], scaled[2])),
+        .elliptic, .spherical => switch (params.chart_model) {
+            .projective => epga.ambientCoords(epga.Point.proper(scaled[0], scaled[1], scaled[2])),
+            // Hyperbolica devlogs #2 and #3 treat spherical space through the
+            // conformal stereographic chart so the far side can wrap cleanly.
+            // https://www.youtube.com/watch?v=yY9GAyJtuJ0
+            // https://www.youtube.com/watch?v=pXWRYpdYc7Q
+            .conformal => {
+                const denom = 1.0 + r2;
+                return .{
+                    (1.0 - r2) / denom,
+                    2.0 * scaled[0] / denom,
+                    2.0 * scaled[1] / denom,
+                    2.0 * scaled[2] / denom,
+                };
+            },
+        },
     };
 }
 
@@ -317,11 +382,24 @@ pub fn chartCoords(metric: Metric, params: Params, ambient: Vec4) Vec3 {
         point = scale4(point, -1.0);
     }
 
-    const inv_w = params.radius / @max(point[0], 1e-6);
-    return .{
-        point[1] * inv_w,
-        point[2] * inv_w,
-        point[3] * inv_w,
+    const scale = chartScale(params);
+    return switch (params.chart_model) {
+        .projective => {
+            const inv_w = scale / safeDivDenom(point[0]);
+            return .{
+                point[1] * inv_w,
+                point[2] * inv_w,
+                point[3] * inv_w,
+            };
+        },
+        .conformal => {
+            const inv = scale / safeDivDenom(1.0 + point[0]);
+            return .{
+                point[1] * inv,
+                point[2] * inv,
+                point[3] * inv,
+            };
+        },
     };
 }
 
@@ -397,6 +475,28 @@ fn geodesicDirection(metric: Metric, eye: Vec4, target: Vec4) ?Vec4 {
         .elliptic, .spherical => sub4(adjusted_target, scale4(eye, inner)),
     };
     return tryNormalizeTangent(metric, tangent);
+}
+
+fn relativeCoords(metric: Metric, camera: Camera, ambient: Vec4) RelativeCoords {
+    var point = ambient;
+    if (metric == .elliptic and metricDot(metric, camera.position, point) < 0.0) {
+        point = scale4(point, -1.0);
+    }
+
+    const inner = metricDot(metric, camera.position, point);
+    return .{
+        .w = switch (metric) {
+            .hyperbolic => -inner,
+            .elliptic, .spherical => inner,
+        },
+        .x = metricDot(metric, point, camera.right),
+        .y = metricDot(metric, point, camera.up),
+        .z = metricDot(metric, point, camera.forward),
+    };
+}
+
+fn relativeSpatialLength(relative: RelativeCoords) f32 {
+    return @sqrt(relative.x * relative.x + relative.y * relative.y + relative.z * relative.z);
 }
 
 fn reorthonormalize(metric: Metric, camera: *Camera) void {
@@ -539,20 +639,49 @@ pub fn projectPoint(
 
 pub fn samplePoint(metric: Metric, params: Params, camera: Camera, chart: Vec3) ?Sample {
     const ambient = embedPoint(metric, params, chart) orelse return null;
-    const ray = geodesicDirection(metric, camera.position, ambient) orelse return null;
-    const inner = metricDot(metric, camera.position, ambient);
+    const relative = relativeCoords(metric, camera, ambient);
+    const spatial_norm = relativeSpatialLength(relative);
+    if (spatial_norm <= 1e-6) return null;
 
     const distance = switch (metric) {
-        .hyperbolic => params.radius * std.math.acosh(@max(-inner, 1.0)),
-        .elliptic => params.radius * std.math.acos(@min(@abs(inner), 1.0)),
-        .spherical => params.radius * std.math.acos(std.math.clamp(inner, -1.0, 1.0)),
+        .hyperbolic => params.radius * std.math.acosh(@max(relative.w, 1.0)),
+        .elliptic => params.radius * std.math.acos(std.math.clamp(relative.w, -1.0, 1.0)),
+        .spherical => params.radius * std.math.acos(std.math.clamp(relative.w, -1.0, 1.0)),
     };
 
     return .{
         .distance = distance,
-        .x_dir = metricDot(metric, ray, camera.right),
-        .y_dir = metricDot(metric, ray, camera.up),
-        .z_dir = metricDot(metric, ray, camera.forward),
+        .x_dir = relative.x / spatial_norm,
+        .y_dir = relative.y / spatial_norm,
+        .z_dir = relative.z / spatial_norm,
+    };
+}
+
+pub fn modelPointForCamera(
+    metric: Metric,
+    params: Params,
+    camera: Camera,
+    chart: Vec3,
+    model: CameraModel,
+) ?Vec3 {
+    const ambient = embedPoint(metric, params, chart) orelse return null;
+    const relative = relativeCoords(metric, camera, ambient);
+    const denom = switch (model) {
+        // Hyperbolica devlog #4 renders hyperbolic geometry through the
+        // Beltrami-Klein model and spherical geometry through the gnomonic
+        // model because they preserve straightness under vertex interpolation.
+        // https://www.youtube.com/watch?v=rqSLuOR3dwY
+        .linear => relative.w,
+        // Devlog #3 uses the conformal charts internally, matching Poincare
+        // for hyperbolic space and stereographic for spherical space.
+        // https://www.youtube.com/watch?v=pXWRYpdYc7Q
+        .conformal => 1.0 + relative.w,
+    };
+    if (@abs(denom) <= 1e-6) return null;
+    return .{
+        relative.x / denom,
+        relative.y / denom,
+        relative.z / denom,
     };
 }
 
@@ -605,7 +734,7 @@ fn shouldBreakProjectionSegment(
 test "hyperbolic and spherical views initialize and sample" {
     var hyper = try View.init(
         .hyperbolic,
-        .{ .radius = 0.32, .angular_zoom = 0.72 },
+        .{ .radius = 0.32, .angular_zoom = 0.72, .chart_model = .conformal },
         .gnomonic,
         .{ .near = 0.08, .far = 1.55 },
         .{ 0.0, 0.0, -0.22 },
@@ -616,7 +745,7 @@ test "hyperbolic and spherical views initialize and sample" {
 
     var spherical = try View.init(
         .spherical,
-        .{ .radius = 1.48, .angular_zoom = 1.0 },
+        .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .wrapped,
         .{ .near = 0.08, .far = std.math.inf(f32) },
         .{ 0.0, 0.0, -0.82 },
@@ -629,7 +758,7 @@ test "hyperbolic and spherical views initialize and sample" {
 test "adjustRadius preserves a valid camera" {
     var view = try View.init(
         .spherical,
-        .{ .radius = 1.48, .angular_zoom = 1.0 },
+        .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .wrapped,
         .{ .near = 0.08, .far = std.math.inf(f32) },
         .{ 0.0, 0.0, -0.82 },
@@ -638,4 +767,28 @@ test "adjustRadius preserves a valid camera" {
     try view.adjustRadius(1.15, 0.18);
     const sample = view.sampleProjectedPoint(.{ 0.10, 0.05, 0.10 }, .{ .width = 80, .height = 40, .zoom = view.params.angular_zoom });
     try std.testing.expect(sample.projected != null);
+}
+
+test "conformal chart roundtrips for hyperbolic and spherical spaces" {
+    const hyper_params = Params{
+        .radius = 0.32,
+        .angular_zoom = 0.72,
+        .chart_model = .conformal,
+    };
+    const hyper_chart = Vec3{ 0.10, -0.04, 0.08 };
+    const hyper_roundtrip = chartCoords(.hyperbolic, hyper_params, embedPoint(.hyperbolic, hyper_params, hyper_chart).?);
+    inline for (hyper_chart, 0..) |expected, i| {
+        try std.testing.expectApproxEqAbs(expected, hyper_roundtrip[i], 1e-5);
+    }
+
+    const spherical_params = Params{
+        .radius = 1.48,
+        .angular_zoom = 1.0,
+        .chart_model = .conformal,
+    };
+    const spherical_chart = Vec3{ 0.35, -0.12, 0.28 };
+    const spherical_roundtrip = chartCoords(.spherical, spherical_params, embedPoint(.spherical, spherical_params, spherical_chart).?);
+    inline for (spherical_chart, 0..) |expected, i| {
+        try std.testing.expectApproxEqAbs(expected, spherical_roundtrip[i], 1e-5);
+    }
 }
