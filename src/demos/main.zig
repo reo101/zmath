@@ -115,8 +115,15 @@ pub fn main() !void {
 
     var threaded = std.Io.Threaded.init(allocator, .{});
     const io = threaded.io();
+    var stdout_buffer: [32768]u8 = undefined;
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
+    const stdout = &stdout_writer.interface;
 
-    std.debug.print("\x1B[?25l\x1B[2J", .{});
+    try stdout.writeAll("\x1B[?25l\x1B[2J");
+    defer {
+        stdout.writeAll("\x1B[?25h") catch {};
+        stdout.flush() catch {};
+    }
 
     while (true) {
         angle += 0.05;
@@ -189,12 +196,10 @@ pub fn main() !void {
             }
         }
 
-        std.debug.print("\x1B[H", .{});
-        std.debug.print("Mode: {s} (Space: Toggle, Q: Quit) | Zoom: {d:.2}\n", .{ projectionModeLabel(mode), zoom });
-        var y: usize = 0;
-        while (y < canvas.height - 1) : (y += 1) {
-            std.debug.print("{s}\n", .{canvas.pixels[y * canvas.width .. (y + 1) * canvas.width]});
-        }
+        try stdout.writeAll("\x1B[H");
+        try stdout.print("Mode: {s} (Space: Toggle, Q: Quit) | Zoom: {d:.2}\n", .{ projectionModeLabel(mode), zoom });
+        try canvas.writeRowsToWriter(stdout, canvas.height - 1);
+        try stdout.flush();
 
         std.Io.sleep(io, std.Io.Duration.fromMilliseconds(30), .awake) catch {};
     }
