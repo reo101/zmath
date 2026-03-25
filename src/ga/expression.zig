@@ -38,6 +38,24 @@ fn scalarConstant(comptime T: type, comptime sig: blades.MetricSignature, value:
     return result;
 }
 
+fn exactResultCast(
+    comptime Result: type,
+    comptime T: type,
+    comptime sig: blades.MetricSignature,
+    value: multivector.FullMultivector(T, sig),
+) multivector.ExactCastError!Result {
+    multivector.ensureMultivector(Result);
+
+    if (comptime Result.Coefficient != T) {
+        @compileError("expression result type must use the same coefficient type as the expression namespace");
+    }
+    if (comptime Result.metric_signature.p != sig.p or Result.metric_signature.q != sig.q or Result.metric_signature.r != sig.r) {
+        @compileError("expression result type must live in the same algebra as the expression namespace");
+    }
+
+    return value.castExactOrError(Result);
+}
+
 fn isNumericType(comptime T: type) bool {
     return switch (@typeInfo(T)) {
         .int, .float, .comptime_int, .comptime_float => true,
@@ -1055,13 +1073,37 @@ pub fn RuntimeCompiledExpression(comptime T: type, comptime sig: blades.MetricSi
             return evalNodeRuntimeArgs(T, sig, self.placeholders, self.nodes, self.root, args);
         }
 
+        pub fn evalAs(
+            self: Self,
+            comptime Result: type,
+            args: anytype,
+        ) (RuntimeEvalError || multivector.ExactCastError)!Result {
+            return try exactResultCast(Result, T, sig, try self.eval(args));
+        }
+
         pub fn evaluate(self: Self, args: anytype) RuntimeEvalError!Full {
             return self.eval(args);
+        }
+
+        pub fn evaluateAs(
+            self: Self,
+            comptime Result: type,
+            args: anytype,
+        ) (RuntimeEvalError || multivector.ExactCastError)!Result {
+            return self.evalAs(Result, args);
         }
 
         pub fn evalSlots(self: Self, slot_values: []const Full) RuntimeEvalError!Full {
             if (slot_values.len != self.placeholders.len) return error.PlaceholderCountMismatch;
             return evalNodeRuntimeSlots(T, sig, self.nodes, self.root, slot_values);
+        }
+
+        pub fn evalSlotsAs(
+            self: Self,
+            comptime Result: type,
+            slot_values: []const Full,
+        ) (RuntimeEvalError || multivector.ExactCastError)!Result {
+            return try exactResultCast(Result, T, sig, try self.evalSlots(slot_values));
         }
     };
 }
@@ -1105,6 +1147,20 @@ pub fn evaluateRuntime(
     return compiled.eval(args);
 }
 
+pub fn evaluateRuntimeAs(
+    comptime Result: type,
+    comptime T: type,
+    comptime sig: blades.MetricSignature,
+    naming_options: blade_parsing.SignedBladeNamingOptions,
+    allocator: std.mem.Allocator,
+    source: []const u8,
+    args: anytype,
+) (std.mem.Allocator.Error || RuntimeCompileError || RuntimeEvalError || multivector.ExactCastError)!Result {
+    var compiled = try compileRuntime(T, sig, naming_options, allocator, source);
+    defer compiled.deinit();
+    return compiled.evalAs(Result, args);
+}
+
 pub fn CompiledExpression(
     comptime T: type,
     comptime sig: blades.MetricSignature,
@@ -1137,8 +1193,16 @@ pub fn CompiledExpression(
             return evalNode(T, sig, placeholder_names, compiled, compiled.root, args);
         }
 
+        pub fn evalAs(_: Self, comptime Result: type, args: anytype) Result {
+            return exactResultCast(Result, T, sig, Self.eval(.{}, args)) catch @panic("expression result had non-zero coefficients outside the requested carrier");
+        }
+
         pub fn evaluate(self: Self, args: anytype) Full {
             return self.eval(args);
+        }
+
+        pub fn evaluateAs(self: Self, comptime Result: type, args: anytype) Result {
+            return self.evalAs(Result, args);
         }
     };
 }
@@ -1172,6 +1236,17 @@ pub fn evaluate(
     args: anytype,
 ) multivector.FullMultivector(T, sig) {
     return compile(T, sig, naming_options, source).eval(args);
+}
+
+pub fn evaluateAs(
+    comptime Result: type,
+    comptime T: type,
+    comptime sig: blades.MetricSignature,
+    comptime naming_options: blade_parsing.SignedBladeNamingOptions,
+    comptime source: []const u8,
+    args: anytype,
+) Result {
+    return compile(T, sig, naming_options, source).evalAs(Result, args);
 }
 
 test "expression folds constant blade arithmetic" {
@@ -1224,6 +1299,15 @@ test "expression supports postfix inverse on comptime values" {
     try std.testing.expectEqual(@as(f32, 0.5), value.coeffNamed("e1"));
 }
 
+test "compiled expression can narrow to an exact carrier type" {
+    const sig = comptime blades.MetricSignature.euclidean(3);
+    const Basis = multivector.Basis(f32, sig);
+    const expr = compile(f32, sig, blade_parsing.SignedBladeNamingOptions.euclidean(3), "2*e1 + 3*{v}");
+    const value = expr.evalAs(Basis.Vector, .{ .v = Basis.e(2) });
+
+    try std.testing.expect(value.eql(Basis.Vector.init(.{ 2, 3, 0 })));
+}
+
 test "runtime compiled expression supports named and slot evaluation" {
     const sig = comptime blades.MetricSignature.euclidean(3);
     const options = blade_parsing.SignedBladeNamingOptions.euclidean(3);
@@ -1249,6 +1333,32 @@ test "runtime compiled expression supports named and slot evaluation" {
     };
     const tuple_value = try tuple.evalSlots(&slot_values);
     try std.testing.expectEqual(@as(f32, 3), tuple_value.scalarCoeff());
+}
+
+test "runtime compiled expression can narrow to an exact carrier type" {
+    const sig = comptime blades.MetricSignature.euclidean(3);
+    const options = blade_parsing.SignedBladeNamingOptions.euclidean(3);
+    const Basis = multivector.Basis(f32, sig);
+
+    var expr = try compileRuntime(f32, sig, options, std.testing.allocator, "2*e1 + 3*{v}");
+    defer expr.deinit();
+
+    const value = try expr.evalAs(Basis.Vector, .{ .v = Basis.e(2) });
+    try std.testing.expect(value.eql(Basis.Vector.init(.{ 2, 3, 0 })));
+}
+
+test "runtime exact typed evaluation rejects non-zero omitted coefficients" {
+    const sig = comptime blades.MetricSignature.euclidean(3);
+    const options = blade_parsing.SignedBladeNamingOptions.euclidean(3);
+    const Basis = multivector.Basis(f32, sig);
+
+    var expr = try compileRuntime(f32, sig, options, std.testing.allocator, "e1 + e12");
+    defer expr.deinit();
+
+    try std.testing.expectError(
+        multivector.ExactCastError.ExcludedCoefficientNonZero,
+        expr.evalAs(Basis.Vector, .{}),
+    );
 }
 
 fn smithedScalar(smith: *std.testing.Smith) f32 {

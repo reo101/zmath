@@ -239,6 +239,10 @@ pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_o
                 pub fn expr(comptime source: []const u8, args: anytype) multivector.FullMultivector(T, metric_signature) {
                     return compileExpr(source).eval(args);
                 }
+
+                pub fn exprAs(comptime Result: type, comptime source: []const u8, args: anytype) Result {
+                    return compileExpr(source).evalAs(Result, args);
+                }
             };
         }
     };

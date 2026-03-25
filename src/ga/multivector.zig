@@ -10,6 +10,7 @@ pub const BladeMask = blade_ops.BladeMask;
 pub const OrientationSign = blade_ops.OrientationSign;
 pub const SignatureClass = blade_ops.SignatureClass;
 pub const SignedBladeParseError = blade_parsing.SignedBladeParseError;
+pub const ExactCastError = error{ExcludedCoefficientNonZero};
 
 /// Parsed signed blade as a sign plus canonical blade mask.
 pub const SignedBladeSpec = blade_ops.SignedBladeSpec;
@@ -786,6 +787,36 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                 }
             }
             return To.init(result_coeffs);
+        }
+
+        /// Converts this multivector to another carrier in the same algebra,
+        /// asserting that no non-zero coefficients are dropped.
+        pub fn castExactOrError(self: Self, comptime To: type) ExactCastError!To {
+            if (sig.p != To.metric_signature.p or sig.q != To.metric_signature.q or sig.r != To.metric_signature.r) {
+                @compileError("cannot cast multivector to a different metric signature");
+            }
+            if (T != To.Coefficient) {
+                @compileError("cannot exactly cast multivector to a different coefficient type");
+            }
+
+            var result_coeffs = std.mem.zeroes([To.stored_blade_count]T);
+            const self_coeffs = self.coeffsArray();
+
+            inline for (blade_masks, 0..) |mask, i| {
+                const to_idx = To.blade_index_by_mask[mask.index()];
+                if (to_idx < To.stored_blade_count) {
+                    result_coeffs[to_idx] = self_coeffs[i];
+                } else if (self_coeffs[i] != 0) {
+                    return error.ExcludedCoefficientNonZero;
+                }
+            }
+            return To.init(result_coeffs);
+        }
+
+        /// Converts this multivector to another carrier in the same algebra,
+        /// panicking if any non-zero coefficients would be dropped.
+        pub fn castExact(self: Self, comptime To: type) To {
+            return self.castExactOrError(To) catch @panic("exact multivector cast would drop a non-zero coefficient");
         }
 
         /// Returns the outer product (wedge) of two multivectors.
