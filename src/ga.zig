@@ -2,6 +2,7 @@ const std = @import("std");
 
 pub const blades = @import("ga/blades.zig");
 pub const blade_parsing = @import("ga/blade_parsing.zig");
+pub const expression = @import("ga/expression.zig");
 pub const multivector = @import("ga/multivector.zig");
 pub const rotors = @import("ga/rotors.zig");
 
@@ -229,6 +230,14 @@ pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_o
 
                 pub fn dual(mv: anytype) multivector.DualResultType(T, @TypeOf(mv).blades, metric_signature) {
                     return mv.dual();
+                }
+
+                pub fn compileExpr(comptime source: []const u8) expression.CompiledExpression(T, metric_signature, naming, source) {
+                    return expression.compile(T, metric_signature, naming, source);
+                }
+
+                pub fn expr(comptime source: []const u8, args: anytype) multivector.FullMultivector(T, metric_signature) {
+                    return compileExpr(source).eval(args);
                 }
             };
         }

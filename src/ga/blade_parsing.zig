@@ -20,6 +20,12 @@ pub const SignedBladeParseError = error{
     TrailingBasisSeparator,
 };
 
+/// Result of parsing a signed blade token from inside a larger source string.
+pub const SignedBladePrefixParseResult = struct {
+    spec: SignedBladeSpec,
+    end: usize,
+};
+
 /// Naming and parser behavior switches for signed-blade syntax.
 pub const SignedBladeNamingOptions = struct {
     /// Basis-index partition used for parser/programming-visible naming.
@@ -273,6 +279,63 @@ fn parseSignedBladeImpl(
     };
 }
 
+fn scanSignedBladeTokenEnd(
+    comptime source: []const u8,
+    comptime start: usize,
+    comptime options: SignedBladeNamingOptions,
+) SignedBladeParseError!usize {
+    if (start >= source.len or source[start] != options.basis_prefix) return error.MissingBasisPrefix;
+    if (start + 1 >= source.len) return error.EmptySignedBlade;
+
+    var position = start + 1;
+    return switch (source[position]) {
+        '(' => blk: {
+            position += 1;
+            while (position < source.len and source[position] != ')') : (position += 1) {}
+            if (position >= source.len) return error.InvalidBasisDelimiter;
+            break :blk position + 1;
+        },
+        '[' => blk: {
+            position += 1;
+            while (position < source.len and source[position] != ']') : (position += 1) {}
+            if (position >= source.len) return error.InvalidBasisDelimiter;
+            break :blk position + 1;
+        },
+        else => blk: {
+            while (position < source.len and (isDigit(source[position]) or source[position] == '_')) : (position += 1) {}
+            break :blk position;
+        },
+    };
+}
+
+/// Parses a signed blade starting at `start` inside a larger source string and
+/// returns both the canonical spec and the first byte past the consumed token.
+pub fn parseSignedBladePrefix(
+    comptime source: []const u8,
+    comptime start: usize,
+    comptime dimension: usize,
+    comptime options: ?SignedBladeNamingOptions,
+    comptime panicking: bool,
+) if (panicking) SignedBladePrefixParseResult else SignedBladeParseError!SignedBladePrefixParseResult {
+    const opts = comptime options orelse SignedBladeNamingOptions.euclidean(dimension);
+
+    if (panicking) {
+        const end = comptime scanSignedBladeTokenEnd(source, start, opts) catch |err| invalidSignedBladeCompileError(source[start..], dimension, err);
+        const token = source[start..end];
+        return .{
+            .spec = comptime parseSignedBladeImpl(token, dimension, opts) catch |err| invalidSignedBladeCompileError(token, dimension, err),
+            .end = end,
+        };
+    }
+
+    const end = comptime scanSignedBladeTokenEnd(source, start, opts) catch |err| return err;
+    const token = source[start..end];
+    return .{
+        .spec = try parseSignedBladeImpl(token, dimension, opts),
+        .end = end,
+    };
+}
+
 /// Resolves one named basis index under naming options.
 /// If `panicking` is true, invalid indices will trigger a compile error instead of returning an error union.
 pub fn resolveNamedBasisIndex(
@@ -324,6 +387,16 @@ test "isSignedBlade rejects malformed delimiters and separators" {
     try std.testing.expect(!isSignedBlade("e[1;2]", 3, null));
     try std.testing.expect(!isSignedBlade("e_", 3, null));
     try std.testing.expect(isSignedBlade("e(1,2)", 3, null));
+}
+
+test "signed blade prefix parser returns consumed length" {
+    const parsed = try parseSignedBladePrefix("2*e(3,1,2) + tail", 2, 3, null, false);
+    try std.testing.expectEqual(SignedBladeSpec{ .sign = .positive, .mask = .init(0b111) }, parsed.spec);
+    try std.testing.expectEqual(@as(usize, 10), parsed.end);
+
+    const compact = try parseSignedBladePrefix("e12+rest", 0, 12, null, false);
+    try std.testing.expectEqual(SignedBladeSpec{ .sign = .positive, .mask = .init(0b011) }, compact.spec);
+    try std.testing.expectEqual(@as(usize, 3), compact.end);
 }
 
 test "naming options can map e0 through degenerate parser span" {
