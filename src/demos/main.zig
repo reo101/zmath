@@ -288,6 +288,27 @@ fn currentCurvedProjectionLabel(mode: DemoMode, camera: CameraState) []const u8 
     };
 }
 
+const WalkDirections = struct {
+    forward: curved.Vec4,
+    right: curved.Vec4,
+};
+
+fn clampedWalkPitchDelta(view: curved.View, requested_delta: f32) f32 {
+    const orientation = view.walkOrientation() orelse return 0.0;
+    return std.math.clamp(orientation.pitch + requested_delta, -1.10, 1.10) - orientation.pitch;
+}
+
+fn curvedWalkDirections(view: curved.View) WalkDirections {
+    const orientation = view.walkOrientation() orelse return .{
+        .forward = view.camera.forward,
+        .right = view.camera.right,
+    };
+    return .{
+        .forward = view.headingDirection(orientation.x_heading, orientation.z_heading) orelse view.camera.forward,
+        .right = view.headingDirection(orientation.z_heading, -orientation.x_heading) orelse view.camera.right,
+    };
+}
+
 fn nextMode(mode: DemoMode) DemoMode {
     return switch (mode) {
         .perspective => .isometric,
@@ -379,7 +400,10 @@ fn adjustCameraArrow(camera: *CameraState, arrow: u8) void {
         'A' => {
             camera.euclid_pitch = std.math.clamp(camera.euclid_pitch + pitch_step, -1.10, 1.10);
             if (camera.movement_mode == .walk) {
-                syncWalkOrientation(camera);
+                const hyper_delta = clampedWalkPitchDelta(camera.hyper, pitch_step);
+                const spherical_delta = clampedWalkPitchDelta(camera.spherical, pitch_step);
+                camera.hyper.turnPitch(hyper_delta);
+                camera.spherical.turnPitch(spherical_delta);
             } else {
                 camera.hyper.turnPitch(pitch_step);
                 camera.spherical.turnPitch(pitch_step);
@@ -388,7 +412,10 @@ fn adjustCameraArrow(camera: *CameraState, arrow: u8) void {
         'B' => {
             camera.euclid_pitch = std.math.clamp(camera.euclid_pitch - pitch_step, -1.10, 1.10);
             if (camera.movement_mode == .walk) {
-                syncWalkOrientation(camera);
+                const hyper_delta = clampedWalkPitchDelta(camera.hyper, -pitch_step);
+                const spherical_delta = clampedWalkPitchDelta(camera.spherical, -pitch_step);
+                camera.hyper.turnPitch(hyper_delta);
+                camera.spherical.turnPitch(spherical_delta);
             } else {
                 camera.hyper.turnPitch(-pitch_step);
                 camera.spherical.turnPitch(-pitch_step);
@@ -397,7 +424,8 @@ fn adjustCameraArrow(camera: *CameraState, arrow: u8) void {
         'C' => {
             camera.euclid_rotation += rotation_step;
             if (camera.movement_mode == .walk) {
-                syncWalkOrientation(camera);
+                camera.hyper.turnWalkYaw(rotation_step);
+                camera.spherical.turnWalkYaw(rotation_step);
             } else {
                 camera.hyper.turnYaw(rotation_step);
                 camera.spherical.turnYaw(rotation_step);
@@ -406,7 +434,8 @@ fn adjustCameraArrow(camera: *CameraState, arrow: u8) void {
         'D' => {
             camera.euclid_rotation -= rotation_step;
             if (camera.movement_mode == .walk) {
-                syncWalkOrientation(camera);
+                camera.hyper.turnWalkYaw(-rotation_step);
+                camera.spherical.turnWalkYaw(-rotation_step);
             } else {
                 camera.hyper.turnYaw(-rotation_step);
                 camera.spherical.turnYaw(-rotation_step);
@@ -427,22 +456,12 @@ fn adjustCameraTranslation(camera: *CameraState, key: u8) void {
     const forward_z = cos_rotation;
     const right_x = cos_rotation;
     const right_z = -sin_rotation;
-    const hyper_forward = if (camera.movement_mode == .walk)
-        (camera.hyper.headingDirection(forward_x, forward_z) orelse camera.hyper.camera.forward)
-    else
-        camera.hyper.camera.forward;
-    const hyper_right = if (camera.movement_mode == .walk)
-        (camera.hyper.headingDirection(right_x, right_z) orelse camera.hyper.camera.right)
-    else
-        camera.hyper.camera.right;
-    const spherical_forward = if (camera.movement_mode == .walk)
-        (camera.spherical.headingDirection(forward_x, forward_z) orelse camera.spherical.camera.forward)
-    else
-        camera.spherical.camera.forward;
-    const spherical_right = if (camera.movement_mode == .walk)
-        (camera.spherical.headingDirection(right_x, right_z) orelse camera.spherical.camera.right)
-    else
-        camera.spherical.camera.right;
+    const hyper_walk = curvedWalkDirections(camera.hyper);
+    const spherical_walk = curvedWalkDirections(camera.spherical);
+    const hyper_forward = if (camera.movement_mode == .walk) hyper_walk.forward else camera.hyper.camera.forward;
+    const hyper_right = if (camera.movement_mode == .walk) hyper_walk.right else camera.hyper.camera.right;
+    const spherical_forward = if (camera.movement_mode == .walk) spherical_walk.forward else camera.spherical.camera.forward;
+    const spherical_right = if (camera.movement_mode == .walk) spherical_walk.right else camera.spherical.camera.right;
 
     switch (key) {
         'a' => {
@@ -450,24 +469,28 @@ fn adjustCameraTranslation(camera: *CameraState, key: u8) void {
             camera.euclid_eye_z -= right_z * euclid_step;
             camera.hyper.moveAlong(hyper_right, -hyper_step);
             camera.spherical.moveAlong(spherical_right, -spherical_step);
+            camera.spherical.wrapSphericalChart();
         },
         'd' => {
             camera.euclid_eye_x += right_x * euclid_step;
             camera.euclid_eye_z += right_z * euclid_step;
             camera.hyper.moveAlong(hyper_right, hyper_step);
             camera.spherical.moveAlong(spherical_right, spherical_step);
+            camera.spherical.wrapSphericalChart();
         },
         's' => {
             camera.euclid_eye_x -= forward_x * euclid_step;
             camera.euclid_eye_z -= forward_z * euclid_step;
             camera.hyper.moveAlong(hyper_forward, -hyper_step);
             camera.spherical.moveAlong(spherical_forward, -spherical_step);
+            camera.spherical.wrapSphericalChart();
         },
         'w' => {
             camera.euclid_eye_x += forward_x * euclid_step;
             camera.euclid_eye_z += forward_z * euclid_step;
             camera.hyper.moveAlong(hyper_forward, hyper_step);
             camera.spherical.moveAlong(spherical_forward, spherical_step);
+            camera.spherical.wrapSphericalChart();
         },
         else => {},
     }
@@ -494,6 +517,7 @@ fn adjustCurvature(camera: *CameraState, mode: DemoMode, more_curved: bool) void
         .spherical => {
             const next_radius = std.math.clamp(camera.spherical.params.radius * scale, spherical_radius_min, spherical_radius_max);
             camera.spherical.adjustRadius(next_radius, 0.18) catch {};
+            camera.spherical.wrapSphericalChart();
         },
         else => {},
     }
