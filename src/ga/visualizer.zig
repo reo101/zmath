@@ -160,7 +160,9 @@ pub const Canvas = struct {
             while (x < self.width) : (x += 1) {
                 try writer.writeAll(self.glyphForCell(x, y));
             }
-            try writer.writeByte('\n');
+            if (y + 1 < output_rows) {
+                try writer.writeByte('\n');
+            }
         }
     }
 };
@@ -179,6 +181,10 @@ pub fn projectSimple(p: anytype, canvas_width: usize, canvas_height: usize, zoom
         .perspective, .isometric => {},
         .hyperbolic => {
             // Poincare-ball-like compression into a bounded domain.
+            const curvature: f32 = 1.35;
+            x_raw *= curvature;
+            y_raw *= curvature;
+            z_raw *= curvature;
             const r2 = x_raw * x_raw + y_raw * y_raw + z_raw * z_raw;
             const w = @sqrt(1.0 + r2);
             const factor = 1.0 / (1.0 + w);
@@ -187,8 +193,7 @@ pub fn projectSimple(p: anytype, canvas_width: usize, canvas_height: usize, zoom
             z_raw *= factor;
         },
         .spherical => {
-            // Stereographic projection from the "south" pole after normalization.
-            // This intentionally creates a strong singularity near the opposite pole.
+            // Stereographic projection from the backward viewing direction after normalization.
             const radius = @sqrt(x_raw * x_raw + y_raw * y_raw + z_raw * z_raw);
             if (radius <= 1e-6) return null;
 
@@ -196,20 +201,21 @@ pub fn projectSimple(p: anytype, canvas_width: usize, canvas_height: usize, zoom
             const ny = y_raw / radius;
             const nz = z_raw / radius;
 
-            const pole_softening: f32 = 0.02;
-            const denom = 1.0 + ny + pole_softening;
+            const pole_softening: f32 = 0.04;
+            const denom = 1.0 + nz + pole_softening;
             x_raw = nx / denom;
-            y_raw = nz / denom;
-            z_raw = ny;
+            y_raw = ny / denom;
+            z_raw = nz;
         },
     }
 
     const z_offset: f32 = switch (mode) {
         // Pull perspective-style modes farther back so depth motion causes
         // less aggressive zoom-in as geometry approaches the camera.
-        .perspective, .hyperbolic => 30.0,
+        .perspective => 30.0,
+        .hyperbolic => 11.0,
         .isometric => 6.0,
-        .spherical => 5.0,
+        .spherical => 2.2,
     };
     const dist = z_raw + z_offset;
 
@@ -219,7 +225,7 @@ pub fn projectSimple(p: anytype, canvas_width: usize, canvas_height: usize, zoom
     // Normalize scale across modes. Spherical gets an extra shrink factor so
     // the heavily distorted opposite pole stays in frame more often.
     const base_scale = if (mode == .perspective or mode == .hyperbolic or mode == .spherical) (zoom / dist) else (zoom / z_offset);
-    const scale = if (mode == .spherical) base_scale * 0.10 else base_scale;
+    const scale = base_scale;
 
     const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
 
