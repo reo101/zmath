@@ -58,6 +58,20 @@ const cube_face_colors = [_]u8{
     147, // left
     45, // right
 };
+const unit_cube_vertices = [_]h.Vector{
+    h.exprAs(h.Vector, "e1 + e2 + e3", .{}),
+    h.exprAs(h.Vector, "e1 + e2 - e3", .{}),
+    h.exprAs(h.Vector, "e1 - e2 + e3", .{}),
+    h.exprAs(h.Vector, "e1 - e2 - e3", .{}),
+    h.exprAs(h.Vector, "-e1 + e2 + e3", .{}),
+    h.exprAs(h.Vector, "-e1 + e2 - e3", .{}),
+    h.exprAs(h.Vector, "-e1 - e2 + e3", .{}),
+    h.exprAs(h.Vector, "-e1 - e2 - e3", .{}),
+};
+const perspective_rotor_generator_expr = h.compileExpr("{xy}*e12 + {yz}*e23 + {xz}*e13");
+const isometric_rotor_generator_expr = h.compileExpr("{xz}*e13 + {xy}*e12");
+const hyperbolic_rotor_generator_expr = h.compileExpr("{xz}*e13 + {yz}*e23");
+const spherical_rotor_generator_expr = h.compileExpr("{xy}*e12 + {yz}*e23");
 
 const CameraState = struct {
     euclid_rotation: f32 = 0.0,
@@ -222,36 +236,28 @@ fn rotorFromGenerator(B: anytype) h.Rotor {
     if (B.magnitude() <= 1e-6) return h.Rotor.init(.{ 1, 0, 0, 0 });
 
     const exp_rotor = B.scale(-0.5).exp();
-    var rotor = h.Rotor.zero();
-    inline for (h.Rotor.blades, 0..) |mask, i| {
-        rotor.coeffs[i] = exp_rotor.coeff(mask);
-    }
-    return zmath.ga.rotors.normalizedRotor(rotor);
+    return zmath.ga.rotors.normalizedRotor(exp_rotor.castExact(h.Rotor));
 }
 
 fn sceneRotor(angle: f32, mode: DemoMode) h.Rotor {
     return switch (mode) {
-        .perspective => rotorFromGenerator(
-            E3.signedBlade("e12")
-                .scale(@cos(angle * 0.3))
-                .add(E3.signedBlade("e23").scale(@sin(angle * 0.5)))
-                .add(E3.signedBlade("e13").scale(@cos(angle * 0.7))),
-        ),
-        .isometric => rotorFromGenerator(
-            E3.signedBlade("e13")
-                .scale(angle * 0.35)
-                .add(E3.signedBlade("e12").scale(0.18 * @sin(angle * 0.17))),
-        ),
-        .hyperbolic => rotorFromGenerator(
-            E3.signedBlade("e13")
-                .scale(angle * 0.22)
-                .add(E3.signedBlade("e23").scale(-0.38 + 0.12 * @sin(angle * 0.17))),
-        ),
-        .spherical => rotorFromGenerator(
-            E3.signedBlade("e12")
-                .scale(angle * 0.20)
-                .add(E3.signedBlade("e23").scale(0.26 * @sin(angle * 0.21))),
-        ),
+        .perspective => rotorFromGenerator(perspective_rotor_generator_expr.evalAs(h.Bivector, .{
+            .xy = @cos(angle * 0.3),
+            .yz = @sin(angle * 0.5),
+            .xz = @cos(angle * 0.7),
+        })),
+        .isometric => rotorFromGenerator(isometric_rotor_generator_expr.evalAs(h.Bivector, .{
+            .xz = angle * 0.35,
+            .xy = 0.18 * @sin(angle * 0.17),
+        })),
+        .hyperbolic => rotorFromGenerator(hyperbolic_rotor_generator_expr.evalAs(h.Bivector, .{
+            .xz = angle * 0.22,
+            .yz = -0.38 + 0.12 * @sin(angle * 0.17),
+        })),
+        .spherical => rotorFromGenerator(spherical_rotor_generator_expr.evalAs(h.Bivector, .{
+            .xy = angle * 0.20,
+            .yz = 0.26 * @sin(angle * 0.21),
+        })),
     };
 }
 
@@ -631,17 +637,6 @@ pub fn main() !void {
     var canvas = try canvas_api.Canvas.init(allocator, width, height);
     defer canvas.deinit();
 
-    const cube_vertices = [_]h.Vector{
-        E3.e(1).add(E3.e(2)).add(E3.e(3)),
-        E3.e(1).add(E3.e(2)).sub(E3.e(3)),
-        E3.e(1).sub(E3.e(2)).add(E3.e(3)),
-        E3.e(1).sub(E3.e(2)).sub(E3.e(3)),
-        E3.e(1).negate().add(E3.e(2)).add(E3.e(3)),
-        E3.e(1).negate().add(E3.e(2)).sub(E3.e(3)),
-        E3.e(1).negate().sub(E3.e(2)).add(E3.e(3)),
-        E3.e(1).negate().sub(E3.e(2)).sub(E3.e(3)),
-    };
-
     var angle: f32 = 0.0;
     var animate = true;
     var mode: DemoMode = .perspective;
@@ -684,8 +679,8 @@ pub fn main() !void {
         switch (mode) {
             .perspective, .isometric => {
                 const projection_mode: projection.EuclideanProjection = if (mode == .perspective) .perspective else .isometric;
-                var view_cube_vertices: [cube_vertices.len]h.Vector = undefined;
-                for (cube_vertices, 0..) |vertex, i| {
+                var view_cube_vertices: [unit_cube_vertices.len]h.Vector = undefined;
+                for (unit_cube_vertices, 0..) |vertex, i| {
                     const rotated = zmath.ga.rotors.rotated(vertex.scale(euclidean_cube_scale), rotor);
                     view_cube_vertices[i] = cameraSpace(rotated, camera);
                 }
@@ -734,8 +729,8 @@ pub fn main() !void {
                 }
             },
             .hyperbolic => {
-                var chart_cube_vertices: [cube_vertices.len]h.Vector = undefined;
-                for (cube_vertices, 0..) |vertex, i| {
+                var chart_cube_vertices: [unit_cube_vertices.len]h.Vector = undefined;
+                for (unit_cube_vertices, 0..) |vertex, i| {
                     chart_cube_vertices[i] = zmath.ga.rotors.rotated(vertex.scale(hyperbolic_cube_chart_scale), rotor);
                 }
 
@@ -744,8 +739,8 @@ pub fn main() !void {
                 drawCurvedCubeEdges(&canvas, chart_cube_vertices, camera.hyper, screen);
             },
             .spherical => {
-                var chart_cube_vertices: [cube_vertices.len]h.Vector = undefined;
-                for (cube_vertices, 0..) |vertex, i| {
+                var chart_cube_vertices: [unit_cube_vertices.len]h.Vector = undefined;
+                for (unit_cube_vertices, 0..) |vertex, i| {
                     chart_cube_vertices[i] = zmath.ga.rotors.rotated(vertex.scale(spherical_chart_scale), rotor);
                 }
 
