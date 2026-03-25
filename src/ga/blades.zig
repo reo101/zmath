@@ -244,6 +244,7 @@ pub const BasisIndexSpan = struct {
 /// Basis-index spans partitioned by metric signature category.
 pub const BasisIndexSpans = struct {
     pub const ByClass = std.enums.EnumFieldStruct(SignatureClass, ?BasisIndexSpan, @as(?BasisIndexSpan, null));
+    pub const ValidationError = error{InvalidBasisConfiguration};
 
     by_class: ByClass = .{},
 
@@ -315,6 +316,26 @@ pub const BasisIndexSpans = struct {
         return null;
     }
 
+    /// Runtime-capable counterpart to `resolveNamedBasisIndex`.
+    pub fn resolveNamedBasisIndexRuntime(self: BasisIndexSpans, named_index: usize, dimension: usize) ValidationError!?usize {
+        try self.validateForDimension(dimension);
+
+        var next_internal_index: usize = 1;
+        for (std.meta.tags(SignatureClass)) |class| {
+            if (self.spanFor(class)) |span| {
+                const span_len = span.len();
+
+                if (span.contains(named_index)) {
+                    return next_internal_index + (named_index - span.start);
+                }
+
+                next_internal_index += span_len;
+            }
+        }
+
+        return null;
+    }
+
     pub fn assertValidForDimension(self: BasisIndexSpans, comptime dimension: usize) void {
         const classes = comptime std.meta.tags(SignatureClass);
 
@@ -329,6 +350,32 @@ pub const BasisIndexSpans = struct {
         }
 
         validateMappedBasisCount(self, dimension);
+    }
+
+    /// Runtime-capable counterpart to `assertValidForDimension`.
+    pub fn validateForDimension(self: BasisIndexSpans, dimension: usize) ValidationError!void {
+        for (std.meta.tags(SignatureClass)) |class| {
+            if (self.spanFor(class)) |range| {
+                if (range.start > range.end) return error.InvalidBasisConfiguration;
+            }
+        }
+
+        const classes = std.meta.tags(SignatureClass);
+        for (classes, 0..) |lhs_class, lhs_index| {
+            const left_span = self.spanFor(lhs_class) orelse continue;
+            for (classes[(lhs_index + 1)..]) |rhs_class| {
+                const right_span = self.spanFor(rhs_class) orelse continue;
+                if (spansOverlap(left_span, right_span)) return error.InvalidBasisConfiguration;
+            }
+        }
+
+        var mapped_basis_count: usize = 0;
+        for (std.meta.tags(SignatureClass)) |class| {
+            if (self.spanFor(class)) |span| {
+                mapped_basis_count += span.len();
+            }
+        }
+        if (mapped_basis_count > dimension) return error.InvalidBasisConfiguration;
     }
 
     fn containsIn(span: ?BasisIndexSpan, one_based_index: usize) bool {
@@ -553,6 +600,12 @@ pub fn basisBladeMask(comptime dimension: usize, comptime basis_indices: []const
 /// Folds one basis vector into an in-progress canonical signed blade.
 pub fn applyBasisIndex(spec: *SignedBladeSpec, basis_index: usize, comptime dimension: usize) void {
     euclideanSignature(dimension).applyBasisIndex(spec, basis_index);
+}
+
+/// Runtime-capable counterpart to `applyBasisIndex`.
+pub fn applyBasisIndexRuntime(spec: *SignedBladeSpec, basis_index: usize, dimension: usize) void {
+    const sig: MetricSignature = .{ .p = dimension };
+    sig.applyBasisIndex(spec, basis_index);
 }
 
 /// Folds one basis vector into an in-progress canonical signed blade under `sig`.
