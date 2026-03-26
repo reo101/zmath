@@ -90,7 +90,7 @@ fn consumeInput(app: *demo.App) bool {
         .{ .key = rl.KEY_D, .command = .move_right },
     };
     for (movement) |entry| {
-        if (keyTriggered(entry.key) and app.applyCommand(entry.command)) return true;
+        if (keyHeld(entry.key) and app.applyCommand(entry.command)) return true;
     }
 
     const look = [_]struct { key: c_int, command: demo.Command }{
@@ -100,7 +100,7 @@ fn consumeInput(app: *demo.App) bool {
         .{ .key = rl.KEY_RIGHT, .command = .look_right },
     };
     for (look) |entry| {
-        if (keyTriggered(entry.key) and app.applyCommand(entry.command)) return true;
+        if (keyHeld(entry.key) and app.applyCommand(entry.command)) return true;
     }
 
     return false;
@@ -108,6 +108,10 @@ fn consumeInput(app: *demo.App) bool {
 
 fn keyTriggered(key: c_int) bool {
     return rl.IsKeyPressed(key) or rl.IsKeyPressedRepeat(key);
+}
+
+fn keyHeld(key: c_int) bool {
+    return rl.IsKeyDown(key) or keyTriggered(key);
 }
 
 fn drawCanvasTexture(texture: rl.Texture2D) void {

@@ -157,11 +157,11 @@ pub fn projectWrappedAngularDirection(
 
     const azimuth = std.math.atan2(nx, nz);
     const elevation = std.math.atan2(ny, @max(lateral, 1e-6));
-    const x_raw = (azimuth / @as(f32, std.math.pi)) * zoom;
+    var x_unit = azimuth / (@as(f32, std.math.pi) * 2.0) + 0.5;
+    if (x_unit >= 1.0) x_unit -= 1.0;
     const y_raw = (elevation / (@as(f32, std.math.pi) * 0.5)) * zoom;
 
-    const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
-    const x = (x_raw / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
+    const x = ((x_unit - 0.5) * zoom + 0.5) * @as(f32, @floatFromInt(canvas_width));
     const y = (1.0 - y_raw) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);
     return .{ x, y };
 }
@@ -181,6 +181,23 @@ pub fn projectDirectionWith(
         .orthographic => projectOrthographicDirection(x_dir, y_dir, z_dir, canvas_width, canvas_height, zoom),
         .wrapped => projectWrappedAngularDirection(x_dir, y_dir, z_dir, canvas_width, canvas_height, zoom),
     };
+}
+
+test "wrapped angular projection spans the full horizontal circle" {
+    const width: usize = 160;
+    const height: usize = 90;
+
+    const forward = projectWrappedAngularDirection(0.0, 0.0, 1.0, width, height, 1.0).?;
+    try std.testing.expectApproxEqAbs(@as(f32, 80.0), forward[0], 1e-4);
+
+    const right = projectWrappedAngularDirection(1.0, 0.0, 0.0, width, height, 1.0).?;
+    try std.testing.expectApproxEqAbs(@as(f32, 120.0), right[0], 1e-4);
+
+    const left = projectWrappedAngularDirection(-1.0, 0.0, 0.0, width, height, 1.0).?;
+    try std.testing.expectApproxEqAbs(@as(f32, 40.0), left[0], 1e-4);
+
+    const back = projectWrappedAngularDirection(0.0, 0.0, -1.0, width, height, 1.0).?;
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), back[0], 1e-4);
 }
 
 /// Projects a point using PGA universal projection formula.

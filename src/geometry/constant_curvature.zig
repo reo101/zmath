@@ -1,4 +1,5 @@
 const std = @import("std");
+const ga = @import("../ga.zig");
 const render = @import("../render.zig");
 const hpga = @import("../flavours/hpga.zig");
 const epga = @import("../flavours/epga.zig");
@@ -50,6 +51,12 @@ pub const WalkOrientation = struct {
     pitch: f32,
 };
 
+const HeadingBasis = struct {
+    east: Vec4,
+    north: Vec4,
+    up: Vec4,
+};
+
 pub const Sample = struct {
     distance: f32,
     x_dir: f32,
@@ -91,6 +98,19 @@ pub const CameraError = error{
     InvalidChartPoint,
     DegenerateDirection,
 };
+
+const hyper_ambient_naming = ga.SignedBladeNamingOptions.withBasisSpans(ga.BasisIndexSpans.init(.{
+    .positive = .range(1, 3),
+    .negative = .singleton(0),
+}));
+const round_ambient_naming = ga.SignedBladeNamingOptions.withBasisSpans(ga.BasisIndexSpans.init(.{
+    .positive = .range(0, 3),
+}));
+const HyperAmbient = ga.AlgebraWithNamingOptions(.{ .p = 3, .q = 1 }, hyper_ambient_naming).Instantiate(f32);
+const RoundAmbient = ga.AlgebraWithNamingOptions(.{ .p = 4 }, round_ambient_naming).Instantiate(f32);
+const Flat3 = ga.Algebra(.euclidean(3)).Instantiate(f32);
+
+pub const SphericalRenderPass = enum { near, far };
 
 pub const View = struct {
     metric: Metric,
@@ -172,10 +192,10 @@ pub const View = struct {
         // Hyperbolica devlogs #2 and #3 discuss the stereographic charting.
         // https://www.youtube.com/watch?v=yY9GAyJtuJ0
         // https://www.youtube.com/watch?v=pXWRYpdYc7Q
-        self.camera.position = scale4(self.camera.position, -1.0);
-        self.camera.right = scale4(self.camera.right, -1.0);
-        self.camera.up = scale4(self.camera.up, -1.0);
-        self.camera.forward = scale4(self.camera.forward, -1.0);
+        self.camera.position = scale4(self.metric, self.camera.position, -1.0);
+        self.camera.right = scale4(self.metric, self.camera.right, -1.0);
+        self.camera.up = scale4(self.metric, self.camera.up, -1.0);
+        self.camera.forward = scale4(self.metric, self.camera.forward, -1.0);
         self.scene_sign = -self.scene_sign;
         reorthonormalize(self.metric, &self.camera);
     }
@@ -198,19 +218,38 @@ pub const View = struct {
     fn sceneAmbientPoint(self: View, chart: Vec3) ?Vec4 {
         var ambient = embedPoint(self.metric, self.params, chart) orelse return null;
         if (self.metric == .spherical and self.scene_sign < 0.0) {
-            ambient = scale4(ambient, -1.0);
+            ambient = scale4(self.metric, ambient, -1.0);
         }
         return ambient;
     }
 
     pub fn sampleProjectedPoint(self: View, chart: Vec3, screen: Screen) ProjectedSample {
         const ambient = self.sceneAmbientPoint(chart) orelse return .{};
-        const point_sample = sampleAmbientPoint(self.metric, self.params, self.camera, ambient) orelse return .{};
-        const projected = projectSample(self.projection, point_sample, screen.width, screen.height, screen.zoom);
-        return .{
-            .distance = point_sample.distance,
-            .projected = projected,
-            .status = sampleStatus(point_sample.distance, self.clip, projected),
+        return sampleProjectedAmbientPoint(self, ambient, screen);
+    }
+
+    pub fn sphericalRenderPass(self: View, pass: SphericalRenderPass) View {
+        std.debug.assert(self.metric == .spherical);
+
+        var render_view = self;
+        render_view.projection = .stereographic;
+        render_view.clip = .{
+            .near = if (pass == .near) self.clip.near else 0.0,
+            .far = hemisphereDistance(self.params),
+        };
+
+        if (pass == .far) {
+            render_view.camera = antipodalSphericalPassCamera(self.camera);
+        }
+
+        return render_view;
+    }
+
+    pub fn mapSphericalRenderDistance(self: View, pass: SphericalRenderPass, pass_distance: f32) f32 {
+        std.debug.assert(self.metric == .spherical);
+        return switch (pass) {
+            .near => pass_distance,
+            .far => maxSphericalDistance(self.params) - pass_distance,
         };
     }
 
@@ -245,18 +284,7 @@ pub const View = struct {
                 prev_status = .hidden;
                 continue;
             };
-            const point_sample = sampleAmbientPoint(self.metric, self.params, self.camera, ambient) orelse {
-                prev_point = null;
-                prev_distance = null;
-                prev_status = .hidden;
-                continue;
-            };
-            const projected = projectSample(self.projection, point_sample, screen.width, screen.height, screen.zoom);
-            const sample = ProjectedSample{
-                .distance = point_sample.distance,
-                .projected = projected,
-                .status = sampleStatus(point_sample.distance, self.clip, projected),
-            };
+            const sample = sampleProjectedAmbientPoint(self, ambient, screen);
             if (sample.projected) |p| {
                 if (prev_status == .visible and sample.status == .visible) {
                     if (prev_point) |pp| {
@@ -418,16 +446,67 @@ pub const View = struct {
     }
 };
 
-fn add4(a: Vec4, b: Vec4) Vec4 {
-    return .{ a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3] };
+fn hyperAmbientVector(coords: Vec4) HyperAmbient.Vector {
+    const E = HyperAmbient.Basis;
+    return E.e(0).scale(coords[0])
+        .add(E.e(1).scale(coords[1]))
+        .add(E.e(2).scale(coords[2]))
+        .add(E.e(3).scale(coords[3]));
 }
 
-fn sub4(a: Vec4, b: Vec4) Vec4 {
-    return .{ a[0] - b[0], a[1] - b[1], a[2] - b[2], a[3] - b[3] };
+fn roundAmbientVector(coords: Vec4) RoundAmbient.Vector {
+    const E = RoundAmbient.Basis;
+    return E.e(0).scale(coords[0])
+        .add(E.e(1).scale(coords[1]))
+        .add(E.e(2).scale(coords[2]))
+        .add(E.e(3).scale(coords[3]));
 }
 
-fn scale4(v: Vec4, s: f32) Vec4 {
-    return .{ v[0] * s, v[1] * s, v[2] * s, v[3] * s };
+fn coordsFromHyperAmbient(v: HyperAmbient.Vector) Vec4 {
+    return .{
+        @floatCast(v.coeffNamedWithOptions("e0", hyper_ambient_naming)),
+        @floatCast(v.coeffNamedWithOptions("e1", hyper_ambient_naming)),
+        @floatCast(v.coeffNamedWithOptions("e2", hyper_ambient_naming)),
+        @floatCast(v.coeffNamedWithOptions("e3", hyper_ambient_naming)),
+    };
+}
+
+fn coordsFromRoundAmbient(v: RoundAmbient.Vector) Vec4 {
+    return .{
+        @floatCast(v.coeffNamedWithOptions("e0", round_ambient_naming)),
+        @floatCast(v.coeffNamedWithOptions("e1", round_ambient_naming)),
+        @floatCast(v.coeffNamedWithOptions("e2", round_ambient_naming)),
+        @floatCast(v.coeffNamedWithOptions("e3", round_ambient_naming)),
+    };
+}
+
+fn coordsFromFlatVector(v: Flat3.Vector) Vec3 {
+    return .{
+        v.coeffNamed("e1"),
+        v.coeffNamed("e2"),
+        v.coeffNamed("e3"),
+    };
+}
+
+fn add4(metric: Metric, a: Vec4, b: Vec4) Vec4 {
+    return switch (metric) {
+        .hyperbolic => coordsFromHyperAmbient(hyperAmbientVector(a).add(hyperAmbientVector(b))),
+        .elliptic, .spherical => coordsFromRoundAmbient(roundAmbientVector(a).add(roundAmbientVector(b))),
+    };
+}
+
+fn sub4(metric: Metric, a: Vec4, b: Vec4) Vec4 {
+    return switch (metric) {
+        .hyperbolic => coordsFromHyperAmbient(hyperAmbientVector(a).sub(hyperAmbientVector(b))),
+        .elliptic, .spherical => coordsFromRoundAmbient(roundAmbientVector(a).sub(roundAmbientVector(b))),
+    };
+}
+
+fn scale4(metric: Metric, v: Vec4, s: f32) Vec4 {
+    return switch (metric) {
+        .hyperbolic => coordsFromHyperAmbient(hyperAmbientVector(v).scale(s)),
+        .elliptic, .spherical => coordsFromRoundAmbient(roundAmbientVector(v).scale(s)),
+    };
 }
 
 fn bilerpQuad(a: Vec3, b: Vec3, c: Vec3, d: Vec3, u: f32, v: f32) Vec3 {
@@ -437,11 +516,11 @@ fn bilerpQuad(a: Vec3, b: Vec3, c: Vec3, d: Vec3, u: f32, v: f32) Vec3 {
 }
 
 fn lerp3(a: Vec3, b: Vec3, t: f32) Vec3 {
-    return .{
-        a[0] * (1.0 - t) + b[0] * t,
-        a[1] * (1.0 - t) + b[1] * t,
-        a[2] * (1.0 - t) + b[2] * t,
-    };
+    return coordsFromFlatVector(flatVector(a).scale(1.0 - t).add(flatVector(b).scale(t)));
+}
+
+fn flatVector(point: Vec3) Flat3.Vector {
+    return Flat3.Vector.init(point);
 }
 
 fn chartScale(params: Params) f32 {
@@ -456,11 +535,57 @@ fn safeDivDenom(value: f32) f32 {
     return if (value < 0.0) -1e-6 else 1e-6;
 }
 
+fn maxSphericalDistance(params: Params) f32 {
+    return @as(f32, std.math.pi) * params.radius;
+}
+
+fn hemisphereDistance(params: Params) f32 {
+    return maxSphericalDistance(params) * 0.5;
+}
+
+fn antipodalSphericalPassCamera(camera: Camera) Camera {
+    return .{
+        .position = scale4(.spherical, camera.position, -1.0),
+        .right = camera.right,
+        .up = camera.up,
+        .forward = scale4(.spherical, camera.forward, -1.0),
+    };
+}
+
+fn sampleProjectedAmbientPointSinglePass(view: View, ambient: Vec4, screen: Screen) ProjectedSample {
+    const point_sample = sampleAmbientPoint(view.metric, view.params, view.camera, ambient) orelse return .{};
+    const projected = projectSample(view.projection, point_sample, screen.width, screen.height, screen.zoom);
+    return .{
+        .distance = point_sample.distance,
+        .projected = projected,
+        .status = sampleStatus(point_sample.distance, view.clip, projected),
+    };
+}
+
+fn sampleProjectedAmbientPoint(view: View, ambient: Vec4, screen: Screen) ProjectedSample {
+    const hemisphere_far = hemisphereDistance(view.params);
+    if (view.metric != .spherical or view.projection != .stereographic or view.clip.far <= hemisphere_far + 1e-6) {
+        return sampleProjectedAmbientPointSinglePass(view, ambient, screen);
+    }
+
+    const near_view = view.sphericalRenderPass(.near);
+    const near_sample = sampleProjectedAmbientPointSinglePass(near_view, ambient, screen);
+    if (near_sample.status == .visible) return near_sample;
+
+    const far_view = view.sphericalRenderPass(.far);
+    var far_sample = sampleProjectedAmbientPointSinglePass(far_view, ambient, screen);
+    far_sample.distance = view.mapSphericalRenderDistance(.far, far_sample.distance);
+    far_sample.status = sampleStatus(far_sample.distance, view.clip, far_sample.projected);
+    if (far_sample.status != .hidden) return far_sample;
+    return near_sample;
+}
+
 fn cameraModelForRender(metric: Metric, projection: render.projection.DirectionProjection) ?CameraModel {
     return switch (projection) {
-        // Hyperbolica devlog #4 renders the actual geometry through the
-        // camera-relative linear models: Beltrami-Klein for hyperbolic space
-        // and gnomonic for spherical space.
+        // Hyperbolica devlog #4 identifies the camera-relative linear models:
+        // Beltrami-Klein for hyperbolic space and gnomonic for spherical
+        // space. The same devlog then switches spherical rendering to a
+        // two-pass stereographic compromise for full-sphere coverage.
         // https://www.youtube.com/watch?v=rqSLuOR3dwY
         .gnomonic => .linear,
         .wrapped, .orthographic => if (metric == .hyperbolic) .linear else null,
@@ -470,27 +595,27 @@ fn cameraModelForRender(metric: Metric, projection: render.projection.DirectionP
 
 fn metricDot(metric: Metric, a: Vec4, b: Vec4) f32 {
     return switch (metric) {
-        .hyperbolic => -a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3],
-        .elliptic, .spherical => a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3],
+        .hyperbolic => hyperAmbientVector(a).scalarProduct(hyperAmbientVector(b)),
+        .elliptic, .spherical => roundAmbientVector(a).scalarProduct(roundAmbientVector(b)),
     };
 }
 
 fn tryNormalizeTangent(metric: Metric, v: Vec4) ?Vec4 {
     const n2 = metricDot(metric, v, v);
     if (n2 <= 1e-6) return null;
-    return scale4(v, 1.0 / @sqrt(n2));
+    return scale4(metric, v, 1.0 / @sqrt(n2));
 }
 
 fn projectToTangent(metric: Metric, position: Vec4, candidate: Vec4) Vec4 {
     const denom = metricDot(metric, position, position);
     const along = metricDot(metric, candidate, position) / denom;
-    return sub4(candidate, scale4(position, along));
+    return sub4(metric, candidate, scale4(metric, position, along));
 }
 
 fn orthonormalCandidate(metric: Metric, position: Vec4, candidate: Vec4, refs: []const Vec4) ?Vec4 {
     var v = projectToTangent(metric, position, candidate);
     for (refs) |r| {
-        v = sub4(v, scale4(r, metricDot(metric, v, r)));
+        v = sub4(metric, v, scale4(metric, r, metricDot(metric, v, r)));
     }
     return tryNormalizeTangent(metric, v);
 }
@@ -552,7 +677,7 @@ pub fn embedPoint(metric: Metric, params: Params, chart: Vec3) ?Vec4 {
 pub fn chartCoords(metric: Metric, params: Params, ambient: Vec4) Vec3 {
     var point = ambient;
     if (metric == .elliptic and point[0] < 0.0) {
-        point = scale4(point, -1.0);
+        point = scale4(metric, point, -1.0);
     }
 
     const scale = chartScale(params);
@@ -582,14 +707,15 @@ fn normalizeAmbient(metric: Metric, ambient: Vec4) Vec4 {
         .hyperbolic => 1.0 / @sqrt(@max(-norm2, 1e-6)),
         .elliptic, .spherical => 1.0 / @sqrt(@max(norm2, 1e-6)),
     };
-    return scale4(ambient, inv);
+    return scale4(metric, ambient, inv);
 }
 
 fn transportedTangent(metric: Metric, old_direction: Vec4, new_direction: Vec4, tangent: Vec4) Vec4 {
     const along = metricDot(metric, tangent, old_direction);
     return add4(
-        sub4(tangent, scale4(old_direction, along)),
-        scale4(new_direction, along),
+        metric,
+        sub4(metric, tangent, scale4(metric, old_direction, along)),
+        scale4(metric, new_direction, along),
     );
 }
 
@@ -604,14 +730,15 @@ fn geodesicAmbientPoint(metric: Metric, a: Vec4, b_input: Vec4, t: f32) ?Vec4 {
 
             const inv_denom = 1.0 / std.math.sinh(omega);
             const p = add4(
-                scale4(a, std.math.sinh((1.0 - t) * omega) * inv_denom),
-                scale4(b, std.math.sinh(t * omega) * inv_denom),
+                metric,
+                scale4(metric, a, std.math.sinh((1.0 - t) * omega) * inv_denom),
+                scale4(metric, b, std.math.sinh(t * omega) * inv_denom),
             );
             return normalizeAmbient(metric, p);
         },
         .elliptic, .spherical => {
             if (metric == .elliptic and metricDot(metric, a, b) < 0.0) {
-                b = scale4(b, -1.0);
+                b = scale4(metric, b, -1.0);
             }
 
             const cos_omega = std.math.clamp(metricDot(metric, a, b), -1.0, 1.0);
@@ -620,8 +747,9 @@ fn geodesicAmbientPoint(metric: Metric, a: Vec4, b_input: Vec4, t: f32) ?Vec4 {
 
             const inv_denom = 1.0 / @sin(omega);
             const p = add4(
-                scale4(a, @sin((1.0 - t) * omega) * inv_denom),
-                scale4(b, @sin(t * omega) * inv_denom),
+                metric,
+                scale4(metric, a, @sin((1.0 - t) * omega) * inv_denom),
+                scale4(metric, b, @sin(t * omega) * inv_denom),
             );
             return normalizeAmbient(metric, p);
         },
@@ -645,13 +773,13 @@ pub fn geodesicChartPoint(metric: Metric, params: Params, a_chart: Vec3, b_chart
 fn geodesicDirection(metric: Metric, eye: Vec4, target: Vec4) ?Vec4 {
     var adjusted_target = target;
     if (metric == .elliptic and metricDot(metric, eye, adjusted_target) < 0.0) {
-        adjusted_target = scale4(adjusted_target, -1.0);
+        adjusted_target = scale4(metric, adjusted_target, -1.0);
     }
 
     const inner = metricDot(metric, eye, adjusted_target);
     const tangent = switch (metric) {
-        .hyperbolic => add4(adjusted_target, scale4(eye, inner)),
-        .elliptic, .spherical => sub4(adjusted_target, scale4(eye, inner)),
+        .hyperbolic => add4(metric, adjusted_target, scale4(metric, eye, inner)),
+        .elliptic, .spherical => sub4(metric, adjusted_target, scale4(metric, eye, inner)),
     };
     return tryNormalizeTangent(metric, tangent);
 }
@@ -659,7 +787,7 @@ fn geodesicDirection(metric: Metric, eye: Vec4, target: Vec4) ?Vec4 {
 fn relativeCoords(metric: Metric, camera: Camera, ambient: Vec4) RelativeCoords {
     var point = ambient;
     if (metric == .elliptic and metricDot(metric, camera.position, point) < 0.0) {
-        point = scale4(point, -1.0);
+        point = scale4(metric, point, -1.0);
     }
 
     const inner = metricDot(metric, camera.position, point);
@@ -675,11 +803,11 @@ fn relativeCoords(metric: Metric, camera: Camera, ambient: Vec4) RelativeCoords 
 }
 
 fn relativeSpatialLength(relative: RelativeCoords) f32 {
-    return @sqrt(relative.x * relative.x + relative.y * relative.y + relative.z * relative.z);
+    return flatVector(.{ relative.x, relative.y, relative.z }).magnitude();
 }
 
 fn modelRadius(point: Vec3) f32 {
-    return @sqrt(point[0] * point[0] + point[1] * point[1] + point[2] * point[2]);
+    return flatVector(point).magnitude();
 }
 
 fn sampleModelPoint(metric: Metric, projection: render.projection.DirectionProjection, params: Params, model_point: Vec3) ?Sample {
@@ -761,8 +889,8 @@ fn rotatePair(metric: Metric, camera: *Camera, first: *Vec4, second: *Vec4, angl
     const s = @sin(angle);
     const old_first = first.*;
     const old_second = second.*;
-    first.* = add4(scale4(old_first, c), scale4(old_second, s));
-    second.* = sub4(scale4(old_second, c), scale4(old_first, s));
+    first.* = add4(metric, scale4(metric, old_first, c), scale4(metric, old_second, s));
+    second.* = sub4(metric, scale4(metric, old_second, c), scale4(metric, old_first, s));
     reorthonormalize(metric, camera);
 }
 
@@ -795,14 +923,14 @@ pub fn moveAlongDirection(camera: *Camera, metric: Metric, params: Params, direc
         .hyperbolic => {
             const c = std.math.cosh(normalized_distance);
             const s = std.math.sinh(normalized_distance);
-            new_position = add4(scale4(old_position, c), scale4(old_direction, s));
-            new_direction = add4(scale4(old_position, s), scale4(old_direction, c));
+            new_position = add4(metric, scale4(metric, old_position, c), scale4(metric, old_direction, s));
+            new_direction = add4(metric, scale4(metric, old_position, s), scale4(metric, old_direction, c));
         },
         .elliptic, .spherical => {
             const c = @cos(normalized_distance);
             const s = @sin(normalized_distance);
-            new_position = add4(scale4(old_position, c), scale4(old_direction, s));
-            new_direction = add4(scale4(old_direction, c), scale4(old_position, -s));
+            new_position = add4(metric, scale4(metric, old_position, c), scale4(metric, old_direction, s));
+            new_direction = add4(metric, scale4(metric, old_direction, c), scale4(metric, old_position, -s));
         },
     }
 
@@ -821,9 +949,31 @@ pub fn moveRight(camera: *Camera, metric: Metric, params: Params, distance: f32)
     moveAlongDirection(camera, metric, params, camera.right, distance);
 }
 
+fn headingBasis(metric: Metric, camera: Camera) ?HeadingBasis {
+    const up = worldUpDirection(metric, camera) orelse return null;
+    const east = orthonormalCandidate(metric, camera.position, .{ 0.0, 1.0, 0.0, 0.0 }, &.{up}) orelse
+        orthonormalCandidate(metric, camera.position, .{ 0.0, 0.0, 0.0, 1.0 }, &.{up}) orelse
+        orthonormalCandidate(metric, camera.position, .{ 1.0, 0.0, 0.0, 0.0 }, &.{up}) orelse
+        return null;
+    const north = orthonormalCandidate(metric, camera.position, .{ 0.0, 0.0, 0.0, 1.0 }, &.{ up, east }) orelse
+        orthonormalCandidate(metric, camera.position, .{ 1.0, 0.0, 0.0, 0.0 }, &.{ up, east }) orelse
+        orthonormalCandidate(metric, camera.position, .{ 0.0, 1.0, 0.0, 0.0 }, &.{ up, east }) orelse
+        return null;
+
+    return .{
+        .east = east,
+        .north = north,
+        .up = up,
+    };
+}
+
 pub fn worldHeadingDirection(metric: Metric, camera: Camera, x_heading: f32, z_heading: f32) ?Vec4 {
-    const candidate = Vec4{ 0.0, x_heading, 0.0, z_heading };
-    return tryNormalizeTangent(metric, projectToTangent(metric, camera.position, candidate));
+    const basis = headingBasis(metric, camera) orelse return null;
+    return tryNormalizeTangent(metric, add4(
+        metric,
+        scale4(metric, basis.east, x_heading),
+        scale4(metric, basis.north, z_heading),
+    ));
 }
 
 fn worldUpDirection(metric: Metric, camera: Camera) ?Vec4 {
@@ -832,20 +982,22 @@ fn worldUpDirection(metric: Metric, camera: Camera) ?Vec4 {
 }
 
 fn currentWalkOrientation(metric: Metric, camera: Camera) ?WalkOrientation {
-    const world_up = worldUpDirection(metric, camera) orelse return null;
-    const pitch_angle = std.math.asin(std.math.clamp(metricDot(metric, camera.forward, world_up), -1.0, 1.0));
+    const basis = headingBasis(metric, camera) orelse return null;
+    const pitch_angle = std.math.asin(std.math.clamp(metricDot(metric, camera.forward, basis.up), -1.0, 1.0));
 
-    const forward_ground = orthonormalCandidate(metric, camera.position, camera.forward, &.{world_up}) orelse fallback_ground: {
+    const forward_ground = orthonormalCandidate(metric, camera.position, camera.forward, &.{basis.up}) orelse fallback_ground: {
         const up_sign: f32 = if (pitch_angle >= 0.0) -1.0 else 1.0;
-        break :fallback_ground orthonormalCandidate(metric, camera.position, scale4(camera.up, up_sign), &.{world_up}) orelse return null;
+        break :fallback_ground orthonormalCandidate(metric, camera.position, scale4(metric, camera.up, up_sign), &.{basis.up}) orelse return null;
     };
 
-    const heading_len = @sqrt(forward_ground[1] * forward_ground[1] + forward_ground[3] * forward_ground[3]);
+    const x_heading = metricDot(metric, forward_ground, basis.east);
+    const z_heading = metricDot(metric, forward_ground, basis.north);
+    const heading_len = @sqrt(x_heading * x_heading + z_heading * z_heading);
     if (heading_len <= 1e-6) return null;
 
     return .{
-        .x_heading = forward_ground[1] / heading_len,
-        .z_heading = forward_ground[3] / heading_len,
+        .x_heading = x_heading / heading_len,
+        .z_heading = z_heading / heading_len,
         .pitch = pitch_angle,
     };
 }
@@ -857,17 +1009,18 @@ pub fn orientFromHeadingPitch(
     z_heading: f32,
     pitch_angle: f32,
 ) void {
+    const basis = headingBasis(metric, camera.*) orelse return;
     const horizontal_forward = worldHeadingDirection(metric, camera.*, x_heading, z_heading) orelse return;
     const horizontal_right = worldHeadingDirection(metric, camera.*, z_heading, -x_heading) orelse return;
-    const world_up = worldUpDirection(metric, camera.*) orelse return;
 
     camera.forward = add4(
-        scale4(horizontal_forward, @cos(pitch_angle)),
-        scale4(world_up, @sin(pitch_angle)),
+        metric,
+        scale4(metric, horizontal_forward, @cos(pitch_angle)),
+        scale4(metric, basis.up, @sin(pitch_angle)),
     );
     camera.forward = tryNormalizeTangent(metric, projectToTangent(metric, camera.position, camera.forward)) orelse return;
     camera.right = orthonormalCandidate(metric, camera.position, horizontal_right, &.{camera.forward}) orelse return;
-    camera.up = orthonormalCandidate(metric, camera.position, world_up, &.{ camera.forward, camera.right }) orelse return;
+    camera.up = orthonormalCandidate(metric, camera.position, basis.up, &.{ camera.forward, camera.right }) orelse return;
     reorthonormalize(metric, camera);
 }
 
@@ -916,9 +1069,9 @@ pub fn samplePoint(metric: Metric, params: Params, camera: Camera, chart: Vec3) 
 fn modelPointForAmbient(metric: Metric, camera: Camera, ambient: Vec4, model: CameraModel) ?Vec3 {
     const relative = relativeCoords(metric, camera, ambient);
     const denom = switch (model) {
-        // Hyperbolica devlog #4 renders hyperbolic geometry through the
-        // Beltrami-Klein model and spherical geometry through the gnomonic
-        // model because they preserve straightness under vertex interpolation.
+        // Hyperbolica devlog #4 uses the linear camera-relative models where
+        // straight interpolation matters: Beltrami-Klein for hyperbolic space
+        // and gnomonic for spherical space.
         // https://www.youtube.com/watch?v=rqSLuOR3dwY
         .linear => relative.w,
         // Devlog #3 uses the conformal charts internally, matching Poincare
@@ -1077,11 +1230,51 @@ test "walk yaw preserves pitch while rotating heading" {
     try std.testing.expectApproxEqAbs(@cos(@as(f32, 0.25)), orientation.z_heading, 1e-3);
 }
 
+test "spherical walk yaw stays recoverable near steep pitch" {
+    var spherical = try View.init(
+        .spherical,
+        .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
+        .wrapped,
+        .{ .near = 0.08, .far = std.math.inf(f32) },
+        .{ 0.0, 0.0, -0.82 },
+        .{ 0.0, 0.0, 0.0 },
+    );
+    spherical.syncHeadingPitch(0.0, 1.0, 1.05);
+    spherical.turnWalkYaw(0.35);
+
+    const orientation = spherical.walkOrientation().?;
+    try std.testing.expectApproxEqAbs(@as(f32, 1.05), orientation.pitch, 1e-3);
+    try std.testing.expectApproxEqAbs(@sin(@as(f32, 0.35)), orientation.x_heading, 1e-3);
+    try std.testing.expectApproxEqAbs(@cos(@as(f32, 0.35)), orientation.z_heading, 1e-3);
+}
+
+test "spherical walk orientation survives forward transport" {
+    var spherical = try View.init(
+        .spherical,
+        .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
+        .wrapped,
+        .{ .near = 0.08, .far = std.math.inf(f32) },
+        .{ 0.0, 0.0, -0.82 },
+        .{ 0.0, 0.0, 0.0 },
+    );
+    spherical.syncHeadingPitch(0.42, 0.9075241, 0.55);
+
+    const before = spherical.walkOrientation().?;
+    const forward = spherical.headingDirection(before.x_heading, before.z_heading).?;
+    spherical.moveAlong(forward, 0.10);
+    spherical.wrapSphericalChart();
+
+    const after = spherical.walkOrientation().?;
+    try std.testing.expectApproxEqAbs(before.pitch, after.pitch, 1e-3);
+    try std.testing.expectApproxEqAbs(before.x_heading, after.x_heading, 1e-3);
+    try std.testing.expectApproxEqAbs(before.z_heading, after.z_heading, 1e-3);
+}
+
 test "spherical chart wrap preserves the rendered view" {
     var view = try View.init(
         .spherical,
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
-        .wrapped,
+        .stereographic,
         .{ .near = 0.08, .far = std.math.inf(f32) },
         .{ 0.0, 0.0, -0.82 },
         .{ 0.0, 0.0, 0.0 },
@@ -1090,10 +1283,10 @@ test "spherical chart wrap preserves the rendered view" {
     const before = view.sampleProjectedPoint(.{ 0.12, -0.07, 0.15 }, screen);
     try std.testing.expect(before.projected != null);
 
-    view.camera.position = scale4(view.camera.position, -1.0);
-    view.camera.right = scale4(view.camera.right, -1.0);
-    view.camera.up = scale4(view.camera.up, -1.0);
-    view.camera.forward = scale4(view.camera.forward, -1.0);
+    view.camera.position = scale4(view.metric, view.camera.position, -1.0);
+    view.camera.right = scale4(view.metric, view.camera.right, -1.0);
+    view.camera.up = scale4(view.metric, view.camera.up, -1.0);
+    view.camera.forward = scale4(view.metric, view.camera.forward, -1.0);
     view.wrapSphericalChart();
 
     const after = view.sampleProjectedPoint(.{ 0.12, -0.07, 0.15 }, screen);
@@ -1101,6 +1294,36 @@ test "spherical chart wrap preserves the rendered view" {
     try std.testing.expectApproxEqAbs(before.distance, after.distance, 1e-4);
     try std.testing.expectApproxEqAbs(before.projected.?[0], after.projected.?[0], 1e-3);
     try std.testing.expectApproxEqAbs(before.projected.?[1], after.projected.?[1], 1e-3);
+}
+
+test "spherical stereographic view renders the far hemisphere via antipodal pass" {
+    var view = try View.init(
+        .spherical,
+        .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
+        .stereographic,
+        .{ .near = 0.08, .far = std.math.inf(f32) },
+        .{ 0.0, 0.0, -0.82 },
+        .{ 0.0, 0.0, 0.0 },
+    );
+    const screen = Screen{ .width = 80, .height = 40, .zoom = view.params.angular_zoom };
+
+    const far_ambient = normalizeAmbient(
+        .spherical,
+        add4(
+            .spherical,
+            scale4(.spherical, view.camera.position, -1.0),
+            scale4(.spherical, view.camera.right, 0.18),
+        ),
+    );
+    const far_chart = chartCoords(.spherical, view.params, far_ambient);
+
+    const near_sample = view.sphericalRenderPass(.near).sampleProjectedPoint(far_chart, screen);
+    try std.testing.expect(near_sample.status != .visible);
+
+    const sample = view.sampleProjectedPoint(far_chart, screen);
+    try std.testing.expectEqual(SampleStatus.visible, sample.status);
+    try std.testing.expect(sample.projected != null);
+    try std.testing.expect(sample.distance > hemisphereDistance(view.params));
 }
 
 test "conformal chart roundtrips for hyperbolic and spherical spaces" {
