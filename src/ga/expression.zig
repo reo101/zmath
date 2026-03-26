@@ -388,20 +388,7 @@ fn ParserTypes(comptime T: type, comptime sig: blades.MetricSignature) type {
     const Const = ConstantValue(T, sig);
 
     return struct {
-        pub const TokenTag = enum {
-            eof,
-            plus,
-            minus,
-            star,
-            lparen,
-            rparen,
-            inverse,
-            number,
-            blade,
-            placeholder,
-        };
-
-        pub const Token = union(TokenTag) {
+        pub const Token = union(enum) {
             eof: void,
             plus: void,
             minus: void,
