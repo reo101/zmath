@@ -1,5 +1,4 @@
 const std = @import("std");
-const build_options = @import("build_options");
 const blade_parsing = @import("blade_parsing.zig");
 const blade_ops = @import("blades.zig");
 
@@ -88,7 +87,7 @@ fn isSimdCoeffType(comptime T: type) bool {
 }
 
 fn canUseLaneWiseSimd(comptime T: type, comptime lane_count: usize) bool {
-    return build_options.enable_simd_fast_paths and isSimdCoeffType(T) and lane_count >= 2 and lane_count <= 4;
+    return isSimdCoeffType(T) and lane_count >= 2 and lane_count <= 4;
 }
 
 fn coeffsToSimd(comptime T: type, comptime lane_count: usize, coeffs: [lane_count]T) @Vector(lane_count, T) {
@@ -1460,8 +1459,6 @@ test "large-dimension full multivector geometric product with scalar identity" {
 }
 
 test "vga helpers use SIMD storage when appropriate" {
-    if (comptime !build_options.enable_simd_fast_paths) return;
-
     const Vec2 = Vector(f32, .euclidean(2));
     const v = Vec2.init(.{ 1.0, 2.0 });
 

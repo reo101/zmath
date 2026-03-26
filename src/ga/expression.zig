@@ -1,5 +1,4 @@
 const std = @import("std");
-const build_options = @import("build_options");
 const blades = @import("blades.zig");
 const blade_parsing = @import("blade_parsing.zig");
 const multivector = @import("multivector.zig");
