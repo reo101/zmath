@@ -379,8 +379,7 @@ pub const BasisIndexSpans = struct {
     }
 
     fn containsIn(span: ?BasisIndexSpan, one_based_index: usize) bool {
-        if (span) |range| return range.contains(one_based_index);
-        return false;
+        return if (span) |range| range.contains(one_based_index) else false;
     }
 
     fn validateSpan(self: BasisIndexSpans, comptime class: SignatureClass, comptime dimension: usize) void {
