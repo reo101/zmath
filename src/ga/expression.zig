@@ -818,22 +818,19 @@ fn parserCompile(
     return self.finish(root);
 }
 
-fn Compiler(
+fn FixedCompilerStorage(
     comptime T: type,
     comptime sig: blades.MetricSignature,
-    comptime naming_options: blade_parsing.SignedBladeNamingOptions,
-    comptime source: []const u8,
+    comptime max_nodes: usize,
+    comptime max_placeholders: usize,
 ) type {
     const Types = ParserTypes(T, sig);
-    const Token = Types.Token;
     const Node = Types.Node;
     const NodeInfo = Types.NodeInfo;
-    const max_nodes = source.len * 4 + 8;
-    const max_placeholders = if (source.len == 0) 1 else source.len;
 
     return struct {
         const Self = @This();
-        pub const ParserError = RuntimeCompileError || error{ExpressionTooLarge};
+        pub const StorageError = error{ExpressionTooLarge};
 
         pub const Compiled = struct {
             nodes: [max_nodes]Node,
@@ -843,18 +840,15 @@ fn Compiler(
             placeholder_count: usize,
         };
 
-        source: []const u8 = source,
-        naming_options: blade_parsing.SignedBladeNamingOptions = naming_options,
-        current: Token = .{ .eof = {} },
-        current_start: usize = 0,
-        position: usize = 0,
         nodes: [max_nodes]Node = undefined,
         infos: [max_nodes]NodeInfo = undefined,
         node_count: usize = 0,
         placeholder_names: [max_placeholders][]const u8 = undefined,
         placeholder_count: usize = 0,
 
-        fn newNode(self: *Self, node: Node, info: NodeInfo) ParserError!usize {
+        fn deinit(_: *Self) void {}
+
+        fn newNode(self: *Self, node: Node, info: NodeInfo) StorageError!usize {
             if (self.node_count >= max_nodes) return error.ExpressionTooLarge;
             const index = self.node_count;
             self.nodes[index] = node;
@@ -875,7 +869,7 @@ fn Compiler(
             return self.placeholder_names[0..self.placeholder_count];
         }
 
-        fn appendPlaceholder(self: *Self, name: []const u8) ParserError!usize {
+        fn appendPlaceholder(self: *Self, name: []const u8) StorageError!usize {
             if (self.placeholder_count >= max_placeholders) return error.ExpressionTooLarge;
             const slot = self.placeholder_count;
             self.placeholder_names[slot] = name;
@@ -883,7 +877,7 @@ fn Compiler(
             return slot;
         }
 
-        fn finish(self: *Self, root: usize) ParserError!Compiled {
+        fn finish(self: *Self, root: usize) StorageError!Compiled {
             return .{
                 .nodes = self.nodes,
                 .node_count = self.node_count,
@@ -895,18 +889,17 @@ fn Compiler(
     };
 }
 
-fn RuntimeCompiler(
+fn DynamicCompilerStorage(
     comptime T: type,
     comptime sig: blades.MetricSignature,
 ) type {
     const Types = ParserTypes(T, sig);
-    const Token = Types.Token;
     const Node = Types.Node;
     const NodeInfo = Types.NodeInfo;
 
     return struct {
         const Self = @This();
-        pub const ParserError = std.mem.Allocator.Error || RuntimeCompileError;
+        pub const StorageError = std.mem.Allocator.Error;
 
         pub const Compiled = struct {
             nodes: []const Node,
@@ -915,24 +908,13 @@ fn RuntimeCompiler(
         };
 
         allocator: std.mem.Allocator,
-        source: []const u8,
-        naming_options: blade_parsing.SignedBladeNamingOptions,
-        current: Token = .{ .eof = {} },
-        current_start: usize = 0,
-        position: usize = 0,
         nodes: std.ArrayList(Node) = .empty,
         infos: std.ArrayList(NodeInfo) = .empty,
         placeholder_names: std.ArrayList([]const u8) = .empty,
 
-        fn init(
-            allocator: std.mem.Allocator,
-            source: []const u8,
-            naming_options: blade_parsing.SignedBladeNamingOptions,
-        ) Self {
+        fn init(allocator: std.mem.Allocator) Self {
             return .{
                 .allocator = allocator,
-                .source = source,
-                .naming_options = naming_options,
             };
         }
 
@@ -942,7 +924,7 @@ fn RuntimeCompiler(
             self.placeholder_names.deinit(self.allocator);
         }
 
-        fn newNode(self: *Self, node: Node, info: NodeInfo) ParserError!usize {
+        fn newNode(self: *Self, node: Node, info: NodeInfo) StorageError!usize {
             const index = self.nodes.items.len;
             try self.nodes.append(self.allocator, node);
             errdefer self.nodes.items.len -= 1;
@@ -962,18 +944,158 @@ fn RuntimeCompiler(
             return self.placeholder_names.items;
         }
 
-        fn appendPlaceholder(self: *Self, name: []const u8) ParserError!usize {
+        fn appendPlaceholder(self: *Self, name: []const u8) StorageError!usize {
             const slot = self.placeholder_names.items.len;
             try self.placeholder_names.append(self.allocator, name);
             return slot;
         }
 
-        fn finish(self: *Self, root: usize) ParserError!Compiled {
+        fn finish(self: *Self, root: usize) StorageError!Compiled {
+            const nodes = try self.nodes.toOwnedSlice(self.allocator);
+            errdefer self.allocator.free(nodes);
+
+            const placeholder_names = try self.placeholder_names.toOwnedSlice(self.allocator);
             return .{
-                .nodes = try self.nodes.toOwnedSlice(self.allocator),
+                .nodes = nodes,
                 .root = root,
-                .placeholder_names = try self.placeholder_names.toOwnedSlice(self.allocator),
+                .placeholder_names = placeholder_names,
             };
+        }
+    };
+}
+
+fn requireCompilerStorageDecl(comptime Storage: type, comptime name: []const u8) void {
+    if (!@hasDecl(Storage, name)) {
+        @compileError(std.fmt.comptimePrint(
+            "compiler storage `{s}` is missing required declaration `{s}`",
+            .{ @typeName(Storage), name },
+        ));
+    }
+}
+
+fn requireCompilerStorageMethod(
+    comptime Storage: type,
+    comptime name: []const u8,
+    comptime Expected: type,
+) void {
+    requireCompilerStorageDecl(Storage, name);
+    if (@TypeOf(@field(Storage, name)) != Expected) {
+        @compileError(std.fmt.comptimePrint(
+            "compiler storage `{s}` must declare `{s}` as `{s}`, found `{s}`",
+            .{ @typeName(Storage), name, @typeName(Expected), @typeName(@TypeOf(@field(Storage, name))) },
+        ));
+    }
+}
+
+fn requireCompilerStorageReadonlyMethod(
+    comptime Storage: type,
+    comptime name: []const u8,
+    comptime ByValue: type,
+    comptime ByRef: type,
+) void {
+    requireCompilerStorageDecl(Storage, name);
+    const Actual = @TypeOf(@field(Storage, name));
+    if (Actual != ByValue and Actual != ByRef) {
+        @compileError(std.fmt.comptimePrint(
+            "compiler storage `{s}` must declare `{s}` as `{s}` or `{s}`, found `{s}`",
+            .{ @typeName(Storage), name, @typeName(ByValue), @typeName(ByRef), @typeName(Actual) },
+        ));
+    }
+}
+
+fn ensureCompilerStorage(
+    comptime T: type,
+    comptime sig: blades.MetricSignature,
+    comptime Storage: type,
+) void {
+    const Types = ParserTypes(T, sig);
+    const Node = Types.Node;
+    const NodeInfo = Types.NodeInfo;
+
+    requireCompilerStorageDecl(Storage, "StorageError");
+    if (@typeInfo(Storage.StorageError) != .error_set) {
+        @compileError(std.fmt.comptimePrint(
+            "compiler storage `{s}` must declare `StorageError` as an error set",
+            .{@typeName(Storage)},
+        ));
+    }
+
+    requireCompilerStorageDecl(Storage, "Compiled");
+    requireCompilerStorageMethod(Storage, "deinit", fn (*Storage) void);
+    requireCompilerStorageMethod(Storage, "newNode", fn (*Storage, Node, NodeInfo) Storage.StorageError!usize);
+    requireCompilerStorageReadonlyMethod(Storage, "nodeInfo", fn (Storage, usize) NodeInfo, fn (*const Storage, usize) NodeInfo);
+    requireCompilerStorageReadonlyMethod(Storage, "nodeAt", fn (Storage, usize) Node, fn (*const Storage, usize) Node);
+    requireCompilerStorageReadonlyMethod(
+        Storage,
+        "placeholderNames",
+        fn (Storage) []const []const u8,
+        fn (*const Storage) []const []const u8,
+    );
+    requireCompilerStorageMethod(Storage, "appendPlaceholder", fn (*Storage, []const u8) Storage.StorageError!usize);
+    requireCompilerStorageMethod(Storage, "finish", fn (*Storage, usize) Storage.StorageError!Storage.Compiled);
+}
+
+fn Compiler(
+    comptime T: type,
+    comptime sig: blades.MetricSignature,
+    comptime Storage: type,
+) type {
+    ensureCompilerStorage(T, sig, Storage);
+    const Types = ParserTypes(T, sig);
+    const Token = Types.Token;
+    const Node = Types.Node;
+    const NodeInfo = Types.NodeInfo;
+
+    return struct {
+        const Self = @This();
+        pub const ParserError = Storage.StorageError || RuntimeCompileError;
+        pub const Compiled = Storage.Compiled;
+
+        source: []const u8,
+        naming_options: blade_parsing.SignedBladeNamingOptions,
+        current: Token = .{ .eof = {} },
+        current_start: usize = 0,
+        position: usize = 0,
+        storage: Storage,
+
+        fn init(
+            source: []const u8,
+            naming_options: blade_parsing.SignedBladeNamingOptions,
+            storage: Storage,
+        ) Self {
+            return .{
+                .source = source,
+                .naming_options = naming_options,
+                .storage = storage,
+            };
+        }
+
+        fn deinit(self: *Self) void {
+            self.storage.deinit();
+        }
+
+        fn newNode(self: *Self, node: Node, info: NodeInfo) ParserError!usize {
+            return self.storage.newNode(node, info);
+        }
+
+        fn nodeInfo(self: Self, index: usize) NodeInfo {
+            return self.storage.nodeInfo(index);
+        }
+
+        fn nodeAt(self: Self, index: usize) Node {
+            return self.storage.nodeAt(index);
+        }
+
+        fn placeholderNames(self: Self) []const []const u8 {
+            return self.storage.placeholderNames();
+        }
+
+        fn appendPlaceholder(self: *Self, name: []const u8) ParserError!usize {
+            return self.storage.appendPlaceholder(name);
+        }
+
+        fn finish(self: *Self, root: usize) ParserError!Compiled {
+            return self.storage.finish(root);
         }
     };
 }
@@ -1102,12 +1224,13 @@ pub fn compileRuntime(
     source: []const u8,
 ) (std.mem.Allocator.Error || RuntimeCompileError)!RuntimeCompiledExpression(T, sig) {
     const Runtime = RuntimeCompiledExpression(T, sig);
-    const CompilerImpl = RuntimeCompiler(T, sig);
+    const Storage = DynamicCompilerStorage(T, sig);
+    const CompilerImpl = Compiler(T, sig, Storage);
 
     const owned_source = try allocator.dupe(u8, source);
     errdefer allocator.free(owned_source);
 
-    var compiler = CompilerImpl.init(allocator, owned_source, naming_options);
+    var compiler = CompilerImpl.init(owned_source, naming_options, Storage.init(allocator));
     defer compiler.deinit();
 
     const compiled = try parserCompile(T, sig, &compiler);
@@ -1154,10 +1277,17 @@ pub fn CompiledExpression(
     comptime source: []const u8,
 ) type {
     const Full = multivector.FullMultivector(T, sig);
+    const Storage = FixedCompilerStorage(
+        T,
+        sig,
+        source.len * 4 + 8,
+        if (source.len == 0) 1 else source.len,
+    );
+    const CompilerImpl = Compiler(T, sig, Storage);
     const compiled = comptime blk: {
         @setEvalBranchQuota(2_000_000);
 
-        var compiler = Compiler(T, sig, naming_options, source){};
+        var compiler = CompilerImpl.init(source, naming_options, .{});
         break :blk parserCompile(T, sig, &compiler) catch |err| switch (err) {
             error.ExpressionTooLarge => compileErrorAt(source, compiler.current_start, "expression is too large"),
             inline else => compileErrorAt(source, compiler.current_start, parserErrorMessage(err)),
