@@ -1,6 +1,7 @@
 const std = @import("std");
 const multivector = @import("multivector.zig");
 const blades = @import("blades.zig");
+const meta = @import("../meta.zig");
 
 const euclidean2 = blades.euclideanSignature(2);
 
@@ -20,9 +21,7 @@ pub const RotorError = error{
 };
 
 fn assertFloatVector(comptime M: type) void {
-    if (!@hasDecl(M, "dimensions") or !@hasDecl(M, "Coefficient") or !@hasDecl(M, "blades")) {
-        @compileError("expected a multivector type");
-    }
+    meta.requireDecls(M, &.{ "dimensions", "Coefficient", "blades" }, "multivector type", "public constant");
     if (!blades.allMasksHaveGrade(M.blades, 1)) {
         @compileError("this helper expects a grade-1 vector type");
     }
@@ -33,9 +32,7 @@ fn assertFloatVector(comptime M: type) void {
 }
 
 fn assertFloatRotor(comptime M: type) void {
-    if (!@hasDecl(M, "dimensions") or !@hasDecl(M, "Coefficient") or !@hasDecl(M, "blades")) {
-        @compileError("expected a rotor multivector type");
-    }
+    meta.requireDecls(M, &.{ "dimensions", "Coefficient", "blades" }, "rotor multivector type", "public constant");
     if (!blades.allMasksHaveParity(M.blades, true)) {
         @compileError("this helper expects an even multivector / rotor carrier");
     }
@@ -63,9 +60,7 @@ pub fn radiansFromDegrees(angle_degrees: anytype) f64 {
 }
 
 fn assertFloatMultivector(comptime M: type) void {
-    if (!@hasDecl(M, "dimensions") or !@hasDecl(M, "Coefficient") or !@hasDecl(M, "blades")) {
-        @compileError("expected a multivector type");
-    }
+    meta.requireDecls(M, &.{ "dimensions", "Coefficient", "blades" }, "multivector type", "public constant");
     switch (@typeInfo(M.Coefficient)) {
         .float, .comptime_float => {},
         else => @compileError("rotor helpers currently require floating-point coefficients"),

@@ -2,6 +2,7 @@ const std = @import("std");
 const blades = @import("blades.zig");
 const blade_parsing = @import("blade_parsing.zig");
 const multivector = @import("multivector.zig");
+const meta = @import("../meta.zig");
 
 fn tupleFieldName(comptime index: usize) []const u8 {
     return std.fmt.comptimePrint("{d}", .{index});
@@ -964,45 +965,6 @@ fn DynamicCompilerStorage(
     };
 }
 
-fn requireCompilerStorageDecl(comptime Storage: type, comptime name: []const u8) void {
-    if (!@hasDecl(Storage, name)) {
-        @compileError(std.fmt.comptimePrint(
-            "compiler storage `{s}` is missing required declaration `{s}`",
-            .{ @typeName(Storage), name },
-        ));
-    }
-}
-
-fn requireCompilerStorageMethod(
-    comptime Storage: type,
-    comptime name: []const u8,
-    comptime Expected: type,
-) void {
-    requireCompilerStorageDecl(Storage, name);
-    if (@TypeOf(@field(Storage, name)) != Expected) {
-        @compileError(std.fmt.comptimePrint(
-            "compiler storage `{s}` must declare `{s}` as `{s}`, found `{s}`",
-            .{ @typeName(Storage), name, @typeName(Expected), @typeName(@TypeOf(@field(Storage, name))) },
-        ));
-    }
-}
-
-fn requireCompilerStorageReadonlyMethod(
-    comptime Storage: type,
-    comptime name: []const u8,
-    comptime ByValue: type,
-    comptime ByRef: type,
-) void {
-    requireCompilerStorageDecl(Storage, name);
-    const Actual = @TypeOf(@field(Storage, name));
-    if (Actual != ByValue and Actual != ByRef) {
-        @compileError(std.fmt.comptimePrint(
-            "compiler storage `{s}` must declare `{s}` as `{s}` or `{s}`, found `{s}`",
-            .{ @typeName(Storage), name, @typeName(ByValue), @typeName(ByRef), @typeName(Actual) },
-        ));
-    }
-}
-
 fn ensureCompilerStorage(
     comptime T: type,
     comptime sig: blades.MetricSignature,
@@ -1011,28 +973,90 @@ fn ensureCompilerStorage(
     const Types = ParserTypes(T, sig);
     const Node = Types.Node;
     const NodeInfo = Types.NodeInfo;
-
-    requireCompilerStorageDecl(Storage, "StorageError");
-    if (@typeInfo(Storage.StorageError) != .error_set) {
-        @compileError(std.fmt.comptimePrint(
-            "compiler storage `{s}` must declare `StorageError` as an error set",
-            .{@typeName(Storage)},
-        ));
-    }
-
-    requireCompilerStorageDecl(Storage, "Compiled");
-    requireCompilerStorageMethod(Storage, "deinit", fn (*Storage) void);
-    requireCompilerStorageMethod(Storage, "newNode", fn (*Storage, Node, NodeInfo) Storage.StorageError!usize);
-    requireCompilerStorageReadonlyMethod(Storage, "nodeInfo", fn (Storage, usize) NodeInfo, fn (*const Storage, usize) NodeInfo);
-    requireCompilerStorageReadonlyMethod(Storage, "nodeAt", fn (Storage, usize) Node, fn (*const Storage, usize) Node);
-    requireCompilerStorageReadonlyMethod(
-        Storage,
-        "placeholderNames",
-        fn (Storage) []const []const u8,
-        fn (*const Storage) []const []const u8,
+    const owner = std.fmt.comptimePrint(
+        "compiler storage `{s}`",
+        .{@typeName(Storage)},
     );
-    requireCompilerStorageMethod(Storage, "appendPlaceholder", fn (*Storage, []const u8) Storage.StorageError!usize);
-    requireCompilerStorageMethod(Storage, "finish", fn (*Storage, usize) Storage.StorageError!Storage.Compiled);
+    const declaration_options: meta.DeclLookupOptions = .{
+        .owner = owner,
+    };
+    const method_options: meta.DeclLookupOptions = .{
+        .owner = owner,
+        .decl_role = "method",
+    };
+    const lookup_decl_type = struct {
+        fn get(comptime name: []const u8) ?type {
+            if (!@hasDecl(Storage, name)) return null;
+
+            const value = @field(Storage, name);
+            return if (@TypeOf(value) == type) value else @TypeOf(value);
+        }
+    }.get;
+
+    meta.requireLookupDecl(
+        lookup_decl_type,
+        "Compiled",
+        declaration_options,
+    );
+    meta.requireLookupDeclSatisfies(
+        lookup_decl_type,
+        "StorageError",
+        meta.isErrorSetType,
+        "an error set",
+        declaration_options,
+    );
+
+    meta.requireLookupDeclType(
+        lookup_decl_type,
+        "deinit",
+        fn (*Storage) void,
+        method_options,
+    );
+    meta.requireLookupDeclTypeOneOf(
+        lookup_decl_type,
+        "newNode",
+        &.{fn (*Storage, Node, NodeInfo) Storage.StorageError!usize},
+        method_options,
+    );
+    meta.requireLookupDeclTypeOneOf(
+        lookup_decl_type,
+        "nodeInfo",
+        &.{
+            fn (Storage, usize) NodeInfo,
+            fn (*const Storage, usize) NodeInfo,
+        },
+        method_options,
+    );
+    meta.requireLookupDeclTypeOneOf(
+        lookup_decl_type,
+        "nodeAt",
+        &.{
+            fn (Storage, usize) Node,
+            fn (*const Storage, usize) Node,
+        },
+        method_options,
+    );
+    meta.requireLookupDeclTypeOneOf(
+        lookup_decl_type,
+        "placeholderNames",
+        &.{
+            fn (Storage) []const []const u8,
+            fn (*const Storage) []const []const u8,
+        },
+        method_options,
+    );
+    meta.requireLookupDeclType(
+        lookup_decl_type,
+        "appendPlaceholder",
+        fn (*Storage, []const u8) Storage.StorageError!usize,
+        method_options,
+    );
+    meta.requireLookupDeclType(
+        lookup_decl_type,
+        "finish",
+        fn (*Storage, usize) Storage.StorageError!Storage.Compiled,
+        method_options,
+    );
 }
 
 fn Compiler(
