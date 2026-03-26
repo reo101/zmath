@@ -1380,7 +1380,7 @@ fn smithedFullValue(comptime Full: type, smith: *std.testing.Smith) Full {
 
 fn fuzzRuntimeExpressionCorpusCase(case: anytype, smith: *std.testing.Smith) !void {
     const sig = comptime blades.MetricSignature.euclidean(3);
-    const options = blade_parsing.SignedBladeNamingOptions.euclidean(3);
+    const naming_options = blade_parsing.SignedBladeNamingOptions.euclidean(3);
     const Basis = multivector.Basis(f32, sig);
     const Full = multivector.FullMultivector(f32, sig);
     const scalar = smithedScalar(smith);
@@ -1404,7 +1404,7 @@ fn fuzzRuntimeExpressionCorpusCase(case: anytype, smith: *std.testing.Smith) !vo
 
     const actual: Full, const expected: Full = switch (case) {
         .constant => blk: {
-            var expr = try compileRuntime(f32, sig, options, std.testing.allocator, "2*e12 + e21");
+            var expr = try compileRuntime(f32, sig, naming_options, std.testing.allocator, "2*e12 + e21");
             defer expr.deinit();
             break :blk .{
                 try expr.eval(.{}),
@@ -1412,7 +1412,7 @@ fn fuzzRuntimeExpressionCorpusCase(case: anytype, smith: *std.testing.Smith) !vo
             };
         },
         .named => blk: {
-            var expr = try compileRuntime(f32, sig, options, std.testing.allocator, "2*e(1,2) + 3*{v}");
+            var expr = try compileRuntime(f32, sig, naming_options, std.testing.allocator, "2*e(1,2) + 3*{v}");
             defer expr.deinit();
             break :blk .{
                 try expr.eval(.{ .v = v }),
@@ -1420,7 +1420,7 @@ fn fuzzRuntimeExpressionCorpusCase(case: anytype, smith: *std.testing.Smith) !vo
             };
         },
         .tuple => blk: {
-            var expr = try compileRuntime(f32, sig, options, std.testing.allocator, "{} + {}");
+            var expr = try compileRuntime(f32, sig, naming_options, std.testing.allocator, "{} + {}");
             defer expr.deinit();
             const slot_values = [_]Full{
                 scalarConstant(f32, sig, scalar),
@@ -1432,7 +1432,7 @@ fn fuzzRuntimeExpressionCorpusCase(case: anytype, smith: *std.testing.Smith) !vo
             };
         },
         .reuse => blk: {
-            var expr = try compileRuntime(f32, sig, options, std.testing.allocator, "{v} + {v}");
+            var expr = try compileRuntime(f32, sig, naming_options, std.testing.allocator, "{v} + {v}");
             defer expr.deinit();
             const slot_values = [_]Full{v.cast(Full)};
             break :blk .{
@@ -1441,7 +1441,7 @@ fn fuzzRuntimeExpressionCorpusCase(case: anytype, smith: *std.testing.Smith) !vo
             };
         },
         .scaled => blk: {
-            var expr = try compileRuntime(f32, sig, options, std.testing.allocator, "{s}*{v}");
+            var expr = try compileRuntime(f32, sig, naming_options, std.testing.allocator, "{s}*{v}");
             defer expr.deinit();
             break :blk .{
                 try expr.eval(.{ .s = scalar, .v = v }),
@@ -1449,7 +1449,7 @@ fn fuzzRuntimeExpressionCorpusCase(case: anytype, smith: *std.testing.Smith) !vo
             };
         },
         .affine => blk: {
-            var expr = try compileRuntime(f32, sig, options, std.testing.allocator, "-({s}*e_1) + {v}");
+            var expr = try compileRuntime(f32, sig, naming_options, std.testing.allocator, "-({s}*e_1) + {v}");
             defer expr.deinit();
             break :blk .{
                 try expr.eval(.{ .s = scalar, .v = v }),
@@ -1457,7 +1457,7 @@ fn fuzzRuntimeExpressionCorpusCase(case: anytype, smith: *std.testing.Smith) !vo
             };
         },
         .mul_pair => blk: {
-            var expr = try compileRuntime(f32, sig, options, std.testing.allocator, "({a}+e1)*({b}-e2)");
+            var expr = try compileRuntime(f32, sig, naming_options, std.testing.allocator, "({a}+e1)*({b}-e2)");
             defer expr.deinit();
             break :blk .{
                 try expr.eval(.{ .a = a, .b = b }),
@@ -1465,7 +1465,7 @@ fn fuzzRuntimeExpressionCorpusCase(case: anytype, smith: *std.testing.Smith) !vo
             };
         },
         .inverse => blk: {
-            var expr = try compileRuntime(f32, sig, options, std.testing.allocator, "(2*e1)^-1");
+            var expr = try compileRuntime(f32, sig, naming_options, std.testing.allocator, "(2*e1)^-1");
             defer expr.deinit();
             break :blk .{
                 try expr.eval(.{}),
