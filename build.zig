@@ -157,6 +157,24 @@ pub fn build(b: *std.Build) void {
     const run_exe_tests = b.addRunArtifact(exe_tests);
     run_exe_tests.setName("run test zmath-cli");
 
+    const module_surface_tests = b.addTest(.{
+        .name = "zmath-module-surfaces",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/tests/modules.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{
+                    .name = "zmath",
+                    .module = zmath,
+                },
+            },
+        }),
+    });
+
+    const run_module_surface_tests = b.addRunArtifact(module_surface_tests);
+    run_module_surface_tests.setName("run test zmath-module-surfaces");
+
     const expression_fuzz_tests = b.addTest(.{
         .name = "zmath-expression-fuzz",
         .root_module = b.createModule(.{
@@ -179,6 +197,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+    test_step.dependOn(&run_module_surface_tests.step);
 
     const fuzz_expr_step = b.step("fuzz-expr", "Run the expression parser/evaluator fuzz smoke test");
     fuzz_expr_step.dependOn(&run_expression_fuzz.step);
