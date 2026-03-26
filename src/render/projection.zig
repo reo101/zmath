@@ -1,6 +1,8 @@
 const std = @import("std");
 const ga = @import("../ga.zig");
 
+const stereographic_extent_limit_factor: f32 = 4.0;
+
 pub const DirectionProjection = enum {
     gnomonic,
     stereographic,
@@ -88,6 +90,7 @@ pub fn projectStereographicDirection(
     const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
     const x = (x_raw * zoom / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
     const y = (1.0 - y_raw * zoom) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);
+    if (!projectedPointWithinReasonableBounds(.stereographic, .{ x, y }, canvas_width, canvas_height)) return null;
     return .{ x, y };
 }
 
@@ -183,6 +186,24 @@ pub fn projectDirectionWith(
     };
 }
 
+fn projectedPointWithinReasonableBounds(
+    projection: DirectionProjection,
+    point: [2]f32,
+    canvas_width: usize,
+    canvas_height: usize,
+) bool {
+    return switch (projection) {
+        .stereographic => {
+            const limit = @as(f32, @floatFromInt(@max(canvas_width, canvas_height))) * stereographic_extent_limit_factor;
+            return point[0] >= -limit and
+                point[0] <= @as(f32, @floatFromInt(canvas_width)) + limit and
+                point[1] >= -limit and
+                point[1] <= @as(f32, @floatFromInt(canvas_height)) + limit;
+        },
+        else => true,
+    };
+}
+
 test "wrapped angular projection spans the full horizontal circle" {
     const width: usize = 160;
     const height: usize = 90;
@@ -198,6 +219,12 @@ test "wrapped angular projection spans the full horizontal circle" {
 
     const back = projectWrappedAngularDirection(0.0, 0.0, -1.0, width, height, 1.0).?;
     try std.testing.expectApproxEqAbs(@as(f32, 0.0), back[0], 1e-4);
+}
+
+test "stereographic projection rejects points too close to the pole singularity" {
+    const width: usize = 160;
+    const height: usize = 90;
+    try std.testing.expect(projectStereographicDirection(0.05, 0.0, -0.9987492, width, height, 1.0) == null);
 }
 
 /// Projects a point using PGA universal projection formula.

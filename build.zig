@@ -93,6 +93,114 @@ pub fn build(b: *std.Build) void {
     );
     profile_multivector_step.dependOn(&profile_multivector_exe.step);
 
+    const profile_curved_demo_exe = b.addExecutable(.{
+        .name = "zmath-profile-curved-demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/profile/curved_demo.zig"),
+            .target = target,
+            .optimize = .Debug,
+            .imports = &.{
+                .{
+                    .name = "zmath",
+                    .module = zmath,
+                },
+                .{
+                    .name = "demo_core",
+                    .module = b.createModule(.{
+                        .root_source_file = b.path("src/demos/core.zig"),
+                        .target = target,
+                        .optimize = .Debug,
+                        .imports = &.{
+                            .{
+                                .name = "zmath",
+                                .module = zmath,
+                            },
+                        },
+                    }),
+                },
+            },
+        }),
+    });
+
+    const profile_curved_demo_step = b.step(
+        "profile-curved-demo",
+        "Render fixed curved-demo snapshots for inspection",
+    );
+    const run_profile_curved_demo = b.addRunArtifact(profile_curved_demo_exe);
+    profile_curved_demo_step.dependOn(&run_profile_curved_demo.step);
+
+    const profile_spherical_walk_trace_exe = b.addExecutable(.{
+        .name = "zmath-profile-spherical-walk-trace",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/profile/spherical_walk_trace.zig"),
+            .target = target,
+            .optimize = .Debug,
+            .imports = &.{
+                .{
+                    .name = "zmath",
+                    .module = zmath,
+                },
+                .{
+                    .name = "demo_core",
+                    .module = b.createModule(.{
+                        .root_source_file = b.path("src/demos/core.zig"),
+                        .target = target,
+                        .optimize = .Debug,
+                        .imports = &.{
+                            .{
+                                .name = "zmath",
+                                .module = zmath,
+                            },
+                        },
+                    }),
+                },
+            },
+        }),
+    });
+
+    const profile_spherical_walk_trace_step = b.step(
+        "profile-spherical-walk-trace",
+        "Trace spherical demo vertex paths while walking backward from a repro state",
+    );
+    const run_profile_spherical_walk_trace = b.addRunArtifact(profile_spherical_walk_trace_exe);
+    profile_spherical_walk_trace_step.dependOn(&run_profile_spherical_walk_trace.step);
+
+    const profile_spherical_sphere_map_exe = b.addExecutable(.{
+        .name = "zmath-profile-spherical-sphere-map",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/profile/spherical_sphere_map.zig"),
+            .target = target,
+            .optimize = .Debug,
+            .imports = &.{
+                .{
+                    .name = "zmath",
+                    .module = zmath,
+                },
+                .{
+                    .name = "demo_core",
+                    .module = b.createModule(.{
+                        .root_source_file = b.path("src/demos/core.zig"),
+                        .target = target,
+                        .optimize = .Debug,
+                        .imports = &.{
+                            .{
+                                .name = "zmath",
+                                .module = zmath,
+                            },
+                        },
+                    }),
+                },
+            },
+        }),
+    });
+
+    const profile_spherical_sphere_map_step = b.step(
+        "profile-spherical-sphere-map",
+        "ASCII sphere-map showing vertex positions on S3 relative to camera during walk",
+    );
+    const run_profile_spherical_sphere_map = b.addRunArtifact(profile_spherical_sphere_map_exe);
+    profile_spherical_sphere_map_step.dependOn(&run_profile_spherical_sphere_map.step);
+
     // Demos
     const demo_exe = b.addExecutable(.{
         .name = "zmath-demo",
@@ -175,6 +283,24 @@ pub fn build(b: *std.Build) void {
     const run_module_surface_tests = b.addRunArtifact(module_surface_tests);
     run_module_surface_tests.setName("run test zmath-module-surfaces");
 
+    const demo_core_tests = b.addTest(.{
+        .name = "zmath-demo-core",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/demos/core.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{
+                    .name = "zmath",
+                    .module = zmath,
+                },
+            },
+        }),
+    });
+
+    const run_demo_core_tests = b.addRunArtifact(demo_core_tests);
+    run_demo_core_tests.setName("run test zmath-demo-core");
+
     const expression_fuzz_tests = b.addTest(.{
         .name = "zmath-expression-fuzz",
         .root_module = b.createModule(.{
@@ -198,6 +324,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(&run_module_surface_tests.step);
+    test_step.dependOn(&run_demo_core_tests.step);
 
     const fuzz_expr_step = b.step("fuzz-expr", "Run the expression parser/evaluator fuzz smoke test");
     fuzz_expr_step.dependOn(&run_expression_fuzz.step);
