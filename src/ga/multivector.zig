@@ -919,7 +919,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                 return true;
             } else {
                 const masks = blade_ops.unionBladeMasks(dimensions, blade_masks, Rhs.blades);
-                inline for (masks) |mask| {
+                for (masks) |mask| {
                     if (self.coeff(mask) != rhs.coeff(mask)) return false;
                 }
 
@@ -1044,26 +1044,7 @@ pub fn DotProductResultType(
     comptime sig: MetricSignature,
 ) type {
     const dimension = comptime sig.dimension();
-    @setEvalBranchQuota(1_000_000);
-    var marked = std.mem.zeroes([blade_ops.bladeCount(dimension)]bool);
-
-    inline for (lhs_masks) |lhs_mask| {
-        if (lhs_mask.bitset.mask == 0) continue;
-        inline for (rhs_masks) |rhs_mask| {
-            if (rhs_mask.bitset.mask == 0) continue;
-
-            const lhs_grade = blade_ops.bladeGrade(lhs_mask);
-            const rhs_grade = blade_ops.bladeGrade(rhs_mask);
-            const target_grade = if (lhs_grade > rhs_grade) lhs_grade - rhs_grade else rhs_grade - lhs_grade;
-
-            const result_mask = BladeMask.init(lhs_mask.bitset.xorWith(rhs_mask.bitset).mask);
-            if (blade_ops.bladeGrade(result_mask) == target_grade) {
-                marked[result_mask.index()] = true;
-            }
-        }
-    }
-
-    const masks = collectMarkedMasks(dimension, marked);
+    const masks = blade_ops.dotProductMasks(dimension, lhs_masks, rhs_masks);
     return Multivector(T, masks[0..], sig);
 }
 

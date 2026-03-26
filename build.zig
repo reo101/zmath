@@ -72,6 +72,27 @@ pub fn build(b: *std.Build) void {
     const run_mod_tests = b.addRunArtifact(zmath_tests);
     run_mod_tests.setName("run test zmath-module");
 
+    const profile_multivector_exe = b.addExecutable(.{
+        .name = "zmath-profile-multivector",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/profile/multivector.zig"),
+            .target = target,
+            .optimize = .Debug,
+            .imports = &.{
+                .{
+                    .name = "zmath",
+                    .module = zmath,
+                },
+            },
+        }),
+    });
+
+    const profile_multivector_step = b.step(
+        "profile-multivector-build",
+        "Compile the comptime multivector profiling harness",
+    );
+    profile_multivector_step.dependOn(&profile_multivector_exe.step);
+
     // Demos
     const demo_exe = b.addExecutable(.{
         .name = "zmath-demo",
@@ -139,11 +160,16 @@ pub fn build(b: *std.Build) void {
     const expression_fuzz_tests = b.addTest(.{
         .name = "zmath-expression-fuzz",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/ga/expression_test_root.zig"),
+            .root_source_file = b.path("tools/fuzz/expression.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &.{
+                .{
+                    .name = "zmath",
+                    .module = zmath,
+                },
+            },
         }),
-        .filters = &.{"expression.test.expression fuzz:"},
         .use_llvm = fuzz_use_llvm,
     });
 
