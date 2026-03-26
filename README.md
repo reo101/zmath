@@ -65,8 +65,6 @@ The API tries to stay clean and non-leaky by default: expose useful algebraic su
 1. Run tests: `zig build test --summary all`
 2. Run demo: `zig build run`
 3. Run SIMD benchmark (`ReleaseFast`): `zig build bench-simd`
-4. Run scalar baseline benchmark (`ReleaseFast`): `zig build bench-scalar`
-5. Run both benchmarks (`ReleaseFast`): `zig build bench`
 
 ## Why "Somewhat" Efficient?
 

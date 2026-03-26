@@ -8,20 +8,9 @@ pub fn build(b: *std.Build) void {
     const compare_spirv = b.option(bool, "compare-spirv", "Emit SPIR-V size comparison for GA vs raw shader variants") orelse false;
     const fuzz_use_llvm = b.option(bool, "fuzz-llvm", "Force LLVM backend for fuzz test builds") orelse true;
 
-    const build_options = b.addOptions();
-    build_options.step.name = "options simd-build";
-    build_options.addOption(bool, "enable_simd_fast_paths", true);
-    const simd_build_options_module = build_options.createModule();
-
     const zmath = b.addModule("zmath", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
-        .imports = &.{
-            .{
-                .name = "build_options",
-                .module = simd_build_options_module,
-            },
-        },
     });
 
     const exe = b.addExecutable(.{
@@ -34,10 +23,6 @@ pub fn build(b: *std.Build) void {
                 .{
                     .name = "zmath",
                     .module = zmath,
-                },
-                .{
-                    .name = "build_options",
-                    .module = simd_build_options_module,
                 },
             },
         }),
@@ -69,44 +54,6 @@ pub fn build(b: *std.Build) void {
                     .name = "zmath",
                     .module = zmath,
                 },
-                .{
-                    .name = "build_options",
-                    .module = simd_build_options_module,
-                },
-            },
-        }),
-    });
-
-    const bench_scalar_options = b.addOptions();
-    bench_scalar_options.step.name = "options scalar-build";
-    bench_scalar_options.addOption(bool, "enable_simd_fast_paths", false);
-    const scalar_build_options_module = bench_scalar_options.createModule();
-    const bench_scalar_zmath = b.addModule("zmath-bench-scalar", .{
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-        .imports = &.{
-            .{
-                .name = "build_options",
-                .module = scalar_build_options_module,
-            },
-        },
-    });
-
-    const bench_scalar_exe = b.addExecutable(.{
-        .name = "zmath-bench-scalar",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/bench_scalar.zig"),
-            .target = target,
-            .optimize = bench_optimize,
-            .imports = &.{
-                .{
-                    .name = "zmath",
-                    .module = bench_scalar_zmath,
-                },
-                .{
-                    .name = "build_options",
-                    .module = scalar_build_options_module,
-                },
             },
         }),
     });
@@ -114,15 +61,6 @@ pub fn build(b: *std.Build) void {
     const bench_simd_step = b.step("bench-simd", "Run micro-benchmarks with SIMD fast paths (ReleaseFast)");
     const run_bench_simd = b.addRunArtifact(bench_simd_exe);
     bench_simd_step.dependOn(&run_bench_simd.step);
-
-    const bench_scalar_step = b.step("bench-scalar", "Run micro-benchmarks with scalar fallback paths (ReleaseFast)");
-    const run_bench_scalar = b.addRunArtifact(bench_scalar_exe);
-    bench_scalar_step.dependOn(&run_bench_scalar.step);
-
-    const bench_step = b.step("bench", "Run scalar and SIMD micro-benchmarks (ReleaseFast)");
-    const run_bench_scalar_then_simd = b.addRunArtifact(bench_simd_exe);
-    run_bench_scalar_then_simd.step.dependOn(&run_bench_scalar.step);
-    bench_step.dependOn(&run_bench_scalar_then_simd.step);
 
     build_spirv.addSpirvSteps(b, optimize, use_llvm_spirv, compare_spirv);
 
@@ -204,12 +142,6 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/ga/expression_test_root.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &.{
-                .{
-                    .name = "build_options",
-                    .module = simd_build_options_module,
-                },
-            },
         }),
         .filters = &.{"expression.test.expression fuzz:"},
         .use_llvm = fuzz_use_llvm,
@@ -218,27 +150,8 @@ pub fn build(b: *std.Build) void {
     const run_expression_fuzz = b.addRunArtifact(expression_fuzz_tests);
     run_expression_fuzz.setName("run fuzz test zmath-expression");
 
-    const scalar_zmath = b.addModule("zmath-scalar", .{
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-        .imports = &.{
-            .{
-                .name = "build_options",
-                .module = scalar_build_options_module,
-            },
-        },
-    });
-
-    const scalar_zmath_tests = b.addTest(.{
-        .name = "zmath-module-scalar",
-        .root_module = scalar_zmath,
-    });
-    const run_scalar_mod_tests = b.addRunArtifact(scalar_zmath_tests);
-    run_scalar_mod_tests.setName("run test zmath-module-scalar");
-
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
-    test_step.dependOn(&run_scalar_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
 
     const fuzz_expr_step = b.step("fuzz-expr", "Run the expression parser/evaluator fuzz smoke test");
