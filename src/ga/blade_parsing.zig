@@ -427,7 +427,7 @@ test "signed blades keep compact and multi-digit forms distinct" {
 
     const single = try parseSignedBlade("e_12", 12, null, false);
     try std.testing.expectEqual(
-        SignedBladeSpec{ .sign = .positive, .mask = .init(@as(u64, 1) << 11) },
+        SignedBladeSpec{ .sign = .positive, .mask = .initOneBit(11) },
         single,
     );
 

@@ -26,6 +26,21 @@ pub const BladeMask = struct {
         return .{ .bitset = .{ .mask = @as(BladeMaskInt, @intCast(value)) } };
     }
 
+    /// Constructs a blade mask with exactly one bit set at `bit_index`.
+    pub inline fn initOneBit(bit_index: usize) BladeMask {
+        var bitset = BladeMaskBitSet.initEmpty();
+        bitset.set(bit_index);
+        return .{ .bitset = bitset };
+    }
+
+    /// Constructs a blade mask with bits `[0, count)` set.
+    pub inline fn initLowBits(count: usize) BladeMask {
+        return if (count == 0)
+            .init(0)
+        else
+            .init((@as(BladeMaskInt, 1) << @intCast(count)) - 1);
+    }
+
     /// Convenience constructor for tuple/array literals of raw masks.
     pub inline fn initMany(comptime values: anytype) [values.len]BladeMask {
         var masks: [values.len]BladeMask = undefined;
@@ -500,7 +515,7 @@ pub const MetricSignature = struct {
     pub fn applyBasisIndex(self: MetricSignature, spec: *SignedBladeSpec, basis_index: usize) void {
         const sig_dimension = self.dimension();
         std.debug.assert(1 <= basis_index and basis_index <= sig_dimension);
-        const bit: BladeMask = .init(@as(BladeMaskInt, 1) << @intCast(basis_index - 1));
+        const bit: BladeMask = .initOneBit(basis_index - 1);
         if (spec.mask.geometricProductClassWithSignature(bit, self).isNegative()) {
             spec.sign.flip();
         }
@@ -577,7 +592,7 @@ pub fn basisVectorMask(comptime dimension: usize, basis_index: usize) BladeMask 
     validateDimension(dimension);
     std.debug.assert(1 <= basis_index and basis_index <= dimension);
 
-    return .init(@as(BladeMaskInt, 1) << @intCast(basis_index - 1));
+    return .initOneBit(basis_index - 1);
 }
 
 /// Returns the mask for a basis blade expressed as internal one-based indices.
@@ -663,10 +678,10 @@ pub fn gradeBladeMasks(comptime dimension: usize, comptime grade: usize) [choose
     }
 
     var next_index: usize = 0;
-    var mask: BladeMask = .init((@as(BladeMaskInt, 1) << @intCast(grade)) - 1);
-    const limit = @as(BladeMaskInt, 1) << @intCast(dimension);
+    var mask: BladeMask = .initLowBits(grade);
+    const limit: BladeMask = .initOneBit(dimension);
 
-    while (mask.toInt() < limit) {
+    while (mask.toInt() < limit.toInt()) {
         masks[next_index] = mask;
         next_index += 1;
 
