@@ -1,6 +1,7 @@
 const std = @import("std");
 const blade_parsing = @import("blade_parsing.zig");
 const blade_ops = @import("blades.zig");
+const meta = @import("../meta.zig");
 
 /// Bitset representation of a basis blade.
 pub const BladeMask = blade_ops.BladeMask;
@@ -60,23 +61,22 @@ fn isSignedIntType(comptime T: type) bool {
 }
 
 pub fn isMultivectorType(comptime T: type) bool {
-    return switch (@typeInfo(T)) {
-        .@"struct", .@"union", .@"enum", .@"opaque" => @hasDecl(T, "dimensions") and @hasDecl(T, "Coefficient") and @hasDecl(T, "blades") and @hasDecl(T, "metric_signature") and @hasField(T, "coeffs"),
-        else => false,
-    };
+    return meta.hasDecls(T, &.{ "dimensions", "Coefficient", "blades", "metric_signature" }) and
+        switch (@typeInfo(T)) {
+            .@"struct", .@"union" => @hasField(T, "coeffs"),
+            else => false,
+        };
 }
 
 pub fn ensureMultivector(comptime T: type) void {
-    const prefix = "type " ++ @typeName(T) ++ " is not a valid multivector carrier: ";
-    if (!@hasDecl(T, "dimensions")) @compileError(prefix ++ "missing public constant 'dimensions'");
-    if (!@hasDecl(T, "Coefficient")) @compileError(prefix ++ "missing public constant 'Coefficient'");
-    if (!@hasDecl(T, "blades")) @compileError(prefix ++ "missing public constant 'blades'");
-    if (!@hasDecl(T, "metric_signature")) @compileError(prefix ++ "missing public constant 'metric_signature'");
-    if (!@hasField(T, "coeffs")) @compileError(prefix ++ "missing field 'coeffs'");
+    meta.requireDecls(T, &.{ "dimensions", "Coefficient", "blades", "metric_signature" }, "multivector carrier", "public constant");
+    if (!@hasField(T, "coeffs")) {
+        @compileError("type " ++ @typeName(T) ++ " is not a valid multivector carrier: missing field 'coeffs'");
+    }
 
-    if (@TypeOf(T.dimensions) != usize) @compileError(prefix ++ "'dimensions' must be a usize");
-    if (@TypeOf(T.blades) != []const BladeMask) @compileError(prefix ++ "'blades' must be a []const BladeMask");
-    if (@TypeOf(T.metric_signature) != MetricSignature) @compileError(prefix ++ "'metric_signature' must be a MetricSignature");
+    if (@TypeOf(T.dimensions) != usize) @compileError("type " ++ @typeName(T) ++ " is not a valid multivector carrier: `dimensions` must be `usize`");
+    if (@TypeOf(T.blades) != []const BladeMask) @compileError("type " ++ @typeName(T) ++ " is not a valid multivector carrier: `blades` must be `[]const BladeMask`");
+    if (@TypeOf(T.metric_signature) != MetricSignature) @compileError("type " ++ @typeName(T) ++ " is not a valid multivector carrier: `metric_signature` must be `MetricSignature`");
 }
 
 fn isSimdCoeffType(comptime T: type) bool {
