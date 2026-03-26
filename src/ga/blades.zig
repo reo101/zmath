@@ -703,8 +703,7 @@ fn parityBladeMasks(
     validateDimension(dimension);
     @setEvalBranchQuota(1_000_000);
 
-    const count = countParityBladeMasks(dimension, even);
-    var masks: [count]BladeMask = undefined;
+    var masks: [countParityBladeMasks(dimension, even)]BladeMask = undefined;
     var next_index: usize = 0;
 
     for (0..bladeCount(dimension)) |index| {
@@ -727,6 +726,20 @@ pub fn evenBladeMasks(comptime dimension: usize) [countParityBladeMasks(dimensio
 /// Returns every odd-grade blade mask in canonical order.
 pub fn oddBladeMasks(comptime dimension: usize) [countParityBladeMasks(dimension, false)]BladeMask {
     return parityBladeMasks(dimension, false);
+}
+
+fn completeParityOfMaskSet(comptime dimension: usize, comptime masks: []const BladeMask) ?bool {
+    @setEvalBranchQuota(1_000_000);
+
+    if (masks.len == countParityBladeMasks(dimension, true) and allMasksHaveParity(masks, true)) {
+        return true;
+    }
+
+    if (masks.len == countParityBladeMasks(dimension, false) and allMasksHaveParity(masks, false)) {
+        return false;
+    }
+
+    return null;
 }
 
 fn countMarkedMasks(comptime dimension: usize, comptime marked: [bladeCount(dimension)]bool) usize {
@@ -780,8 +793,28 @@ pub fn geometricProductMasks(
     comptime dimension: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
-) [countMarkedMasks(dimension, geometricProductMaskTable(dimension, lhs_masks, rhs_masks))]BladeMask {
-    return collectMarkedMasks(dimension, geometricProductMaskTable(dimension, lhs_masks, rhs_masks));
+) @TypeOf(geometricProductMaskResult(dimension, lhs_masks, rhs_masks).value) {
+    return geometricProductMaskResult(dimension, lhs_masks, rhs_masks).value;
+}
+
+fn geometricProductMaskResult(
+    comptime dimension: usize,
+    comptime lhs_masks: []const BladeMask,
+    comptime rhs_masks: []const BladeMask,
+) type {
+    const masks = if (lhs_masks.len == bladeCount(dimension) and rhs_masks.len == bladeCount(dimension))
+        allBladeMasks(dimension)
+    else if (completeParityOfMaskSet(dimension, lhs_masks)) |lhs_even|
+        if (completeParityOfMaskSet(dimension, rhs_masks)) |rhs_even|
+            if (lhs_even == rhs_even) evenBladeMasks(dimension) else oddBladeMasks(dimension)
+        else
+            collectMarkedMasks(dimension, geometricProductMaskTable(dimension, lhs_masks, rhs_masks))
+    else
+        collectMarkedMasks(dimension, geometricProductMaskTable(dimension, lhs_masks, rhs_masks));
+
+    return struct {
+        pub const value = masks;
+    };
 }
 
 fn geometricProductMaskTable(
@@ -806,8 +839,23 @@ pub fn outerProductMasks(
     comptime dimension: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
-) [countMarkedMasks(dimension, outerProductMaskTable(dimension, lhs_masks, rhs_masks))]BladeMask {
-    return collectMarkedMasks(dimension, outerProductMaskTable(dimension, lhs_masks, rhs_masks));
+) @TypeOf(outerProductMaskResult(dimension, lhs_masks, rhs_masks).value) {
+    return outerProductMaskResult(dimension, lhs_masks, rhs_masks).value;
+}
+
+fn outerProductMaskResult(
+    comptime dimension: usize,
+    comptime lhs_masks: []const BladeMask,
+    comptime rhs_masks: []const BladeMask,
+) type {
+    const masks = if (lhs_masks.len == bladeCount(dimension) and rhs_masks.len == bladeCount(dimension))
+        allBladeMasks(dimension)
+    else
+        collectMarkedMasks(dimension, outerProductMaskTable(dimension, lhs_masks, rhs_masks));
+
+    return struct {
+        pub const value = masks;
+    };
 }
 
 fn outerProductMaskTable(
@@ -832,8 +880,22 @@ fn outerProductMaskTable(
 pub fn dualMasks(
     comptime dimension: usize,
     comptime masks: []const BladeMask,
-) [countMarkedMasks(dimension, dualMaskTable(dimension, masks))]BladeMask {
-    return collectMarkedMasks(dimension, dualMaskTable(dimension, masks));
+) @TypeOf(dualMaskResult(dimension, masks).value) {
+    return dualMaskResult(dimension, masks).value;
+}
+
+fn dualMaskResult(
+    comptime dimension: usize,
+    comptime masks: []const BladeMask,
+) type {
+    const result_masks = if (masks.len == bladeCount(dimension))
+        allBladeMasks(dimension)
+    else
+        collectMarkedMasks(dimension, dualMaskTable(dimension, masks));
+
+    return struct {
+        pub const value = result_masks;
+    };
 }
 
 fn dualMaskTable(
@@ -851,13 +913,90 @@ fn dualMaskTable(
     return marked;
 }
 
+/// Returns every blade that can appear in the Hestenes dot product of two blade sets.
+pub fn dotProductMasks(
+    comptime dimension: usize,
+    comptime lhs_masks: []const BladeMask,
+    comptime rhs_masks: []const BladeMask,
+) @TypeOf(dotProductMaskResult(dimension, lhs_masks, rhs_masks).value) {
+    return dotProductMaskResult(dimension, lhs_masks, rhs_masks).value;
+}
+
+fn dotProductMaskResult(
+    comptime dimension: usize,
+    comptime lhs_masks: []const BladeMask,
+    comptime rhs_masks: []const BladeMask,
+) type {
+    const masks = if (lhs_masks.len == bladeCount(dimension) and rhs_masks.len == bladeCount(dimension))
+        allNonPseudoscalarBladeMasks(dimension)
+    else
+        collectMarkedMasks(dimension, dotProductMaskTable(dimension, lhs_masks, rhs_masks));
+
+    return struct {
+        pub const value = masks;
+    };
+}
+
+fn allNonPseudoscalarBladeMasks(comptime dimension: usize) [bladeCount(dimension) - 1]BladeMask {
+    validateDimension(dimension);
+    @setEvalBranchQuota(1_000_000);
+
+    var masks: [bladeCount(dimension) - 1]BladeMask = undefined;
+    for (0..masks.len) |index| {
+        masks[index] = .init(index);
+    }
+    return masks;
+}
+
+fn dotProductMaskTable(
+    comptime dimension: usize,
+    comptime lhs_masks: []const BladeMask,
+    comptime rhs_masks: []const BladeMask,
+) [bladeCount(dimension)]bool {
+    @setEvalBranchQuota(1_000_000);
+    var marked = std.mem.zeroes([bladeCount(dimension)]bool);
+
+    for (lhs_masks) |lhs_mask| {
+        if (lhs_mask.bitset.mask == 0) continue;
+        for (rhs_masks) |rhs_mask| {
+            if (rhs_mask.bitset.mask == 0) continue;
+
+            const lhs_grade = bladeGrade(lhs_mask);
+            const rhs_grade = bladeGrade(rhs_mask);
+            const target_grade = if (lhs_grade > rhs_grade) lhs_grade - rhs_grade else rhs_grade - lhs_grade;
+
+            const result_mask = BladeMask.init(lhs_mask.bitset.xorWith(rhs_mask.bitset).mask);
+            if (bladeGrade(result_mask) == target_grade) {
+                marked[result_mask.index()] = true;
+            }
+        }
+    }
+
+    return marked;
+}
+
 /// Returns every blade that can appear in the left contraction of two blade sets.
 pub fn leftContractionMasks(
     comptime dimension: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
-) [countMarkedMasks(dimension, leftContractionMaskTable(dimension, lhs_masks, rhs_masks))]BladeMask {
-    return collectMarkedMasks(dimension, leftContractionMaskTable(dimension, lhs_masks, rhs_masks));
+) @TypeOf(leftContractionMaskResult(dimension, lhs_masks, rhs_masks).value) {
+    return leftContractionMaskResult(dimension, lhs_masks, rhs_masks).value;
+}
+
+fn leftContractionMaskResult(
+    comptime dimension: usize,
+    comptime lhs_masks: []const BladeMask,
+    comptime rhs_masks: []const BladeMask,
+) type {
+    const masks = if (lhs_masks.len == bladeCount(dimension) and rhs_masks.len == bladeCount(dimension))
+        allBladeMasks(dimension)
+    else
+        collectMarkedMasks(dimension, leftContractionMaskTable(dimension, lhs_masks, rhs_masks));
+
+    return struct {
+        pub const value = masks;
+    };
 }
 
 fn leftContractionMaskTable(
@@ -884,8 +1023,23 @@ pub fn rightContractionMasks(
     comptime dimension: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
-) [countMarkedMasks(dimension, rightContractionMaskTable(dimension, lhs_masks, rhs_masks))]BladeMask {
-    return collectMarkedMasks(dimension, rightContractionMaskTable(dimension, lhs_masks, rhs_masks));
+) @TypeOf(rightContractionMaskResult(dimension, lhs_masks, rhs_masks).value) {
+    return rightContractionMaskResult(dimension, lhs_masks, rhs_masks).value;
+}
+
+fn rightContractionMaskResult(
+    comptime dimension: usize,
+    comptime lhs_masks: []const BladeMask,
+    comptime rhs_masks: []const BladeMask,
+) type {
+    const masks = if (lhs_masks.len == bladeCount(dimension) and rhs_masks.len == bladeCount(dimension))
+        allBladeMasks(dimension)
+    else
+        collectMarkedMasks(dimension, rightContractionMaskTable(dimension, lhs_masks, rhs_masks));
+
+    return struct {
+        pub const value = masks;
+    };
 }
 
 fn rightContractionMaskTable(
@@ -1034,6 +1188,9 @@ test "mask set helpers compute sorted unions and products" {
     try std.testing.expectEqualSlices(BladeMask, BladeMask.initMany(.{ 0b001, 0b010, 0b100 })[0..], unionBladeMasks(3, &comptime BladeMask.initMany(.{ 0b001, 0b010 }), &comptime BladeMask.initMany(.{ 0b010, 0b100 }))[0..]);
     try std.testing.expectEqualSlices(BladeMask, BladeMask.initMany(.{ 0b000, 0b011, 0b101, 0b110 })[0..], geometricProductMasks(3, &comptime BladeMask.initMany(.{ 0b001, 0b010 }), &comptime BladeMask.initMany(.{ 0b010, 0b100 }))[0..]);
     try std.testing.expectEqualSlices(BladeMask, BladeMask.initMany(.{ 0b011, 0b101, 0b110 })[0..], outerProductMasks(3, &comptime BladeMask.initMany(.{ 0b001, 0b010 }), &comptime BladeMask.initMany(.{ 0b010, 0b100 }))[0..]);
+    try std.testing.expectEqualSlices(BladeMask, evenBladeMasks(3)[0..], geometricProductMasks(3, &evenBladeMasks(3), &evenBladeMasks(3))[0..]);
+    try std.testing.expectEqualSlices(BladeMask, BladeMask.initMany(.{0b000})[0..], dotProductMasks(3, &comptime BladeMask.initMany(.{ 0b001, 0b010 }), &comptime BladeMask.initMany(.{ 0b010, 0b100 }))[0..]);
+    try std.testing.expectEqualSlices(BladeMask, BladeMask.initMany(.{ 0b000, 0b001, 0b010, 0b011, 0b100, 0b101, 0b110 })[0..], dotProductMasks(3, &allBladeMasks(3), &allBladeMasks(3))[0..]);
 }
 
 test "orientation sign helpers and parity predicates behave consistently" {
