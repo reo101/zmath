@@ -83,7 +83,7 @@ pub const far_clip_z: f32 = 44.0;
 pub const euclidean_cube_scale: f32 = 4.0;
 const hyperbolic_prism_chart_radius: f32 = 0.26;
 const hyperbolic_prism_half_depth: f32 = 0.14;
-pub const spherical_local_cube_scale: f32 = 0.22;
+const spherical_local_cube_radius_fraction: f32 = 0.27027026;
 const animation_step: f32 = 0.05;
 const curvature_tighten_factor: f32 = 0.80;
 const curvature_loosen_factor: f32 = 1.25;
@@ -106,7 +106,9 @@ const hyperbolic_near_distance: f32 = 0.08;
 const hyperbolic_far_distance: f32 = 1.55;
 const spherical_near_distance: f32 = 0.08;
 const spherical_far_distance: f32 = std.math.inf(f32);
+const max_walk_pitch: f32 = 1.45;
 const face_fill_steps: usize = 12;
+const spherical_wrapped_face_fill_steps: usize = 48;
 pub const cube_faces = [_][4]usize{
     .{ 0, 2, 3, 1 },
     .{ 4, 5, 7, 6 },
@@ -404,6 +406,14 @@ pub const App = struct {
             },
         }
 
+        return self.frameInfoWithZoom(zoom);
+    }
+
+    pub fn frameInfo(self: App) FrameInfo {
+        return self.frameInfoWithZoom(modeZoom(self.angle, self.mode, self.camera));
+    }
+
+    fn frameInfoWithZoom(self: App, zoom: f32) FrameInfo {
         return .{
             .mode_label = projectionModeLabel(self.mode),
             .zoom = zoom,
@@ -424,6 +434,7 @@ pub const App = struct {
         };
 
         const rotor = sceneRotor(self.angle, self.mode);
+        const basis = euclideanCameraBasis(self.camera);
         const world_cube_vertices = rotatedScaledCubeVertices(euclidean_cube_scale, rotor);
         var view_cube_vertices: [unit_cube_vertices.len]h.Vector = undefined;
         for (world_cube_vertices, 0..) |vertex, i| {
@@ -434,6 +445,12 @@ pub const App = struct {
             .projection_mode = projection_mode,
             .zoom = modeZoom(self.angle, self.mode, self.camera),
             .view_cube_vertices = view_cube_vertices,
+            .eye = basis.eye,
+            .right = basis.right,
+            .up = basis.up,
+            .forward = basis.forward,
+            .cube_rotor = rotor,
+            .cube_scale = euclidean_cube_scale,
         };
     }
 };
@@ -442,6 +459,12 @@ pub const EuclideanScene = struct {
     projection_mode: projection.EuclideanProjection,
     zoom: f32,
     view_cube_vertices: [unit_cube_vertices.len]h.Vector,
+    eye: h.Vector,
+    right: h.Vector,
+    up: h.Vector,
+    forward: h.Vector,
+    cube_rotor: h.Rotor,
+    cube_scale: f32,
 };
 
 pub const HyperbolicScene = struct {
@@ -564,24 +587,44 @@ fn forwardFromAngles(rotation: f32, pitch: f32) h.Vector {
     });
 }
 
-fn orientedCameraSpace(v: h.Vector, eye: h.Vector, rotation: f32, pitch: f32) h.Vector {
+pub const EuclideanCameraBasis = struct {
+    eye: h.Vector,
+    right: h.Vector,
+    up: h.Vector,
+    forward: h.Vector,
+};
+
+fn euclideanCameraBasisFromAngles(eye: h.Vector, rotation: f32, pitch: f32) EuclideanCameraBasis {
     const forward = forwardFromAngles(rotation, pitch);
     var right = gaCross(h.Vector.init(.{ 0, 1, 0 }), forward);
     if (right.scalarProduct(right) <= 1e-6) right = h.Vector.init(.{ 1, 0, 0 });
     right = safeNormalize(right, h.Vector.init(.{ 1, 0, 0 }));
-
     const up = safeNormalize(gaCross(forward, right), h.Vector.init(.{ 0, 1, 0 }));
+    return .{
+        .eye = eye,
+        .right = right,
+        .up = up,
+        .forward = forward,
+    };
+}
+
+fn orientedCameraSpace(v: h.Vector, eye: h.Vector, rotation: f32, pitch: f32) h.Vector {
+    const basis = euclideanCameraBasisFromAngles(eye, rotation, pitch);
     const rel = v.sub(eye);
 
     return h.Vector.init(.{
-        rel.scalarProduct(right),
-        rel.scalarProduct(up),
-        rel.scalarProduct(forward),
+        rel.scalarProduct(basis.right),
+        rel.scalarProduct(basis.up),
+        rel.scalarProduct(basis.forward),
     });
 }
 
 fn cameraSpace(v: h.Vector, camera: CameraState) h.Vector {
     return orientedCameraSpace(v, camera.euclidEyeVector(), camera.euclid_rotation, camera.euclid_pitch);
+}
+
+pub fn euclideanCameraBasis(camera: CameraState) EuclideanCameraBasis {
+    return euclideanCameraBasisFromAngles(camera.euclidEyeVector(), camera.euclid_rotation, camera.euclid_pitch);
 }
 
 fn vec3FromVector(v: h.Vector) curved.Vec3 {
@@ -653,6 +696,7 @@ fn shadeCurvedQuads(
     view: curved.View,
     screen: curved.Screen,
 ) void {
+    const fill_steps = curvedFaceFillSteps(view);
     for (faces, 0..) |face, face_index| {
         const a = chart_vertices[face[0]];
         const b = chart_vertices[face[1]];
@@ -669,14 +713,26 @@ fn shadeCurvedQuads(
                 vec3FromVector(d),
             },
             screen,
-            .{ .steps = face_fill_steps, .shade = shade, .tone = tone },
+            .{ .steps = fill_steps, .shade = shade, .tone = tone },
         );
     }
+}
+
+fn curvedFaceFillSteps(view: curved.View) usize {
+    return if (view.metric == .spherical and view.projection == .wrapped)
+        spherical_wrapped_face_fill_steps
+    else
+        face_fill_steps;
 }
 
 const NavigatorAxes = struct {
     horizontal: usize,
     vertical: usize,
+};
+
+pub const SphericalMapProjection = enum {
+    stereographic,
+    gnomonic,
 };
 
 const NavigatorRect = struct {
@@ -733,6 +789,267 @@ fn projectNavigatorPoint(rect: NavigatorRect, extent: f32, horizontal: f32, vert
 fn drawNavigatorMarker(canvas: *canvas_api.Canvas, point: [2]f32, tone: u8) void {
     canvas.drawLine(point[0] - 0.5, point[1], point[0] + 0.5, point[1], '#', tone);
     canvas.drawLine(point[0], point[1] - 0.5, point[0], point[1] + 0.5, '#', tone);
+}
+
+fn sphericalSignedAmbient(view: curved.View, chart: curved.Vec3) ?curved.Vec4 {
+    var ambient = curved.embedPoint(.spherical, view.params, chart) orelse return null;
+    if (view.scene_sign < 0.0) {
+        ambient = .{ -ambient[0], -ambient[1], -ambient[2], -ambient[3] };
+    }
+    return ambient;
+}
+
+fn defaultSphericalMapCamera() curved.Camera {
+    return .{
+        .position = .{ 1.0, 0.0, 0.0, 0.0 },
+        .right = .{ 0.0, 1.0, 0.0, 0.0 },
+        .up = .{ 0.0, 0.0, 1.0, 0.0 },
+        .forward = .{ 0.0, 0.0, 0.0, 1.0 },
+    };
+}
+
+fn sphericalGroundOverviewCamera(view: curved.View) curved.Camera {
+    const basis = view.walkBasis() orelse return defaultSphericalMapCamera();
+    return .{
+        .position = view.camera.position,
+        .right = basis.right,
+        .up = basis.up,
+        .forward = basis.forward,
+    };
+}
+
+fn sphericalMapPoint(
+    map_camera: curved.Camera,
+    ambient: curved.Vec4,
+    projection_mode: SphericalMapProjection,
+) ?[2]f32 {
+    const model: curved.CameraModel = switch (projection_mode) {
+        .stereographic => .conformal,
+        .gnomonic => .linear,
+    };
+    const point = curved.modelPointForAmbientWithCamera(.spherical, map_camera, ambient, model) orelse return null;
+    return .{ point[0], point[2] };
+}
+
+fn sphericalOverviewFieldRadius(view: curved.View, projection_mode: SphericalMapProjection) f32 {
+    return switch (projection_mode) {
+        .stereographic => view.params.radius * (@as(f32, std.math.pi) * 0.5) * 0.98,
+        .gnomonic => view.params.radius * 1.10,
+    };
+}
+
+fn drawSphericalMapGeodesic(
+    canvas: *canvas_api.Canvas,
+    rect: NavigatorRect,
+    extent: f32,
+    view: curved.View,
+    map_camera: curved.Camera,
+    projection_mode: SphericalMapProjection,
+    a_chart: curved.Vec3,
+    b_chart: curved.Vec3,
+    tone: u8,
+) void {
+    var prev_point: ?[2]f32 = null;
+
+    for (0..25) |i| {
+        const t = @as(f32, @floatFromInt(i)) / 24.0;
+        const chart = curved.geodesicChartPoint(.spherical, view.params, a_chart, b_chart, t) orelse continue;
+        const ambient = sphericalSignedAmbient(view, chart) orelse continue;
+        const map_point = sphericalMapPoint(map_camera, ambient, projection_mode) orelse {
+            prev_point = null;
+            continue;
+        };
+        const point = projectNavigatorPoint(rect, extent, map_point[0], map_point[1]);
+        if (prev_point) |prev| {
+            canvas.drawLine(prev[0], prev[1], point[0], point[1], '#', tone);
+        }
+        prev_point = point;
+    }
+}
+
+fn drawSphericalGroundGridLine(
+    canvas: *canvas_api.Canvas,
+    rect: NavigatorRect,
+    extent: f32,
+    view: curved.View,
+    map_camera: curved.Camera,
+    projection_mode: SphericalMapProjection,
+    constant_lateral: bool,
+    fixed: f32,
+    field_radius: f32,
+    tone: u8,
+) void {
+    var prev_point: ?[2]f32 = null;
+
+    for (0..49) |i| {
+        const t = @as(f32, @floatFromInt(i)) / 48.0;
+        const sweep = (t * 2.0 - 1.0) * field_radius;
+        const lateral = if (constant_lateral) fixed else sweep;
+        const forward = if (constant_lateral) sweep else fixed;
+        if (lateral * lateral + forward * forward > field_radius * field_radius) {
+            prev_point = null;
+            continue;
+        }
+
+        const ambient = curved.ambientFromTangentBasisPoint(
+            .spherical,
+            view.params,
+            map_camera.position,
+            map_camera.right,
+            map_camera.forward,
+            lateral,
+            forward,
+        ) orelse {
+            prev_point = null;
+            continue;
+        };
+        const map_point = sphericalMapPoint(map_camera, ambient, projection_mode) orelse {
+            prev_point = null;
+            continue;
+        };
+        const point = projectNavigatorPoint(rect, extent, map_point[0], map_point[1]);
+        if (prev_point) |prev| {
+            canvas.drawLine(prev[0], prev[1], point[0], point[1], '#', tone);
+        }
+        prev_point = point;
+    }
+}
+
+fn drawSphericalGroundBoundary(
+    canvas: *canvas_api.Canvas,
+    rect: NavigatorRect,
+    extent: f32,
+    view: curved.View,
+    map_camera: curved.Camera,
+    projection_mode: SphericalMapProjection,
+    field_radius: f32,
+    tone: u8,
+) void {
+    var prev_point: ?[2]f32 = null;
+    for (0..65) |i| {
+        const t = @as(f32, @floatFromInt(i)) / 64.0;
+        const theta = t * @as(f32, std.math.pi) * 2.0;
+        const lateral = @cos(theta) * field_radius;
+        const forward = @sin(theta) * field_radius;
+        const ambient = curved.ambientFromTangentBasisPoint(
+            .spherical,
+            view.params,
+            map_camera.position,
+            map_camera.right,
+            map_camera.forward,
+            lateral,
+            forward,
+        ) orelse {
+            prev_point = null;
+            continue;
+        };
+        const map_point = sphericalMapPoint(map_camera, ambient, projection_mode) orelse {
+            prev_point = null;
+            continue;
+        };
+        const point = projectNavigatorPoint(rect, extent, map_point[0], map_point[1]);
+        if (prev_point) |prev| {
+            canvas.drawLine(prev[0], prev[1], point[0], point[1], '#', tone);
+        }
+        prev_point = point;
+    }
+}
+
+fn sphericalGroundMapExtent(
+    view: curved.View,
+    map_camera: curved.Camera,
+    chart_vertices: []const h.Vector,
+    projection_mode: SphericalMapProjection,
+    field_radius: f32,
+) f32 {
+    var extent: f32 = switch (projection_mode) {
+        .stereographic => 2.2,
+        .gnomonic => 1.2,
+    };
+
+    for (0..49) |i| {
+        const t = @as(f32, @floatFromInt(i)) / 48.0;
+        const theta = t * @as(f32, std.math.pi) * 2.0;
+        const lateral = @cos(theta) * field_radius;
+        const forward = @sin(theta) * field_radius;
+        const ambient = curved.ambientFromTangentBasisPoint(
+            .spherical,
+            view.params,
+            map_camera.position,
+            map_camera.right,
+            map_camera.forward,
+            lateral,
+            forward,
+        ) orelse continue;
+        const point = sphericalMapPoint(map_camera, ambient, projection_mode) orelse continue;
+        extent = @max(extent, @abs(point[0]) * 1.08);
+        extent = @max(extent, @abs(point[1]) * 1.08);
+    }
+
+    for (chart_vertices) |vertex| {
+        const ambient = sphericalSignedAmbient(view, vec3FromVector(vertex)) orelse continue;
+        const point = sphericalMapPoint(map_camera, ambient, projection_mode) orelse continue;
+        extent = @max(extent, @abs(point[0]) * 1.06);
+        extent = @max(extent, @abs(point[1]) * 1.06);
+    }
+
+    return extent;
+}
+
+fn drawSphericalGroundOverviewPanel(
+    canvas: *canvas_api.Canvas,
+    rect: NavigatorRect,
+    extent: f32,
+    view: curved.View,
+    chart_vertices: []const h.Vector,
+    edges: []const [2]usize,
+    map_camera: curved.Camera,
+    projection_mode: SphericalMapProjection,
+    field_radius: f32,
+) void {
+    drawNavigatorBackground(canvas, rect);
+    drawNavigatorFrame(canvas, rect);
+    drawNavigatorAxes(canvas, rect);
+
+    drawSphericalGroundBoundary(canvas, rect, extent, view, map_camera, projection_mode, field_radius, 238);
+
+    var line_index: i32 = -4;
+    while (line_index <= 4) : (line_index += 1) {
+        const line_t = @as(f32, @floatFromInt(line_index)) / 4.0;
+        const fixed = line_t * field_radius;
+        drawSphericalGroundGridLine(canvas, rect, extent, view, map_camera, projection_mode, true, fixed, field_radius, 238);
+        drawSphericalGroundGridLine(canvas, rect, extent, view, map_camera, projection_mode, false, fixed, field_radius, 239);
+    }
+
+    for (edges) |edge| {
+        drawSphericalMapGeodesic(
+            canvas,
+            rect,
+            extent,
+            view,
+            map_camera,
+            projection_mode,
+            vec3FromVector(chart_vertices[edge[0]]),
+            vec3FromVector(chart_vertices[edge[1]]),
+            81,
+        );
+    }
+
+    const eye_point = projectNavigatorPoint(rect, extent, 0.0, 0.0);
+    const heading_ambient = curved.ambientFromTangentBasisPoint(
+        .spherical,
+        view.params,
+        map_camera.position,
+        map_camera.right,
+        map_camera.forward,
+        0.0,
+        field_radius * 0.18,
+    ) orelse return;
+    const look_map = sphericalMapPoint(map_camera, heading_ambient, projection_mode) orelse return;
+    const look_point = projectNavigatorPoint(rect, extent, look_map[0], look_map[1]);
+    canvas.drawLine(eye_point[0], eye_point[1], look_point[0], look_point[1], '#', 253);
+    drawNavigatorMarker(canvas, look_point, 253);
+    drawNavigatorMarker(canvas, eye_point, 220);
 }
 
 fn navigatorExtent(chart_vertices: []const h.Vector, eye_chart: curved.Vec3, look_chart: curved.Vec3, metric: curved.Metric) f32 {
@@ -838,8 +1155,20 @@ fn drawCurvedNavigator(
     var look_probe = view.camera;
     curved.moveForward(&look_probe, view.metric, view.params, @min(view.params.radius * 0.18, 0.18));
     const look_chart = curved.chartCoords(view.metric, view.params, look_probe.position);
-    const extent = navigatorExtent(chart_vertices, eye_chart, look_chart, view.metric);
 
+    if (view.metric == .spherical) {
+        const map_camera = sphericalGroundOverviewCamera(view);
+        const stereo_radius = sphericalOverviewFieldRadius(view, .stereographic);
+        const gnomonic_radius = sphericalOverviewFieldRadius(view, .gnomonic);
+        const stereo_extent = sphericalGroundMapExtent(view, map_camera, chart_vertices, .stereographic, stereo_radius);
+        const gnomonic_extent = sphericalGroundMapExtent(view, map_camera, chart_vertices, .gnomonic, gnomonic_radius);
+
+        drawSphericalGroundOverviewPanel(canvas, top_rect, stereo_extent, view, chart_vertices, edges, map_camera, .stereographic, stereo_radius);
+        drawSphericalGroundOverviewPanel(canvas, bottom_rect, gnomonic_extent, view, chart_vertices, edges, map_camera, .gnomonic, gnomonic_radius);
+        return;
+    }
+
+    const extent = navigatorExtent(chart_vertices, eye_chart, look_chart, view.metric);
     drawNavigatorPanel(canvas, top_rect, extent, view, chart_vertices, edges, eye_chart, look_chart, .{ .horizontal = 0, .vertical = 2 });
     drawNavigatorPanel(canvas, bottom_rect, extent, view, chart_vertices, edges, eye_chart, look_chart, .{ .horizontal = 2, .vertical = 1 });
 }
@@ -875,7 +1204,12 @@ fn modeZoom(angle: f32, mode: DemoMode, camera: CameraState) f32 {
         .perspective => std.math.clamp(5.75 + 0.20 * @sin(angle * 0.10), 5.2, 6.1),
         .isometric => std.math.clamp(0.82 + 0.04 * @sin(angle * 0.12), 0.75, 0.92),
         .hyperbolic => std.math.clamp(camera.hyper.params.angular_zoom + 0.02 * @sin(angle * 0.11), 0.55, 1.15),
-        .spherical => camera.spherical.params.angular_zoom,
+        .spherical => camera.spherical.params.angular_zoom * switch (camera.spherical.projection) {
+            .gnomonic => @as(f32, 0.52),
+            .stereographic => @as(f32, 1.0),
+            .orthographic => @as(f32, 0.85),
+            .wrapped => @as(f32, 1.0),
+        },
     };
 }
 
@@ -898,7 +1232,10 @@ fn movementModeLabel(mode: MovementMode) []const u8 {
 fn currentCurvedProjectionLabel(mode: DemoMode, camera: CameraState) []const u8 {
     return switch (mode) {
         .hyperbolic => projection.directionProjectionLabel(camera.hyper.projection),
-        .spherical => "stereo2",
+        .spherical => switch (camera.spherical.projection) {
+            .stereographic => "stereo2",
+            else => projection.directionProjectionLabel(camera.spherical.projection),
+        },
         else => "-",
     };
 }
@@ -908,7 +1245,15 @@ const WalkDirections = struct {
     right: curved.Vec4,
 };
 
-fn curvedWalkDirections(view: curved.View, x_heading: f32, z_heading: f32) WalkDirections {
+fn curvedWalkDirections(view: curved.View, x_heading: f32, z_heading: f32, pitch_angle: f32) WalkDirections {
+    if (view.metric == .spherical) {
+        if (view.walkSurfaceBasis(pitch_angle)) |basis| {
+            return .{
+                .forward = basis.forward,
+                .right = basis.right,
+            };
+        }
+    }
     return .{
         .forward = view.headingDirection(x_heading, z_heading) orelse view.camera.forward,
         .right = view.headingDirection(z_heading, -x_heading) orelse view.camera.right,
@@ -990,7 +1335,7 @@ fn nextDirectionProjection(current: projection.DirectionProjection) projection.D
 fn cycleDirectionProjection(camera: *CameraState, mode: DemoMode) void {
     switch (mode) {
         .hyperbolic => camera.hyper.projection = nextDirectionProjection(camera.hyper.projection),
-        .spherical => camera.spherical.projection = .stereographic,
+        .spherical => camera.spherical.projection = nextDirectionProjection(camera.spherical.projection),
         else => {},
     }
 }
@@ -1000,6 +1345,12 @@ fn syncWalkOrientation(camera: *CameraState) void {
     const z_heading = @cos(camera.euclid_rotation);
     camera.hyper.syncHeadingPitch(x_heading, z_heading, camera.euclid_pitch);
     camera.spherical.syncHeadingPitch(x_heading, z_heading, camera.euclid_pitch);
+}
+
+fn syncHyperWalkOrientation(camera: *CameraState) void {
+    const x_heading = @sin(camera.euclid_rotation);
+    const z_heading = @cos(camera.euclid_rotation);
+    camera.hyper.syncHeadingPitch(x_heading, z_heading, camera.euclid_pitch);
 }
 
 fn wrapAngleNear(angle: f32, reference: f32) f32 {
@@ -1015,11 +1366,11 @@ const ViewAngleState = struct {
 fn chooseSphericalAngleState(current_rotation: f32, current_pitch: f32, candidate: ViewAngleState) ViewAngleState {
     const direct = ViewAngleState{
         .rotation = wrapAngleNear(candidate.rotation, current_rotation),
-        .pitch = std.math.clamp(candidate.pitch, -1.10, 1.10),
+        .pitch = std.math.clamp(candidate.pitch, -max_walk_pitch, max_walk_pitch),
     };
     const antipodal = ViewAngleState{
         .rotation = wrapAngleNear(candidate.rotation + @as(f32, std.math.pi), current_rotation),
-        .pitch = std.math.clamp(-candidate.pitch, -1.10, 1.10),
+        .pitch = std.math.clamp(-candidate.pitch, -max_walk_pitch, max_walk_pitch),
     };
 
     const direct_error = @abs(direct.rotation - current_rotation) + @abs(direct.pitch - current_pitch);
@@ -1038,7 +1389,7 @@ fn syncEuclidFromView(camera: *CameraState, view: curved.View) void {
     else
         ViewAngleState{
             .rotation = wrapAngleNear(candidate.rotation, camera.euclid_rotation),
-            .pitch = std.math.clamp(candidate.pitch, -1.10, 1.10),
+            .pitch = std.math.clamp(candidate.pitch, -max_walk_pitch, max_walk_pitch),
         };
     camera.euclid_rotation = chosen.rotation;
     camera.euclid_pitch = chosen.pitch;
@@ -1057,23 +1408,33 @@ fn adjustCameraArrow(camera: *CameraState, _: DemoMode, arrow: u8) void {
     const rotation_step: f32 = 0.14;
 
     if (camera.movement_mode == .walk) {
-        syncWalkOrientation(camera);
+        syncHyperWalkOrientation(camera);
     }
 
     switch (arrow) {
         'A' => {
-            camera.euclid_pitch = std.math.clamp(camera.euclid_pitch + pitch_step, -1.10, 1.10);
+            camera.euclid_pitch = std.math.clamp(camera.euclid_pitch + pitch_step, -max_walk_pitch, max_walk_pitch);
             if (camera.movement_mode == .walk) {
-                syncWalkOrientation(camera);
+                camera.hyper.syncHeadingPitch(
+                    @sin(camera.euclid_rotation),
+                    @cos(camera.euclid_rotation),
+                    camera.euclid_pitch,
+                );
+                camera.spherical.syncSurfacePitch(camera.euclid_pitch);
             } else {
                 camera.hyper.turnPitch(pitch_step);
                 camera.spherical.turnPitch(pitch_step);
             }
         },
         'B' => {
-            camera.euclid_pitch = std.math.clamp(camera.euclid_pitch - pitch_step, -1.10, 1.10);
+            camera.euclid_pitch = std.math.clamp(camera.euclid_pitch - pitch_step, -max_walk_pitch, max_walk_pitch);
             if (camera.movement_mode == .walk) {
-                syncWalkOrientation(camera);
+                camera.hyper.syncHeadingPitch(
+                    @sin(camera.euclid_rotation),
+                    @cos(camera.euclid_rotation),
+                    camera.euclid_pitch,
+                );
+                camera.spherical.syncSurfacePitch(camera.euclid_pitch);
             } else {
                 camera.hyper.turnPitch(-pitch_step);
                 camera.spherical.turnPitch(-pitch_step);
@@ -1082,7 +1443,12 @@ fn adjustCameraArrow(camera: *CameraState, _: DemoMode, arrow: u8) void {
         'C' => {
             camera.euclid_rotation += rotation_step;
             if (camera.movement_mode == .walk) {
-                syncWalkOrientation(camera);
+                camera.hyper.syncHeadingPitch(
+                    @sin(camera.euclid_rotation),
+                    @cos(camera.euclid_rotation),
+                    camera.euclid_pitch,
+                );
+                camera.spherical.turnSurfaceYaw(rotation_step, camera.euclid_pitch);
             } else {
                 camera.hyper.turnYaw(rotation_step);
                 camera.spherical.turnYaw(rotation_step);
@@ -1091,7 +1457,12 @@ fn adjustCameraArrow(camera: *CameraState, _: DemoMode, arrow: u8) void {
         'D' => {
             camera.euclid_rotation -= rotation_step;
             if (camera.movement_mode == .walk) {
-                syncWalkOrientation(camera);
+                camera.hyper.syncHeadingPitch(
+                    @sin(camera.euclid_rotation),
+                    @cos(camera.euclid_rotation),
+                    camera.euclid_pitch,
+                );
+                camera.spherical.turnSurfaceYaw(-rotation_step, camera.euclid_pitch);
             } else {
                 camera.hyper.turnYaw(-rotation_step);
                 camera.spherical.turnYaw(-rotation_step);
@@ -1122,15 +1493,12 @@ fn adjustCameraTranslation(camera: *CameraState, _: DemoMode, key: u8) void {
     const forward_z = cos_rotation;
     const right_x = cos_rotation;
     const right_z = -sin_rotation;
-    const hyper_walk = curvedWalkDirections(camera.hyper, sin_rotation, cos_rotation);
+    const hyper_walk = curvedWalkDirections(camera.hyper, sin_rotation, cos_rotation, camera.euclid_pitch);
+    const spherical_walk = curvedWalkDirections(camera.spherical, sin_rotation, cos_rotation, camera.euclid_pitch);
     const hyper_forward = if (camera.movement_mode == .walk) hyper_walk.forward else camera.hyper.camera.forward;
     const hyper_right = if (camera.movement_mode == .walk) hyper_walk.right else camera.hyper.camera.right;
-    // For spherical walk, use the camera's own parallel-transported forward
-    // direction, projected to the ground plane.  This avoids going through
-    // the heading basis (which is position-dependent and rotates as the
-    // camera crosses the sphere).
-    const spherical_forward = camera.spherical.camera.forward;
-    const spherical_right = camera.spherical.camera.right;
+    const spherical_forward = if (camera.movement_mode == .walk) spherical_walk.forward else camera.spherical.camera.forward;
+    const spherical_right = if (camera.movement_mode == .walk) spherical_walk.right else camera.spherical.camera.right;
 
     switch (key) {
         'a' => {
@@ -1138,42 +1506,33 @@ fn adjustCameraTranslation(camera: *CameraState, _: DemoMode, key: u8) void {
             camera.euclid_eye_z -= right_z * euclid_step;
             camera.hyper.moveAlong(hyper_right, -hyper_step);
             camera.spherical.moveAlong(spherical_right, -spherical_step);
-            camera.spherical.wrapSphericalChart();
         },
         'd' => {
             camera.euclid_eye_x += right_x * euclid_step;
             camera.euclid_eye_z += right_z * euclid_step;
             camera.hyper.moveAlong(hyper_right, hyper_step);
             camera.spherical.moveAlong(spherical_right, spherical_step);
-            camera.spherical.wrapSphericalChart();
         },
         's' => {
             camera.euclid_eye_x -= forward_x * euclid_step;
             camera.euclid_eye_z -= forward_z * euclid_step;
             camera.hyper.moveAlong(hyper_forward, -hyper_step);
             camera.spherical.moveAlong(spherical_forward, -spherical_step);
-            camera.spherical.wrapSphericalChart();
         },
         'w' => {
             camera.euclid_eye_x += forward_x * euclid_step;
             camera.euclid_eye_z += forward_z * euclid_step;
             camera.hyper.moveAlong(hyper_forward, hyper_step);
             camera.spherical.moveAlong(spherical_forward, spherical_step);
-            camera.spherical.wrapSphericalChart();
         },
         else => {},
     }
 
     if (camera.movement_mode == .walk) {
-        // Do NOT call syncWalkOrientation here. The spherical camera basis
-        // was already correctly evolved by moveAlongDirection's parallel
-        // transport. Overwriting it from euclid_rotation would fight the
-        // transport (the heading basis rotates as the camera moves across
-        // the sphere, so a fixed euclid_rotation maps to different world
-        // directions at different positions).
-        //
-        // Re-sync the hyperbolic camera from euclid_rotation since its
-        // heading basis behaves differently.
+        // Hyperbolic walk mode still rebuilds from the local input heading.
+        // Spherical walk mode must keep the transported frame after movement;
+        // re-solving it from the ambient heading basis can pick the opposite
+        // tangent branch near the equator and create visible left/right flips.
         camera.hyper.syncHeadingPitch(
             @sin(camera.euclid_rotation),
             @cos(camera.euclid_rotation),
@@ -1185,24 +1544,22 @@ fn adjustCameraTranslation(camera: *CameraState, _: DemoMode, key: u8) void {
 fn animateSphericalCamera(camera: *CameraState, angle: f32, delta: f32) void {
     const yaw_delta = 0.19 * delta;
     camera.euclid_rotation += yaw_delta;
+    const x_heading = @sin(camera.euclid_rotation);
+    const z_heading = @cos(camera.euclid_rotation);
     if (camera.movement_mode == .walk) {
-        const x_heading = @sin(camera.euclid_rotation);
-        const z_heading = @cos(camera.euclid_rotation);
-        camera.spherical.syncHeadingPitch(x_heading, z_heading, camera.euclid_pitch);
+        camera.hyper.syncHeadingPitch(x_heading, z_heading, camera.euclid_pitch);
+        camera.spherical.turnSurfaceYaw(yaw_delta, camera.euclid_pitch);
     } else {
+        camera.hyper.syncHeadingPitch(x_heading, z_heading, camera.euclid_pitch);
         camera.spherical.turnYaw(yaw_delta);
     }
 
     const radial_delta = 0.012 * @sin(angle * 0.37);
     if (@abs(radial_delta) <= 1e-4) return;
 
-    const walk = curvedWalkDirections(camera.spherical, @sin(camera.euclid_rotation), @cos(camera.euclid_rotation));
+    const walk = curvedWalkDirections(camera.spherical, @sin(camera.euclid_rotation), @cos(camera.euclid_rotation), camera.euclid_pitch);
     const forward = if (camera.movement_mode == .walk) walk.forward else camera.spherical.camera.forward;
     camera.spherical.moveAlong(forward, radial_delta);
-    camera.spherical.wrapSphericalChart();
-    if (camera.movement_mode == .walk) {
-        syncEuclidFromView(camera, camera.spherical);
-    }
 }
 
 fn vec3Length(v: curved.Vec3) f32 {
@@ -1330,8 +1687,7 @@ fn rotatedScaledCubeVertices(scale: f32, rotor: h.Rotor) [unit_cube_vertices.len
 }
 
 fn sphericalLocalCubeScale(radius: f32) f32 {
-    _ = radius;
-    return spherical_local_cube_scale;
+    return radius * spherical_local_cube_radius_fraction;
 }
 
 pub fn sphericalLocalCubeVertices(scale: f32, rotor: h.Rotor) [unit_cube_vertices.len]h.Vector {
@@ -1344,10 +1700,19 @@ pub fn sphericalLocalCubeVertices(scale: f32, rotor: h.Rotor) [unit_cube_vertice
     return vertices;
 }
 
+pub fn sphericalDemoAmbientPoint(params: curved.Params, local: curved.Vec3) curved.Vec4 {
+    // HyperEngine models walkable objects relative to the ground plane with a
+    // dedicated TanK-height transform instead of as one rigid exponential-map
+    // solid. The spherical demo path mirrors that "footprint + lifted height"
+    // embedding so vertical walls stay tied to the local ground as the
+    // stereographic 3D camera warps them.
+    return curved.sphericalAmbientFromGroundHeightPoint(params, local);
+}
+
 fn sphericalCubeChartVertices(local_vertices: [unit_cube_vertices.len]h.Vector, params: curved.Params) [unit_cube_vertices.len]h.Vector {
     var chart_vertices: [unit_cube_vertices.len]h.Vector = undefined;
     for (local_vertices, 0..) |vertex, i| {
-        const ambient = curved.sphericalAmbientFromGroundHeightPoint(params, vec3FromVector(vertex));
+        const ambient = sphericalDemoAmbientPoint(params, vec3FromVector(vertex));
         chart_vertices[i] = h.Vector.init(curved.chartCoords(.spherical, params, ambient));
     }
     return chart_vertices;
@@ -1429,21 +1794,9 @@ test "spherical walk backward movement evolves smoothly across chart wrap" {
     var camera = try CameraState.init();
     const initial_pos = camera.spherical.camera.position;
 
-    var prev_orientation = camera.spherical.walkOrientation().?;
-    var max_heading_delta: f32 = 0.0;
-    var max_pitch_delta: f32 = 0.0;
-
     for (0..40) |_| {
         adjustCameraTranslation(&camera, .spherical, 's');
-        const orientation = camera.spherical.walkOrientation() orelse continue;
-        // Heading should evolve smoothly — no large jumps per step
-        const heading_angle = std.math.atan2(orientation.x_heading, orientation.z_heading);
-        const prev_heading_angle = std.math.atan2(prev_orientation.x_heading, prev_orientation.z_heading);
-        const heading_delta = @abs(heading_angle - wrapAngleNear(prev_heading_angle, heading_angle));
-        const pitch_delta = @abs(orientation.pitch - prev_orientation.pitch);
-        max_heading_delta = @max(max_heading_delta, heading_delta);
-        max_pitch_delta = @max(max_pitch_delta, pitch_delta);
-        prev_orientation = orientation;
+        try std.testing.expect(camera.spherical.walkSurfaceUp(camera.euclid_pitch) != null);
     }
 
     // Camera should have moved far enough across the sphere
@@ -1452,14 +1805,222 @@ test "spherical walk backward movement evolves smoothly across chart wrap" {
         initial_pos[2] * final_pos[2] + initial_pos[3] * final_pos[3];
     try std.testing.expect(@abs(pos_dot) < 0.99);
 
-    // No step should produce a heading jump larger than ~0.3 rad (~17 deg)
-    try std.testing.expect(max_heading_delta < 0.3);
-    // Pitch should stay nearly constant when walking straight backward
-    try std.testing.expect(max_pitch_delta < 0.40);
+}
 
-    // euclid_rotation should track the current spherical heading
-    const final_orientation = camera.spherical.walkOrientation().?;
-    const final_heading = std.math.atan2(final_orientation.x_heading, final_orientation.z_heading);
-    const euclid_heading = wrapAngleNear(camera.euclid_rotation, final_heading);
-    try std.testing.expectApproxEqAbs(final_heading, euclid_heading, 0.02);
+test "spherical backward walk step keeps position continuous in locked walk mode" {
+    var camera = try CameraState.init();
+    camera.movement_mode = .walk;
+    camera.euclid_rotation = -3.076082;
+    camera.euclid_pitch = -0.013355;
+    camera.euclid_eye_x = 165.323760;
+    camera.euclid_eye_y = 0.0;
+    camera.euclid_eye_z = 179.205610;
+    camera.spherical = .{
+        .metric = .spherical,
+        .params = .{
+            .radius = 1.480000,
+            .angular_zoom = 1.000000,
+            .chart_model = .conformal,
+        },
+        .projection = .stereographic,
+        .clip = .{ .near = 0.080000, .far = std.math.inf(f32) },
+        .camera = .{
+            .position = .{ 0.027459, -0.064229, 0.013690, 0.997459 },
+            .right = .{ 0.075515, -0.994948, -0.000000, -0.066146 },
+            .up = .{ -0.011556, 0.000014, 0.999843, -0.013404 },
+            .forward = .{ 0.996700, 0.077152, 0.011215, -0.022624 },
+        },
+        .scene_sign = 1.0,
+    };
+
+    const before_position = camera.spherical.camera.position;
+    adjustCameraTranslation(&camera, .spherical, 's');
+    const after_position = camera.spherical.camera.position;
+
+    const position_dot = before_position[0] * after_position[0] +
+        before_position[1] * after_position[1] +
+        before_position[2] * after_position[2] +
+        before_position[3] * after_position[3];
+
+    try std.testing.expect(position_dot > 0.95);
+    try std.testing.expectEqual(@as(f32, 1.0), camera.spherical.scene_sign);
+}
+
+test "spherical locked walk backward-forward steps stay reversible" {
+    var camera = try CameraState.init();
+    camera.movement_mode = .walk;
+
+    for (0..120) |_| {
+        const before = camera.spherical.camera;
+
+        adjustCameraTranslation(&camera, .spherical, 's');
+        adjustCameraTranslation(&camera, .spherical, 'w');
+
+        const after = camera.spherical.camera;
+        const position_dot = before.position[0] * after.position[0] +
+            before.position[1] * after.position[1] +
+            before.position[2] * after.position[2] +
+            before.position[3] * after.position[3];
+        const forward_dot = before.forward[0] * after.forward[0] +
+            before.forward[1] * after.forward[1] +
+            before.forward[2] * after.forward[2] +
+            before.forward[3] * after.forward[3];
+
+        try std.testing.expect(position_dot > 0.999);
+        try std.testing.expect(forward_dot > 0.999);
+
+        adjustCameraTranslation(&camera, .spherical, 's');
+    }
+}
+
+test "spherical steep-pitch backward walk preserves local heading and pitch" {
+    var camera = try CameraState.init();
+    camera.movement_mode = .walk;
+    camera.euclid_rotation = 0.0;
+    camera.euclid_pitch = 1.1;
+    syncWalkOrientation(&camera);
+    for (0..80) |_| {
+        adjustCameraTranslation(&camera, .spherical, 's');
+        try std.testing.expect(camera.spherical.walkSurfaceUp(camera.euclid_pitch) != null);
+    }
+}
+
+test "spherical walk surface normal does not change with pitch at fixed position" {
+    var camera = try CameraState.init();
+    camera.movement_mode = .walk;
+    camera.euclid_rotation = 0.465501;
+
+    camera.euclid_pitch = -0.6;
+    syncWalkOrientation(&camera);
+    const down_up = camera.spherical.walkSurfaceUp(camera.euclid_pitch).?;
+
+    camera.euclid_pitch = 0.2;
+    syncWalkOrientation(&camera);
+    const up_up = camera.spherical.walkSurfaceUp(camera.euclid_pitch).?;
+
+    const up_dot = down_up[0] * up_up[0] +
+        down_up[1] * up_up[1] +
+        down_up[2] * up_up[2] +
+        down_up[3] * up_up[3];
+    try std.testing.expect(up_dot > 0.999);
+}
+
+test "spherical backward walk does not oscillate between two positions" {
+    var camera = try CameraState.init();
+    camera.movement_mode = .walk;
+    camera.euclid_rotation = -2.115804;
+    camera.euclid_pitch = -0.020000;
+    camera.euclid_eye_x = -70.910950;
+    camera.euclid_eye_y = 0.0;
+    camera.euclid_eye_z = -176.578800;
+    camera.spherical = .{
+        .metric = .spherical,
+        .params = .{
+            .radius = 0.740000,
+            .angular_zoom = 1.000000,
+            .chart_model = .conformal,
+        },
+        .projection = .stereographic,
+        .clip = .{ .near = 0.080000, .far = std.math.inf(f32) },
+        .camera = .{
+            .position = .{ 0.372664, -0.325853, 0.000000, -0.868872 },
+            .right = .{ 0.719299, -0.490129, -0.000000, 0.492324 },
+            .up = .{ -0.011725, -0.016168, 0.999800, 0.001035 },
+            .forward = .{ -0.586168, -0.808289, -0.019999, 0.051722 },
+        },
+        .scene_sign = 1.0,
+    };
+
+    var prev2_position: ?curved.Vec4 = null;
+    var prev_position = camera.spherical.camera.position;
+    for (0..40) |_| {
+        adjustCameraTranslation(&camera, .spherical, 's');
+        const position = camera.spherical.camera.position;
+        if (prev2_position) |prev2| {
+            const two_step_dot = prev2[0] * position[0] +
+                prev2[1] * position[1] +
+                prev2[2] * position[2] +
+                prev2[3] * position[3];
+            try std.testing.expect(two_step_dot < 0.995);
+        }
+        prev2_position = prev_position;
+        prev_position = position;
+    }
+}
+
+test "spherical walk look controls keep the local camera branch continuous" {
+    var camera = try CameraState.init();
+    camera.movement_mode = .walk;
+    camera.euclid_rotation = 0.285000;
+    camera.euclid_pitch = 0.180000;
+    camera.euclid_eye_x = -11.469614;
+    camera.euclid_eye_y = 0.0;
+    camera.euclid_eye_z = -41.803680;
+    camera.spherical = .{
+        .metric = .spherical,
+        .params = .{
+            .radius = 1.480000,
+            .angular_zoom = 1.000000,
+            .chart_model = .conformal,
+        },
+        .projection = .stereographic,
+        .clip = .{ .near = 0.080000, .far = std.math.inf(f32) },
+        .camera = .{
+            .position = .{ -0.956042, -0.096576, 0.000000, -0.276854 },
+            .right = .{ 0.006139, 0.937401, 0.000000, -0.348198 },
+            .up = .{ -0.052483, 0.059903, 0.983843, 0.160342 },
+            .forward = .{ 0.288416, -0.329187, 0.179031, -0.881135 },
+        },
+        .scene_sign = 1.0,
+    };
+
+    const before = camera.spherical.camera;
+    const before_up = camera.spherical.walkSurfaceUp(camera.euclid_pitch).?;
+
+    adjustCameraArrow(&camera, .spherical, 'C');
+    const yawed = camera.spherical.camera;
+    const yawed_up = camera.spherical.walkSurfaceUp(camera.euclid_pitch).?;
+    const yawed_orientation = camera.spherical.walkOrientation().?;
+    const yaw_position_dot = before.position[0] * yawed.position[0] +
+        before.position[1] * yawed.position[1] +
+        before.position[2] * yawed.position[2] +
+        before.position[3] * yawed.position[3];
+    const yaw_forward_dot = before.forward[0] * yawed.forward[0] +
+        before.forward[1] * yawed.forward[1] +
+        before.forward[2] * yawed.forward[2] +
+        before.forward[3] * yawed.forward[3];
+    const yaw_up_dot = before_up[0] * yawed_up[0] +
+        before_up[1] * yawed_up[1] +
+        before_up[2] * yawed_up[2] +
+        before_up[3] * yawed_up[3];
+    try std.testing.expect(yaw_position_dot > 0.999);
+    try std.testing.expect(yaw_forward_dot > 0.99);
+    try std.testing.expect(yaw_up_dot > 0.999);
+    try std.testing.expectApproxEqAbs(camera.euclid_pitch, yawed_orientation.pitch, 1e-3);
+
+    camera.spherical.camera = before;
+    camera.euclid_rotation = 0.285000;
+    camera.euclid_pitch = 0.180000;
+    const before_pitch_up = camera.spherical.walkSurfaceUp(camera.euclid_pitch).?;
+
+    adjustCameraArrow(&camera, .spherical, 'A');
+    const pitched = camera.spherical.camera;
+    const pitched_up = camera.spherical.walkSurfaceUp(camera.euclid_pitch).?;
+    const pitched_orientation = camera.spherical.walkOrientation().?;
+    const pitch_position_dot = before.position[0] * pitched.position[0] +
+        before.position[1] * pitched.position[1] +
+        before.position[2] * pitched.position[2] +
+        before.position[3] * pitched.position[3];
+    const pitch_forward_dot = before.forward[0] * pitched.forward[0] +
+        before.forward[1] * pitched.forward[1] +
+        before.forward[2] * pitched.forward[2] +
+        before.forward[3] * pitched.forward[3];
+    const pitch_up_dot = before_pitch_up[0] * pitched_up[0] +
+        before_pitch_up[1] * pitched_up[1] +
+        before_pitch_up[2] * pitched_up[2] +
+        before_pitch_up[3] * pitched_up[3];
+    try std.testing.expect(pitch_position_dot > 0.999);
+    try std.testing.expect(pitch_forward_dot > 0.99);
+    try std.testing.expect(pitch_up_dot > 0.999);
+    try std.testing.expectApproxEqAbs(camera.euclid_pitch, pitched_orientation.pitch, 1e-3);
 }

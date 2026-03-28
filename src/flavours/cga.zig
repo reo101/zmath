@@ -74,5 +74,5 @@ test "cga origin and infinity are null vectors" {
 
 test "cga points are null vectors" {
     const p = Point.init(1, 2, 3);
-    try std.testing.expect(std.math.approxEqAbs(f32, 0.0, h.normSquared(p), 1e-6));
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), h.normSquared(p), 1e-6);
 }

@@ -195,7 +195,7 @@ pub fn main(init: std.process.Init) !void {
         );
 
         for (scene.local_vertices, 0..) |local_vertex, i| {
-            const ambient = curved.sphericalAmbientFromGroundHeightPoint(view.params, vec3FromVector(local_vertex));
+            const ambient = demo.sphericalDemoAmbientPoint(view.params, vec3FromVector(local_vertex));
 
             const signed_ambient = ambient;
 
