@@ -165,6 +165,42 @@ pub fn build(b: *std.Build) void {
     const run_profile_spherical_walk_trace = b.addRunArtifact(profile_spherical_walk_trace_exe);
     profile_spherical_walk_trace_step.dependOn(&run_profile_spherical_walk_trace.step);
 
+    const profile_spherical_walk_reversibility_exe = b.addExecutable(.{
+        .name = "zmath-profile-spherical-walk-reversibility",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/profile/spherical_walk_reversibility.zig"),
+            .target = target,
+            .optimize = .Debug,
+            .imports = &.{
+                .{
+                    .name = "zmath",
+                    .module = zmath,
+                },
+                .{
+                    .name = "demo_core",
+                    .module = b.createModule(.{
+                        .root_source_file = b.path("src/demos/core.zig"),
+                        .target = target,
+                        .optimize = .Debug,
+                        .imports = &.{
+                            .{
+                                .name = "zmath",
+                                .module = zmath,
+                            },
+                        },
+                    }),
+                },
+            },
+        }),
+    });
+
+    const profile_spherical_walk_reversibility_step = b.step(
+        "profile-spherical-walk-reversibility",
+        "Trace when spherical backward walking stops being reversible",
+    );
+    const run_profile_spherical_walk_reversibility = b.addRunArtifact(profile_spherical_walk_reversibility_exe);
+    profile_spherical_walk_reversibility_step.dependOn(&run_profile_spherical_walk_reversibility.step);
+
     const profile_spherical_sphere_map_exe = b.addExecutable(.{
         .name = "zmath-profile-spherical-sphere-map",
         .root_module = b.createModule(.{
@@ -200,6 +236,150 @@ pub fn build(b: *std.Build) void {
     );
     const run_profile_spherical_sphere_map = b.addRunArtifact(profile_spherical_sphere_map_exe);
     profile_spherical_sphere_map_step.dependOn(&run_profile_spherical_sphere_map.step);
+
+    const profile_spherical_steep_walk_probe_exe = b.addExecutable(.{
+        .name = "zmath-profile-spherical-steep-walk-probe",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/profile/spherical_steep_walk_probe.zig"),
+            .target = target,
+            .optimize = .Debug,
+            .imports = &.{
+                .{
+                    .name = "zmath",
+                    .module = zmath,
+                },
+                .{
+                    .name = "demo_core",
+                    .module = b.createModule(.{
+                        .root_source_file = b.path("src/demos/core.zig"),
+                        .target = target,
+                        .optimize = .Debug,
+                        .imports = &.{
+                            .{
+                                .name = "zmath",
+                                .module = zmath,
+                            },
+                        },
+                    }),
+                },
+            },
+        }),
+    });
+
+    const profile_spherical_steep_walk_probe_step = b.step(
+        "profile-spherical-steep-walk-probe",
+        "Trace steep-pitch backward walking in spherical mode and report the first camera jump",
+    );
+    const run_profile_spherical_steep_walk_probe = b.addRunArtifact(profile_spherical_steep_walk_probe_exe);
+    profile_spherical_steep_walk_probe_step.dependOn(&run_profile_spherical_steep_walk_probe.step);
+
+    const profile_spherical_motion_probe_exe = b.addExecutable(.{
+        .name = "zmath-profile-spherical-motion-probe",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/profile/spherical_motion_probe.zig"),
+            .target = target,
+            .optimize = .Debug,
+            .imports = &.{
+                .{
+                    .name = "zmath",
+                    .module = zmath,
+                },
+                .{
+                    .name = "demo_core",
+                    .module = b.createModule(.{
+                        .root_source_file = b.path("src/demos/core.zig"),
+                        .target = target,
+                        .optimize = .Debug,
+                        .imports = &.{
+                            .{
+                                .name = "zmath",
+                                .module = zmath,
+                            },
+                        },
+                    }),
+                },
+            },
+        }),
+    });
+
+    const profile_spherical_motion_probe_step = b.step(
+        "profile-spherical-motion-probe",
+        "Compare cube and ground screen motion under spherical look and move commands",
+    );
+    const run_profile_spherical_motion_probe = b.addRunArtifact(profile_spherical_motion_probe_exe);
+    profile_spherical_motion_probe_step.dependOn(&run_profile_spherical_motion_probe.step);
+
+    const profile_spherical_ground_probe_exe = b.addExecutable(.{
+        .name = "zmath-profile-spherical-ground-probe",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/profile/spherical_ground_probe.zig"),
+            .target = target,
+            .optimize = .Debug,
+            .imports = &.{
+                .{
+                    .name = "zmath",
+                    .module = zmath,
+                },
+                .{
+                    .name = "demo_core",
+                    .module = b.createModule(.{
+                        .root_source_file = b.path("src/demos/core.zig"),
+                        .target = target,
+                        .optimize = .Debug,
+                        .imports = &.{
+                            .{
+                                .name = "zmath",
+                                .module = zmath,
+                            },
+                        },
+                    }),
+                },
+            },
+        }),
+    });
+
+    const profile_spherical_ground_probe_step = b.step(
+        "profile-spherical-ground-probe",
+        "Count which spherical ground cells are drawn vs discarded",
+    );
+    const run_profile_spherical_ground_probe = b.addRunArtifact(profile_spherical_ground_probe_exe);
+    profile_spherical_ground_probe_step.dependOn(&run_profile_spherical_ground_probe.step);
+
+    const profile_euclidean_sdf_exe = b.addExecutable(.{
+        .name = "zmath-profile-euclidean-sdf",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/profile/euclidean_sdf.zig"),
+            .target = target,
+            .optimize = .Debug,
+            .imports = &.{
+                .{
+                    .name = "zmath",
+                    .module = zmath,
+                },
+                .{
+                    .name = "demo_euclidean_sdf",
+                    .module = b.createModule(.{
+                        .root_source_file = b.path("src/demos/euclidean_sdf.zig"),
+                        .target = target,
+                        .optimize = .Debug,
+                        .imports = &.{
+                            .{
+                                .name = "zmath",
+                                .module = zmath,
+                            },
+                        },
+                    }),
+                },
+            },
+        }),
+    });
+
+    const profile_euclidean_sdf_step = b.step(
+        "profile-euclidean-sdf",
+        "Benchmark the Euclidean SDF raymarch path without opening a window",
+    );
+    const run_profile_euclidean_sdf = b.addRunArtifact(profile_euclidean_sdf_exe);
+    profile_euclidean_sdf_step.dependOn(&run_profile_euclidean_sdf.step);
 
     // Demos
     const demo_exe = b.addExecutable(.{

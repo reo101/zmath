@@ -67,27 +67,27 @@ fn vec3FromVector(v: demo.H.Vector) curved.Vec3 {
 fn configureRepro(app: *demo.App) void {
     app.animate = false;
     app.mode = .spherical;
-    app.angle = 17.450020;
+    app.angle = 4.499999;
     app.camera.movement_mode = .walk;
-    app.camera.euclid_rotation = -2.115804;
-    app.camera.euclid_pitch = -0.020000;
-    app.camera.euclid_eye_x = -70.910950;
+    app.camera.euclid_rotation = 0.366000;
+    app.camera.euclid_pitch = 0.100000;
+    app.camera.euclid_eye_x = -7.520036;
     app.camera.euclid_eye_y = 0.0;
-    app.camera.euclid_eye_z = -176.578800;
+    app.camera.euclid_eye_z = -59.213104;
     app.camera.spherical = .{
         .metric = .spherical,
         .params = .{
-            .radius = 0.740000,
+            .radius = 1.480000,
             .angular_zoom = 1.000000,
             .chart_model = .conformal,
         },
-        .projection = .stereographic,
+        .projection = .gnomonic,
         .clip = .{ .near = 0.080000, .far = std.math.inf(f32) },
         .camera = .{
-            .position = .{ 0.372664, -0.325853, 0.000000, -0.868872 },
-            .right = .{ 0.719299, -0.490129, -0.000000, 0.492324 },
-            .up = .{ -0.011725, -0.016168, 0.999800, 0.001035 },
-            .forward = .{ -0.586168, -0.808289, -0.019999, 0.051722 },
+            .position = .{ -0.768220, -0.231342, 0.000000, 0.596922 },
+            .right = .{ -0.222363, 0.944205, -0.229501, 0.079760 },
+            .up = .{ 0.047435, 0.231729, 0.959841, 0.150856 },
+            .forward = .{ -0.598448, -0.035495, 0.161355, -0.783942 },
         },
         .scene_sign = 1.0,
     };
@@ -147,7 +147,7 @@ pub fn main(init: std.process.Init) !void {
 
         var samples: [8]curved.ProjectedSample = undefined;
         for (scene.local_vertices, 0..) |local_vertex, i| {
-            const ambient = curved.sphericalAmbientFromGroundHeightPoint(scene.view.params, vec3FromVector(local_vertex));
+            const ambient = demo.sphericalDemoAmbientPoint(scene.view.params, vec3FromVector(local_vertex));
             const selected_pass = scene.view.sphericalSelectedPassForAmbient(ambient);
             const near_sample = scene.view.sampleProjectedAmbientForSphericalPass(.near, ambient, scene.screen);
             const far_sample = scene.view.sampleProjectedAmbientForSphericalPass(.far, ambient, scene.screen);

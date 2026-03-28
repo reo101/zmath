@@ -15,6 +15,13 @@ pub const EuclideanProjection = enum {
     isometric,
 };
 
+pub fn euclideanProjectionDepthOffset(projection: EuclideanProjection) f32 {
+    return switch (projection) {
+        .perspective => 30.0,
+        .isometric => 6.0,
+    };
+}
+
 pub fn directionProjectionLabel(projection: DirectionProjection) []const u8 {
     return switch (projection) {
         .gnomonic => "gnom",
@@ -37,10 +44,7 @@ pub fn projectEuclidean(
     const y_raw = p.coeffNamed("e2");
     const z_raw = p.coeffNamed("e3");
 
-    const z_offset: f32 = switch (projection) {
-        .perspective => 30.0,
-        .isometric => 6.0,
-    };
+    const z_offset = euclideanProjectionDepthOffset(projection);
     const dist = z_raw + z_offset;
     if (projection == .perspective and dist <= 0.1) return null;
 
