@@ -309,13 +309,17 @@ fn navigatorExtent(chart_vertices: []const curved.Vec3, eye_chart: curved.Vec3, 
     };
 
     for (chart_vertices) |chart| {
-        inline for (chart) |coord| {
-            extent = @max(extent, @abs(coord) * 1.15);
-        }
+        extent = @max(extent, @abs(curved.vec3x(chart)) * 1.15);
+        extent = @max(extent, @abs(curved.vec3y(chart)) * 1.15);
+        extent = @max(extent, @abs(curved.vec3z(chart)) * 1.15);
     }
 
-    inline for (eye_chart) |coord| extent = @max(extent, @abs(coord) * 1.12);
-    inline for (look_chart) |coord| extent = @max(extent, @abs(coord) * 1.12);
+    extent = @max(extent, @abs(curved.vec3x(eye_chart)) * 1.12);
+    extent = @max(extent, @abs(curved.vec3y(eye_chart)) * 1.12);
+    extent = @max(extent, @abs(curved.vec3z(eye_chart)) * 1.12);
+    extent = @max(extent, @abs(curved.vec3x(look_chart)) * 1.12);
+    extent = @max(extent, @abs(curved.vec3y(look_chart)) * 1.12);
+    extent = @max(extent, @abs(curved.vec3z(look_chart)) * 1.12);
     return extent;
 }
 
@@ -334,7 +338,8 @@ fn drawNavigatorGeodesic(
     for (0..19) |i| {
         const t = @as(f32, @floatFromInt(i)) / 18.0;
         const chart = curved.geodesicChartPoint(view.metric, view.params, a_chart, b_chart, t) orelse continue;
-        const point = projectNavigatorPoint(rect, extent, chart[axes.horizontal], chart[axes.vertical]);
+        const coords = curved.vec3Coords(chart);
+        const point = projectNavigatorPoint(rect, extent, coords[axes.horizontal], coords[axes.vertical]);
         if (prev_point) |prev| {
             canvas.drawLine(prev[0], prev[1], point[0], point[1], '#', tone);
         }
@@ -369,8 +374,10 @@ fn drawNavigatorPanel(
         );
     }
 
-    const eye_point = projectNavigatorPoint(rect, extent, eye_chart[axes.horizontal], eye_chart[axes.vertical]);
-    const look_point = projectNavigatorPoint(rect, extent, look_chart[axes.horizontal], look_chart[axes.vertical]);
+    const eye_coords = curved.vec3Coords(eye_chart);
+    const look_coords = curved.vec3Coords(look_chart);
+    const eye_point = projectNavigatorPoint(rect, extent, eye_coords[axes.horizontal], eye_coords[axes.vertical]);
+    const look_point = projectNavigatorPoint(rect, extent, look_coords[axes.horizontal], look_coords[axes.vertical]);
     canvas.drawLine(eye_point[0], eye_point[1], look_point[0], look_point[1], '#', 253);
     drawNavigatorMarker(canvas, look_point, 253);
     drawNavigatorMarker(canvas, eye_point, 220);
@@ -386,14 +393,14 @@ test "drawCurvedNavigator paints minimap content" {
         params,
         .gnomonic,
         .{ .near = 0.08, .far = 1.55 },
-        .{ 0.0, 0.0, -params.radius * 0.78 },
-        .{ 0.0, 0.0, 0.0 },
+        curved.vec3(0.0, 0.0, -params.radius * 0.78),
+        curved.vec3(0.0, 0.0, 0.0),
     );
     const vertices = [_]curved.Vec3{
-        .{ -0.15, -0.15, 0.02 },
-        .{ 0.15, -0.15, 0.02 },
-        .{ 0.15, 0.15, 0.02 },
-        .{ -0.15, 0.15, 0.02 },
+        curved.vec3(-0.15, -0.15, 0.02),
+        curved.vec3(0.15, -0.15, 0.02),
+        curved.vec3(0.15, 0.15, 0.02),
+        curved.vec3(-0.15, 0.15, 0.02),
     };
     const mesh = curved_canvas.Mesh{
         .vertices = vertices[0..],
@@ -426,14 +433,14 @@ test "drawCurvedNavigator paints spherical overview content" {
         params,
         .stereographic,
         .{ .near = 0.08, .far = std.math.inf(f32) },
-        .{ 0.0, 0.0, -0.82 },
-        .{ 0.0, 0.0, 0.0 },
+        curved.vec3(0.0, 0.0, -0.82),
+        curved.vec3(0.0, 0.0, 0.0),
     );
     const vertices = [_]curved.Vec3{
-        .{ -0.12, 0.12, -0.12 },
-        .{ 0.12, 0.12, -0.12 },
-        .{ 0.12, 0.36, -0.12 },
-        .{ -0.12, 0.36, -0.12 },
+        curved.vec3(-0.12, 0.12, -0.12),
+        curved.vec3(0.12, 0.12, -0.12),
+        curved.vec3(0.12, 0.36, -0.12),
+        curved.vec3(-0.12, 0.36, -0.12),
     };
     const mesh = curved_canvas.Mesh{
         .vertices = vertices[0..],
@@ -466,14 +473,14 @@ test "drawCurvedNavigator is a no-op on tiny canvases" {
         params,
         .gnomonic,
         .{ .near = 0.08, .far = 1.55 },
-        .{ 0.0, 0.0, -params.radius * 0.78 },
-        .{ 0.0, 0.0, 0.0 },
+        curved.vec3(0.0, 0.0, -params.radius * 0.78),
+        curved.vec3(0.0, 0.0, 0.0),
     );
     const vertices = [_]curved.Vec3{
-        .{ -0.15, -0.15, 0.02 },
-        .{ 0.15, -0.15, 0.02 },
-        .{ 0.15, 0.15, 0.02 },
-        .{ -0.15, 0.15, 0.02 },
+        curved.vec3(-0.15, -0.15, 0.02),
+        curved.vec3(0.15, -0.15, 0.02),
+        curved.vec3(0.15, 0.15, 0.02),
+        curved.vec3(-0.15, 0.15, 0.02),
     };
     const mesh = curved_canvas.Mesh{
         .vertices = vertices[0..],

@@ -43,7 +43,7 @@ pub fn sphericalMapPoint(
         .gnomonic => .linear,
     };
     const point = curved.modelPointForAmbientWithCamera(.spherical, map_camera, ambient, model) orelse return null;
-    return .{ point[0], point[2] };
+    return .{ curved.vec3x(point), curved.vec3z(point) };
 }
 
 pub fn sphericalGroundFieldExtent(
@@ -88,7 +88,7 @@ test "signedSphericalAmbient respects scene sign" {
         .{ 0.0, 0.0, -0.82 },
         .{ 0.0, 0.0, 0.0 },
     );
-    const chart: curved.Vec3 = .{ 0.12, -0.07, 0.15 };
+    const chart: curved.Vec3 = curved.vec3(0.12, -0.07, 0.15);
     const positive = signedSphericalAmbient(view, chart).?;
     view.scene_sign = -1.0;
     const negative = signedSphericalAmbient(view, chart).?;
