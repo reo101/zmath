@@ -2,16 +2,14 @@ const std = @import("std");
 const canvas_api = @import("canvas.zig");
 const curved = @import("../geometry/constant_curvature.zig");
 const curved_canvas = @import("curved_canvas.zig");
+const nav_geom = @import("curved_navigator_geometry.zig");
 
 const NavigatorAxes = struct {
     horizontal: usize,
     vertical: usize,
 };
 
-pub const SphericalMapProjection = enum {
-    stereographic,
-    gnomonic,
-};
+pub const SphericalMapProjection = nav_geom.SphericalMapProjection;
 
 const NavigatorRect = struct {
     x: usize,
@@ -48,7 +46,7 @@ pub fn drawCurvedNavigator(
     const look_chart = curved.chartCoords(view.metric, view.params, look_probe.position);
 
     if (view.metric == .spherical) {
-        const map_camera = sphericalGroundOverviewCamera(view);
+        const map_camera = nav_geom.sphericalGroundOverviewCamera(view);
         const stereo_radius = sphericalOverviewFieldRadius(view, .stereographic);
         const gnomonic_radius = sphericalOverviewFieldRadius(view, .gnomonic);
         const stereo_extent = sphericalGroundMapExtent(view, map_camera, mesh.vertices, .stereographic, stereo_radius);
@@ -113,46 +111,6 @@ fn drawNavigatorMarker(canvas: *canvas_api.Canvas, point: [2]f32, tone: u8) void
     canvas.drawLine(point[0], point[1] - 0.5, point[0], point[1] + 0.5, '#', tone);
 }
 
-fn sphericalSignedAmbient(view: curved.View, chart: curved.Vec3) ?curved.Vec4 {
-    var ambient = curved.embedPoint(.spherical, view.params, chart) orelse return null;
-    if (view.scene_sign < 0.0) {
-        ambient = .{ -ambient[0], -ambient[1], -ambient[2], -ambient[3] };
-    }
-    return ambient;
-}
-
-fn defaultSphericalMapCamera() curved.Camera {
-    return .{
-        .position = .{ 1.0, 0.0, 0.0, 0.0 },
-        .right = .{ 0.0, 1.0, 0.0, 0.0 },
-        .up = .{ 0.0, 0.0, 1.0, 0.0 },
-        .forward = .{ 0.0, 0.0, 0.0, 1.0 },
-    };
-}
-
-fn sphericalGroundOverviewCamera(view: curved.View) curved.Camera {
-    const basis = view.walkBasis() orelse return defaultSphericalMapCamera();
-    return .{
-        .position = view.camera.position,
-        .right = basis.right,
-        .up = basis.up,
-        .forward = basis.forward,
-    };
-}
-
-fn sphericalMapPoint(
-    map_camera: curved.Camera,
-    ambient: curved.Vec4,
-    projection_mode: SphericalMapProjection,
-) ?[2]f32 {
-    const model: curved.CameraModel = switch (projection_mode) {
-        .stereographic => .conformal,
-        .gnomonic => .linear,
-    };
-    const point = curved.modelPointForAmbientWithCamera(.spherical, map_camera, ambient, model) orelse return null;
-    return .{ point[0], point[2] };
-}
-
 fn sphericalOverviewFieldRadius(view: curved.View, projection_mode: SphericalMapProjection) f32 {
     return switch (projection_mode) {
         .stereographic => view.params.radius * (@as(f32, std.math.pi) * 0.5) * 0.98,
@@ -176,8 +134,8 @@ fn drawSphericalMapGeodesic(
     for (0..25) |i| {
         const t = @as(f32, @floatFromInt(i)) / 24.0;
         const chart = curved.geodesicChartPoint(.spherical, view.params, a_chart, b_chart, t) orelse continue;
-        const ambient = sphericalSignedAmbient(view, chart) orelse continue;
-        const map_point = sphericalMapPoint(map_camera, ambient, projection_mode) orelse {
+        const ambient = nav_geom.signedSphericalAmbient(view, chart) orelse continue;
+        const map_point = nav_geom.sphericalMapPoint(map_camera, ambient, projection_mode) orelse {
             prev_point = null;
             continue;
         };
@@ -215,7 +173,7 @@ fn drawSphericalGroundBoundary(
             lateral,
             forward,
         ) orelse continue;
-        const map_point = sphericalMapPoint(map_camera, ambient, projection_mode) orelse {
+        const map_point = nav_geom.sphericalMapPoint(map_camera, ambient, projection_mode) orelse {
             prev_point = null;
             continue;
         };
@@ -258,7 +216,7 @@ fn drawSphericalGroundGridLine(
             prev_point = null;
             continue;
         };
-        const map_point = sphericalMapPoint(map_camera, ambient, projection_mode) orelse {
+        const map_point = nav_geom.sphericalMapPoint(map_camera, ambient, projection_mode) orelse {
             prev_point = null;
             continue;
         };
@@ -277,33 +235,11 @@ fn sphericalGroundMapExtent(
     projection_mode: SphericalMapProjection,
     field_radius: f32,
 ) f32 {
-    var extent: f32 = switch (projection_mode) {
-        .stereographic => 2.2,
-        .gnomonic => 1.2,
-    };
-
-    for (0..49) |i| {
-        const t = @as(f32, @floatFromInt(i)) / 48.0;
-        const theta = t * @as(f32, std.math.pi) * 2.0;
-        const lateral = @cos(theta) * field_radius;
-        const forward = @sin(theta) * field_radius;
-        const ambient = curved.ambientFromTangentBasisPoint(
-            .spherical,
-            view.params,
-            map_camera.position,
-            map_camera.right,
-            map_camera.forward,
-            lateral,
-            forward,
-        ) orelse continue;
-        const point = sphericalMapPoint(map_camera, ambient, projection_mode) orelse continue;
-        extent = @max(extent, @abs(point[0]) * 1.08);
-        extent = @max(extent, @abs(point[1]) * 1.08);
-    }
+    var extent = nav_geom.sphericalGroundFieldExtent(view, map_camera, projection_mode, field_radius);
 
     for (chart_vertices) |vertex| {
-        const ambient = sphericalSignedAmbient(view, vertex) orelse continue;
-        const point = sphericalMapPoint(map_camera, ambient, projection_mode) orelse continue;
+        const ambient = nav_geom.signedSphericalAmbient(view, vertex) orelse continue;
+        const point = nav_geom.sphericalMapPoint(map_camera, ambient, projection_mode) orelse continue;
         extent = @max(extent, @abs(point[0]) * 1.06);
         extent = @max(extent, @abs(point[1]) * 1.06);
     }
@@ -359,7 +295,7 @@ fn drawSphericalGroundOverviewPanel(
         0.0,
         field_radius * 0.18,
     ) orelse return;
-    const look_map = sphericalMapPoint(map_camera, heading_ambient, projection_mode) orelse return;
+    const look_map = nav_geom.sphericalMapPoint(map_camera, heading_ambient, projection_mode) orelse return;
     const look_point = projectNavigatorPoint(rect, extent, look_map[0], look_map[1]);
     canvas.drawLine(eye_point[0], eye_point[1], look_point[0], look_point[1], '#', 253);
     drawNavigatorMarker(canvas, look_point, 253);

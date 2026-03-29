@@ -2,6 +2,7 @@ const std = @import("std");
 const zmath = @import("zmath");
 const canvas_api = zmath.render.canvas;
 const curved_navigator = zmath.render.curved_navigator;
+const curved_navigator_geometry = zmath.render.curved_navigator_geometry;
 const projection = zmath.render.projection;
 const sdf = zmath.render.sdf;
 const curved = zmath.geometry.constant_curvature;
@@ -2841,18 +2842,7 @@ fn nativeNavigatorShouldBreak(rect: rl.Rectangle, a: rl.Vector2, b: rl.Vector2) 
 }
 
 fn sphericalNativeOverviewCamera(view: curved.View) curved.Camera {
-    const basis = view.walkBasis() orelse return .{
-        .position = .{ 1.0, 0.0, 0.0, 0.0 },
-        .right = .{ 0.0, 1.0, 0.0, 0.0 },
-        .up = .{ 0.0, 0.0, 1.0, 0.0 },
-        .forward = .{ 0.0, 0.0, 0.0, 1.0 },
-    };
-    return .{
-        .position = view.camera.position,
-        .right = basis.right,
-        .up = basis.up,
-        .forward = basis.forward,
-    };
+    return curved_navigator_geometry.sphericalGroundOverviewCamera(view);
 }
 
 fn sphericalNativeOverviewRadius(view: curved.View, projection_mode: curved_navigator.SphericalMapProjection) f32 {
@@ -2867,12 +2857,7 @@ fn sphericalNativeMapPoint(
     ambient: curved.Vec4,
     projection_mode: curved_navigator.SphericalMapProjection,
 ) ?[2]f32 {
-    const model: curved.CameraModel = switch (projection_mode) {
-        .stereographic => .conformal,
-        .gnomonic => .linear,
-    };
-    const point = curved.modelPointForAmbientWithCamera(.spherical, map_camera, ambient, model) orelse return null;
-    return .{ point[0], point[2] };
+    return curved_navigator_geometry.sphericalMapPoint(map_camera, ambient, projection_mode);
 }
 
 fn sphericalNativeMapExtent(
@@ -2881,31 +2866,12 @@ fn sphericalNativeMapExtent(
     projection_mode: curved_navigator.SphericalMapProjection,
     field_radius: f32,
 ) f32 {
-    var extent: f32 = switch (projection_mode) {
-        .stereographic => 2.2,
-        .gnomonic => 1.2,
-    };
-
-    for (0..17) |i| {
-        const t = @as(f32, @floatFromInt(i)) / 16.0;
-        const theta = t * @as(f32, std.math.pi) * 2.0;
-        const lateral = @cos(theta) * field_radius;
-        const forward = @sin(theta) * field_radius;
-        const ambient = curved.ambientFromTangentBasisPoint(
-            .spherical,
-            view.params,
-            map_camera.position,
-            map_camera.right,
-            map_camera.forward,
-            lateral,
-            forward,
-        ) orelse continue;
-        const point = sphericalNativeMapPoint(map_camera, ambient, projection_mode) orelse continue;
-        extent = @max(extent, @abs(point[0]) * 1.08);
-        extent = @max(extent, @abs(point[1]) * 1.08);
-    }
-
-    return extent;
+    return curved_navigator_geometry.sphericalGroundFieldExtent(
+        view,
+        map_camera,
+        projection_mode,
+        field_radius,
+    );
 }
 
 fn drawNativeSphericalGroundGridLine(
