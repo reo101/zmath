@@ -1,6 +1,6 @@
 const std = @import("std");
 const ga = @import("../ga.zig");
-const render = @import("../render.zig");
+const projection = @import("../render/projection.zig");
 const hpga = @import("../flavours/hpga.zig");
 const epga = @import("../flavours/epga.zig");
 
@@ -86,21 +86,6 @@ pub const ProjectedSample = struct {
     status: SampleStatus = .hidden,
 };
 
-pub const EdgeStyle = struct {
-    steps: usize = 64,
-    char: u8 = '#',
-    near_tone: u8 = 255,
-    far_tone: u8 = 243,
-    shade_far_distance: ?f32 = null,
-    break_wrapped: bool = true,
-};
-
-pub const FillStyle = struct {
-    steps: usize = 12,
-    shade: u8,
-    tone: u8,
-};
-
 pub const CameraError = error{
     InvalidChartPoint,
     DegenerateDirection,
@@ -126,8 +111,8 @@ const SphericalPassSelection = struct {
     near_distance: f32,
 };
 
-fn sphericalUsesMultipass(projection: render.projection.DirectionProjection) bool {
-    return switch (projection) {
+fn sphericalUsesMultipass(projection_mode: projection.DirectionProjection) bool {
+    return switch (projection_mode) {
         .wrapped => false,
         .gnomonic, .stereographic, .orthographic => true,
     };
@@ -136,7 +121,7 @@ fn sphericalUsesMultipass(projection: render.projection.DirectionProjection) boo
 pub const View = struct {
     metric: Metric,
     params: Params,
-    projection: render.projection.DirectionProjection,
+    projection: projection.DirectionProjection,
     clip: DistanceClip,
     camera: Camera,
     scene_sign: f32,
@@ -144,7 +129,7 @@ pub const View = struct {
     pub fn init(
         metric: Metric,
         params: Params,
-        projection: render.projection.DirectionProjection,
+        projection_mode: projection.DirectionProjection,
         clip: DistanceClip,
         eye_chart: Vec3,
         target_chart: Vec3,
@@ -152,7 +137,7 @@ pub const View = struct {
         return .{
             .metric = metric,
             .params = params,
-            .projection = projection,
+            .projection = projection_mode,
             .clip = clip,
             .camera = try initCamera(metric, params, eye_chart, target_chart),
             .scene_sign = 1.0,
@@ -451,195 +436,6 @@ pub const View = struct {
         }
         return ambient;
     }
-
-    pub fn drawEdge(
-        self: View,
-        canvas: *render.canvas.Canvas,
-        a_chart: Vec3,
-        b_chart: Vec3,
-        screen: Screen,
-        style: EdgeStyle,
-    ) void {
-        if (self.drawEdgeInCameraModel(canvas, a_chart, b_chart, screen, style)) return;
-
-        const a_ambient = self.sceneAmbientPoint(a_chart) orelse return;
-        const b_ambient = self.sceneAmbientPoint(b_chart) orelse return;
-
-        var prev_point: ?[2]f32 = null;
-        var prev_distance: ?f32 = null;
-        var prev_status: SampleStatus = .hidden;
-        const shade_far_distance = style.shade_far_distance orelse self.shadeFarDistance();
-
-        for (0..style.steps + 1) |i| {
-            const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(style.steps));
-            const ambient = geodesicAmbientPoint(self.metric, a_ambient, b_ambient, t) orelse {
-                prev_point = null;
-                prev_distance = null;
-                prev_status = .hidden;
-                continue;
-            };
-            const sample = sampleProjectedAmbientPoint(self, ambient, screen);
-            if (sample.projected) |p| {
-                if (prev_status == .visible and sample.status == .visible) {
-                    if (prev_point) |pp| {
-                        if (prev_distance) |pd| {
-                            if (!style.break_wrapped or !shouldBreakProjectionSegment(self.projection, pp, p, screen.width, screen.height)) {
-                                canvas.drawLine(
-                                    pp[0],
-                                    pp[1],
-                                    p[0],
-                                    p[1],
-                                    style.char,
-                                    toneForDistance(pd + (sample.distance - pd) * 0.5, self.clip.near, shade_far_distance, style.near_tone, style.far_tone),
-                                );
-                            }
-                        }
-                    }
-                } else if (prev_status == .visible and sample.status == .clipped_near) {
-                    if (prev_point) |pp| canvas.setMarker(pp[0], pp[1], .near);
-                } else if (prev_status == .visible and sample.status == .clipped_far) {
-                    if (prev_point) |pp| canvas.setMarker(pp[0], pp[1], .far);
-                } else if (prev_status == .clipped_near and sample.status == .visible) {
-                    canvas.setMarker(p[0], p[1], .near);
-                } else if (prev_status == .clipped_far and sample.status == .visible) {
-                    canvas.setMarker(p[0], p[1], .far);
-                }
-
-                if (sample.status == .visible) {
-                    prev_point = p;
-                    prev_distance = sample.distance;
-                } else {
-                    prev_point = null;
-                    prev_distance = null;
-                }
-            } else {
-                prev_point = null;
-                prev_distance = null;
-            }
-            prev_status = sample.status;
-        }
-    }
-
-    pub fn fillQuad(
-        self: View,
-        canvas: *render.canvas.Canvas,
-        quad: [4]Vec3,
-        screen: Screen,
-        style: FillStyle,
-    ) void {
-        if (self.fillQuadInCameraModel(canvas, quad, screen, style)) return;
-
-        const a = quad[0];
-        const b = quad[1];
-        const c = quad[2];
-        const d = quad[3];
-
-        for (0..style.steps + 1) |ui| {
-            const u = @as(f32, @floatFromInt(ui)) / @as(f32, @floatFromInt(style.steps));
-            for (0..style.steps + 1) |vi| {
-                const v = @as(f32, @floatFromInt(vi)) / @as(f32, @floatFromInt(style.steps));
-                const point = bilerpQuad(a, b, c, d, u, v);
-                const sample = self.sampleProjectedPoint(point, screen);
-                if (sample.status != .visible) continue;
-                if (sample.projected) |p| {
-                    canvas.setFill(p[0], p[1], style.shade, style.tone, sample.distance);
-                }
-            }
-        }
-    }
-
-    fn drawEdgeInCameraModel(
-        self: View,
-        canvas: *render.canvas.Canvas,
-        a_chart: Vec3,
-        b_chart: Vec3,
-        screen: Screen,
-        style: EdgeStyle,
-    ) bool {
-        const model = cameraModelForRender(self.metric, self.projection) orelse return false;
-        const a_model = self.cameraModelPoint(a_chart, model) orelse return false;
-        const b_model = self.cameraModelPoint(b_chart, model) orelse return false;
-
-        var prev_point: ?[2]f32 = null;
-        var prev_distance: ?f32 = null;
-        var prev_status: SampleStatus = .hidden;
-        const shade_far_distance = style.shade_far_distance orelse self.shadeFarDistance();
-
-        for (0..style.steps + 1) |i| {
-            const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(style.steps));
-            const model_point = lerp3(a_model, b_model, t);
-            const sample = sampleProjectedModelPoint(self.metric, self.projection, self.params, self.clip, model_point, screen);
-            if (sample.projected) |p| {
-                if (prev_status == .visible and sample.status == .visible) {
-                    if (prev_point) |pp| {
-                        if (prev_distance) |pd| {
-                            if (!style.break_wrapped or !shouldBreakProjectionSegment(self.projection, pp, p, screen.width, screen.height)) {
-                                canvas.drawLine(
-                                    pp[0],
-                                    pp[1],
-                                    p[0],
-                                    p[1],
-                                    style.char,
-                                    toneForDistance(pd + (sample.distance - pd) * 0.5, self.clip.near, shade_far_distance, style.near_tone, style.far_tone),
-                                );
-                            }
-                        }
-                    }
-                } else if (prev_status == .visible and sample.status == .clipped_near) {
-                    if (prev_point) |pp| canvas.setMarker(pp[0], pp[1], .near);
-                } else if (prev_status == .visible and sample.status == .clipped_far) {
-                    if (prev_point) |pp| canvas.setMarker(pp[0], pp[1], .far);
-                } else if (prev_status == .clipped_near and sample.status == .visible) {
-                    canvas.setMarker(p[0], p[1], .near);
-                } else if (prev_status == .clipped_far and sample.status == .visible) {
-                    canvas.setMarker(p[0], p[1], .far);
-                }
-
-                if (sample.status == .visible) {
-                    prev_point = p;
-                    prev_distance = sample.distance;
-                } else {
-                    prev_point = null;
-                    prev_distance = null;
-                }
-            } else {
-                prev_point = null;
-                prev_distance = null;
-            }
-            prev_status = sample.status;
-        }
-
-        return true;
-    }
-
-    fn fillQuadInCameraModel(
-        self: View,
-        canvas: *render.canvas.Canvas,
-        quad: [4]Vec3,
-        screen: Screen,
-        style: FillStyle,
-    ) bool {
-        const model = cameraModelForRender(self.metric, self.projection) orelse return false;
-        const a = self.cameraModelPoint(quad[0], model) orelse return false;
-        const b = self.cameraModelPoint(quad[1], model) orelse return false;
-        const c = self.cameraModelPoint(quad[2], model) orelse return false;
-        const d = self.cameraModelPoint(quad[3], model) orelse return false;
-
-        for (0..style.steps + 1) |ui| {
-            const u = @as(f32, @floatFromInt(ui)) / @as(f32, @floatFromInt(style.steps));
-            for (0..style.steps + 1) |vi| {
-                const v = @as(f32, @floatFromInt(vi)) / @as(f32, @floatFromInt(style.steps));
-                const model_point = bilerpQuad(a, b, c, d, u, v);
-                const sample = sampleProjectedModelPoint(self.metric, self.projection, self.params, self.clip, model_point, screen);
-                if (sample.status != .visible) continue;
-                if (sample.projected) |p| {
-                    canvas.setFill(p[0], p[1], style.shade, style.tone, sample.distance);
-                }
-            }
-        }
-
-        return true;
-    }
 };
 
 fn hyperAmbientVector(coords: Vec4) HyperAmbient.Vector {
@@ -684,6 +480,32 @@ fn coordsFromFlatVector(v: Flat3.Vector) Vec3 {
     };
 }
 
+pub fn ambientAdd(metric: Metric, a: Vec4, b: Vec4) Vec4 {
+    return add4(metric, a, b);
+}
+
+pub fn ambientSub(metric: Metric, a: Vec4, b: Vec4) Vec4 {
+    return sub4(metric, a, b);
+}
+
+pub fn ambientScale(metric: Metric, v: Vec4, s: f32) Vec4 {
+    return scale4(metric, v, s);
+}
+
+pub fn ambientDot(metric: Metric, a: Vec4, b: Vec4) f32 {
+    return metricDot(metric, a, b);
+}
+
+pub fn flatLerp3(a: Vec3, b: Vec3, t: f32) Vec3 {
+    return coordsFromFlatVector(flatVector(a).scale(1.0 - t).add(flatVector(b).scale(t)));
+}
+
+pub fn flatBilerpQuad(a: Vec3, b: Vec3, c: Vec3, d: Vec3, u: f32, v: f32) Vec3 {
+    const ab = flatLerp3(a, b, u);
+    const dc = flatLerp3(d, c, u);
+    return flatLerp3(ab, dc, v);
+}
+
 fn add4(metric: Metric, a: Vec4, b: Vec4) Vec4 {
     return switch (metric) {
         .hyperbolic => coordsFromHyperAmbient(hyperAmbientVector(a).add(hyperAmbientVector(b))),
@@ -703,16 +525,6 @@ fn scale4(metric: Metric, v: Vec4, s: f32) Vec4 {
         .hyperbolic => coordsFromHyperAmbient(hyperAmbientVector(v).scale(s)),
         .elliptic, .spherical => coordsFromRoundAmbient(roundAmbientVector(v).scale(s)),
     };
-}
-
-fn bilerpQuad(a: Vec3, b: Vec3, c: Vec3, d: Vec3, u: f32, v: f32) Vec3 {
-    const ab = lerp3(a, b, u);
-    const dc = lerp3(d, c, u);
-    return lerp3(ab, dc, v);
-}
-
-fn lerp3(a: Vec3, b: Vec3, t: f32) Vec3 {
-    return coordsFromFlatVector(flatVector(a).scale(1.0 - t).add(flatVector(b).scale(t)));
 }
 
 fn flatVector(point: Vec3) Flat3.Vector {
@@ -936,8 +748,8 @@ fn sampleProjectedAmbientPoint(view: View, ambient: Vec4, screen: Screen) Projec
     return sampleProjectedAmbientPointForPass(view, .far, ambient, screen);
 }
 
-fn cameraModelForRender(metric: Metric, projection: render.projection.DirectionProjection) ?CameraModel {
-    return switch (projection) {
+fn cameraModelForRender(metric: Metric, projection_mode: projection.DirectionProjection) ?CameraModel {
+    return switch (projection_mode) {
         // Hyperbolica devlog #4 identifies the camera-relative linear models:
         // Beltrami-Klein for hyperbolic space and gnomonic for spherical
         // space. The same devlog then switches spherical rendering to a
@@ -1166,9 +978,9 @@ fn modelRadius(point: Vec3) f32 {
     return flatVector(point).magnitude();
 }
 
-fn sampleModelPoint(metric: Metric, projection: render.projection.DirectionProjection, params: Params, model_point: Vec3) ?Sample {
+fn sampleModelPoint(metric: Metric, projection_mode: projection.DirectionProjection, params: Params, model_point: Vec3) ?Sample {
     const radius = modelRadius(model_point);
-    const distance = switch (cameraModelForRender(metric, projection) orelse return null) {
+    const distance = switch (cameraModelForRender(metric, projection_mode) orelse return null) {
         .linear => linear_distance: switch (metric) {
             .hyperbolic => {
                 if (radius >= 1.0 - 1e-5) return null;
@@ -1196,16 +1008,16 @@ fn sampleModelPoint(metric: Metric, projection: render.projection.DirectionProje
 
 pub fn sampleProjectedModelPoint(
     metric: Metric,
-    projection: render.projection.DirectionProjection,
+    projection_mode: projection.DirectionProjection,
     params: Params,
     clip: DistanceClip,
     model_point: Vec3,
     screen: Screen,
 ) ProjectedSample {
-    const point_sample = sampleModelPoint(metric, projection, params, model_point) orelse return .{};
-    const projected = switch (cameraModelForRender(metric, projection) orelse return .{}) {
-        .linear => render.projection.projectDirectionWith(
-            projection,
+    const point_sample = sampleModelPoint(metric, projection_mode, params, model_point) orelse return .{};
+    const projected = switch (cameraModelForRender(metric, projection_mode) orelse return .{}) {
+        .linear => projection.projectDirectionWith(
+            projection_mode,
             model_point[0],
             model_point[1],
             model_point[2],
@@ -1411,7 +1223,7 @@ pub fn orientFromHeadingPitch(
 
 pub fn projectPoint(
     metric: Metric,
-    projection: render.projection.DirectionProjection,
+    projection_mode: projection.DirectionProjection,
     params: Params,
     camera: Camera,
     chart: Vec3,
@@ -1424,7 +1236,7 @@ pub fn projectPoint(
     const x = metricDot(metric, ray, camera.right);
     const y = metricDot(metric, ray, camera.up);
     const z = metricDot(metric, ray, camera.forward);
-    return render.projection.projectDirectionWith(projection, x, y, z, canvas_width, canvas_height, params.angular_zoom);
+    return projection.projectDirectionWith(projection_mode, x, y, z, canvas_width, canvas_height, params.angular_zoom);
 }
 
 fn sampleAmbientPoint(metric: Metric, params: Params, camera: Camera, ambient: Vec4) ?Sample {
@@ -1488,14 +1300,14 @@ pub fn modelPointForCamera(
 }
 
 pub fn projectSample(
-    projection: render.projection.DirectionProjection,
+    projection_mode: projection.DirectionProjection,
     point_sample: Sample,
     canvas_width: usize,
     canvas_height: usize,
     zoom: f32,
 ) ?[2]f32 {
-    return render.projection.projectDirectionWith(
-        projection,
+    return projection.projectDirectionWith(
+        projection_mode,
         point_sample.x_dir,
         point_sample.y_dir,
         point_sample.z_dir,
@@ -1512,14 +1324,6 @@ fn sampleStatus(distance: f32, clip: DistanceClip, projected: ?[2]f32) SampleSta
     return .visible;
 }
 
-fn toneForDistance(distance: f32, near_distance: f32, far_distance: f32, near_tone: u8, far_tone: u8) u8 {
-    const span = @max(far_distance - near_distance, 1e-3);
-    const t = std.math.clamp((distance - near_distance) / span, 0.0, 1.0);
-    const near_f = @as(f32, @floatFromInt(near_tone));
-    const far_f = @as(f32, @floatFromInt(far_tone));
-    return @as(u8, @intFromFloat(@round(near_f + (far_f - near_f) * t)));
-}
-
 fn crossesProjectionWrap(a: [2]f32, b: [2]f32, width: usize) bool {
     return @abs(a[0] - b[0]) > @as(f32, @floatFromInt(width)) * 0.45;
 }
@@ -1530,26 +1334,26 @@ fn crossesProjectedJump(a: [2]f32, b: [2]f32, width: usize, height: usize) bool 
 }
 
 fn shouldBreakProjectionSegment(
-    projection: render.projection.DirectionProjection,
+    projection_mode: projection.DirectionProjection,
     a: [2]f32,
     b: [2]f32,
     width: usize,
     height: usize,
 ) bool {
-    return switch (projection) {
+    return switch (projection_mode) {
         .wrapped => crossesProjectionWrap(a, b, width) or crossesProjectedJump(a, b, width, height),
         .gnomonic, .stereographic, .orthographic => crossesProjectedJump(a, b, width, height),
     };
 }
 
 pub fn shouldBreakProjectedSegment(
-    projection: render.projection.DirectionProjection,
+    projection_mode: projection.DirectionProjection,
     a: [2]f32,
     b: [2]f32,
     width: usize,
     height: usize,
 ) bool {
-    return shouldBreakProjectionSegment(projection, a, b, width, height);
+    return shouldBreakProjectionSegment(projection_mode, a, b, width, height);
 }
 
 fn edgeHasProjectionBreak(view: View, a_chart: Vec3, b_chart: Vec3, screen: Screen, steps: usize) bool {
@@ -1598,6 +1402,49 @@ test "hyperbolic and spherical views initialize and sample" {
     );
     const spherical_sample = spherical.sampleProjectedPoint(.{ 0.12, -0.07, 0.15 }, .{ .width = 80, .height = 40, .zoom = spherical.params.angular_zoom });
     try std.testing.expect(spherical_sample.projected != null);
+}
+
+test "ambient helpers and flat interpolation stay consistent" {
+    const a: Vec4 = .{ 1.0, 2.0, 3.0, 4.0 };
+    const b: Vec4 = .{ 0.5, -1.0, 2.0, -0.25 };
+
+    const spherical_sum = ambientAdd(.spherical, a, b);
+    try std.testing.expectApproxEqAbs(1.5, spherical_sum[0], 1e-6);
+    try std.testing.expectApproxEqAbs(1.0, spherical_sum[1], 1e-6);
+    try std.testing.expectApproxEqAbs(5.0, spherical_sum[2], 1e-6);
+    try std.testing.expectApproxEqAbs(3.75, spherical_sum[3], 1e-6);
+
+    const hyper_diff = ambientSub(.hyperbolic, a, b);
+    try std.testing.expectApproxEqAbs(0.5, hyper_diff[0], 1e-6);
+    try std.testing.expectApproxEqAbs(3.0, hyper_diff[1], 1e-6);
+    try std.testing.expectApproxEqAbs(1.0, hyper_diff[2], 1e-6);
+    try std.testing.expectApproxEqAbs(4.25, hyper_diff[3], 1e-6);
+
+    const scaled = ambientScale(.spherical, a, 0.25);
+    try std.testing.expectApproxEqAbs(0.25, scaled[0], 1e-6);
+    try std.testing.expectApproxEqAbs(0.5, scaled[1], 1e-6);
+    try std.testing.expectApproxEqAbs(0.75, scaled[2], 1e-6);
+    try std.testing.expectApproxEqAbs(1.0, scaled[3], 1e-6);
+
+    try std.testing.expectApproxEqAbs(3.5, ambientDot(.spherical, a, b), 1e-6);
+    try std.testing.expectApproxEqAbs(2.5, ambientDot(.hyperbolic, a, b), 1e-6);
+
+    const lerped = flatLerp3(.{ 0.0, 0.0, 0.0 }, .{ 2.0, 4.0, 6.0 }, 0.25);
+    try std.testing.expectApproxEqAbs(0.5, lerped[0], 1e-6);
+    try std.testing.expectApproxEqAbs(1.0, lerped[1], 1e-6);
+    try std.testing.expectApproxEqAbs(1.5, lerped[2], 1e-6);
+
+    const bilerped = flatBilerpQuad(
+        .{ 0.0, 0.0, 0.0 },
+        .{ 2.0, 0.0, 0.0 },
+        .{ 2.0, 2.0, 0.0 },
+        .{ 0.0, 2.0, 0.0 },
+        0.5,
+        0.25,
+    );
+    try std.testing.expectApproxEqAbs(1.0, bilerped[0], 1e-6);
+    try std.testing.expectApproxEqAbs(0.5, bilerped[1], 1e-6);
+    try std.testing.expectApproxEqAbs(0.0, bilerped[2], 1e-6);
 }
 
 test "adjustRadius preserves a valid camera" {

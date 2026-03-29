@@ -1,6 +1,8 @@
 const std = @import("std");
 const zmath = @import("zmath");
 const canvas_api = zmath.render.canvas;
+const curved_canvas_renderer = zmath.render.curved_canvas;
+const curved_navigator_renderer = zmath.render.curved_navigator;
 const projection = zmath.render.projection;
 const curved = zmath.geometry.constant_curvature;
 
@@ -390,9 +392,18 @@ pub const App = struct {
             .hyperbolic => {
                 const chart_prism_vertices = hyperbolicPrismVertices(rotor);
                 const screen = curvedScreen(width, height, zoom);
-                shadeCurvedQuads(canvas, chart_prism_vertices[0..], hyperbolic_prism_side_faces[0..], self.camera.hyper, screen);
-                drawCurvedEdges(canvas, chart_prism_vertices[0..], hyperbolic_prism_edges[0..], self.camera.hyper, screen);
-                drawCurvedNavigator(canvas, chart_prism_vertices[0..], hyperbolic_prism_edges[0..], self.camera.hyper, width, height);
+                const chart_vertices = vec3ArrayFromVectors(chart_prism_vertices.len, chart_prism_vertices);
+                const mesh = curved_canvas_renderer.Mesh{
+                    .vertices = chart_vertices[0..],
+                    .faces = hyperbolic_prism_side_faces[0..],
+                    .edges = hyperbolic_prism_edges[0..],
+                };
+                curved_canvas_renderer.drawMesh(canvas, mesh, self.camera.hyper, screen, .{
+                    .face_fill_steps = face_fill_steps,
+                    .wrapped_face_fill_steps = spherical_wrapped_face_fill_steps,
+                    .face_tones = cube_face_colors[0..],
+                });
+                curved_navigator_renderer.drawCurvedNavigator(canvas, mesh, self.camera.hyper, width, height);
             },
             .spherical => {
                 const chart_cube_vertices = sphericalCubeChartVertices(
@@ -400,9 +411,18 @@ pub const App = struct {
                     self.camera.spherical.params,
                 );
                 const screen = curvedScreen(width, height, zoom);
-                shadeCurvedQuads(canvas, chart_cube_vertices[0..], cube_faces[0..], self.camera.spherical, screen);
-                drawCurvedEdges(canvas, chart_cube_vertices[0..], cube_edges[0..], self.camera.spherical, screen);
-                drawCurvedNavigator(canvas, chart_cube_vertices[0..], cube_edges[0..], self.camera.spherical, width, height);
+                const chart_vertices = vec3ArrayFromVectors(chart_cube_vertices.len, chart_cube_vertices);
+                const mesh = curved_canvas_renderer.Mesh{
+                    .vertices = chart_vertices[0..],
+                    .faces = cube_faces[0..],
+                    .edges = cube_edges[0..],
+                };
+                curved_canvas_renderer.drawMesh(canvas, mesh, self.camera.spherical, screen, .{
+                    .face_fill_steps = face_fill_steps,
+                    .wrapped_face_fill_steps = spherical_wrapped_face_fill_steps,
+                    .face_tones = cube_face_colors[0..],
+                });
+                curved_navigator_renderer.drawCurvedNavigator(canvas, mesh, self.camera.spherical, width, height);
             },
         }
 
@@ -635,6 +655,14 @@ fn vec3FromVector(v: h.Vector) curved.Vec3 {
     };
 }
 
+fn vec3ArrayFromVectors(comptime N: usize, vertices: [N]h.Vector) [N]curved.Vec3 {
+    var converted: [N]curved.Vec3 = undefined;
+    for (vertices, 0..) |vertex, i| {
+        converted[i] = vec3FromVector(vertex);
+    }
+    return converted;
+}
+
 fn bilerpQuad(a: h.Vector, b: h.Vector, c: h.Vector, d: h.Vector, u: f32, v: f32) h.Vector {
     const ab = a.scale(1.0 - u).add(b.scale(u));
     const dc = d.scale(1.0 - u).add(c.scale(u));
@@ -687,490 +715,6 @@ fn shadeEuclideanCube(
             }
         }
     }
-}
-
-fn shadeCurvedQuads(
-    canvas: *canvas_api.Canvas,
-    chart_vertices: []const h.Vector,
-    faces: []const [4]usize,
-    view: curved.View,
-    screen: curved.Screen,
-) void {
-    const fill_steps = curvedFaceFillSteps(view);
-    for (faces, 0..) |face, face_index| {
-        const a = chart_vertices[face[0]];
-        const b = chart_vertices[face[1]];
-        const c = chart_vertices[face[2]];
-        const d = chart_vertices[face[3]];
-        const shade = faceShade(gaCross(b.sub(a), d.sub(a)));
-        const tone = faceColor(face_index);
-        view.fillQuad(
-            canvas,
-            .{
-                vec3FromVector(a),
-                vec3FromVector(b),
-                vec3FromVector(c),
-                vec3FromVector(d),
-            },
-            screen,
-            .{ .steps = fill_steps, .shade = shade, .tone = tone },
-        );
-    }
-}
-
-fn curvedFaceFillSteps(view: curved.View) usize {
-    return if (view.metric == .spherical and view.projection == .wrapped)
-        spherical_wrapped_face_fill_steps
-    else
-        face_fill_steps;
-}
-
-const NavigatorAxes = struct {
-    horizontal: usize,
-    vertical: usize,
-};
-
-pub const SphericalMapProjection = enum {
-    stereographic,
-    gnomonic,
-};
-
-const NavigatorRect = struct {
-    x: usize,
-    y: usize,
-    width: usize,
-    height: usize,
-};
-
-fn drawNavigatorBackground(canvas: *canvas_api.Canvas, rect: NavigatorRect) void {
-    for (rect.y..rect.y + rect.height) |y| {
-        for (rect.x..rect.x + rect.width) |x| {
-            canvas.setFill(@floatFromInt(x), @floatFromInt(y), 1, 236, -1.0);
-        }
-    }
-}
-
-fn drawNavigatorFrame(canvas: *canvas_api.Canvas, rect: NavigatorRect) void {
-    const left = @as(f32, @floatFromInt(rect.x));
-    const right = @as(f32, @floatFromInt(rect.x + rect.width - 1));
-    const top = @as(f32, @floatFromInt(rect.y));
-    const bottom = @as(f32, @floatFromInt(rect.y + rect.height - 1));
-
-    canvas.drawLine(left, top, right, top, '#', 244);
-    canvas.drawLine(left, bottom, right, bottom, '#', 244);
-    canvas.drawLine(left, top, left, bottom, '#', 244);
-    canvas.drawLine(right, top, right, bottom, '#', 244);
-}
-
-fn drawNavigatorAxes(canvas: *canvas_api.Canvas, rect: NavigatorRect) void {
-    const center_x = @as(f32, @floatFromInt(rect.x + rect.width / 2));
-    const center_y = @as(f32, @floatFromInt(rect.y + rect.height / 2));
-    const left = @as(f32, @floatFromInt(rect.x + 1));
-    const right = @as(f32, @floatFromInt(rect.x + rect.width - 2));
-    const top = @as(f32, @floatFromInt(rect.y + 1));
-    const bottom = @as(f32, @floatFromInt(rect.y + rect.height - 2));
-
-    canvas.drawLine(left, center_y, right, center_y, '#', 239);
-    canvas.drawLine(center_x, top, center_x, bottom, '#', 239);
-}
-
-fn projectNavigatorPoint(rect: NavigatorRect, extent: f32, horizontal: f32, vertical: f32) [2]f32 {
-    const inner_left = @as(f32, @floatFromInt(rect.x + 1));
-    const inner_top = @as(f32, @floatFromInt(rect.y + 1));
-    const inner_width = @as(f32, @floatFromInt(rect.width - 2));
-    const inner_height = @as(f32, @floatFromInt(rect.height - 2));
-
-    return .{
-        inner_left + (horizontal / extent * 0.5 + 0.5) * inner_width,
-        inner_top + (0.5 - vertical / extent * 0.5) * inner_height,
-    };
-}
-
-fn drawNavigatorMarker(canvas: *canvas_api.Canvas, point: [2]f32, tone: u8) void {
-    canvas.drawLine(point[0] - 0.5, point[1], point[0] + 0.5, point[1], '#', tone);
-    canvas.drawLine(point[0], point[1] - 0.5, point[0], point[1] + 0.5, '#', tone);
-}
-
-fn sphericalSignedAmbient(view: curved.View, chart: curved.Vec3) ?curved.Vec4 {
-    var ambient = curved.embedPoint(.spherical, view.params, chart) orelse return null;
-    if (view.scene_sign < 0.0) {
-        ambient = .{ -ambient[0], -ambient[1], -ambient[2], -ambient[3] };
-    }
-    return ambient;
-}
-
-fn defaultSphericalMapCamera() curved.Camera {
-    return .{
-        .position = .{ 1.0, 0.0, 0.0, 0.0 },
-        .right = .{ 0.0, 1.0, 0.0, 0.0 },
-        .up = .{ 0.0, 0.0, 1.0, 0.0 },
-        .forward = .{ 0.0, 0.0, 0.0, 1.0 },
-    };
-}
-
-fn sphericalGroundOverviewCamera(view: curved.View) curved.Camera {
-    const basis = view.walkBasis() orelse return defaultSphericalMapCamera();
-    return .{
-        .position = view.camera.position,
-        .right = basis.right,
-        .up = basis.up,
-        .forward = basis.forward,
-    };
-}
-
-fn sphericalMapPoint(
-    map_camera: curved.Camera,
-    ambient: curved.Vec4,
-    projection_mode: SphericalMapProjection,
-) ?[2]f32 {
-    const model: curved.CameraModel = switch (projection_mode) {
-        .stereographic => .conformal,
-        .gnomonic => .linear,
-    };
-    const point = curved.modelPointForAmbientWithCamera(.spherical, map_camera, ambient, model) orelse return null;
-    return .{ point[0], point[2] };
-}
-
-fn sphericalOverviewFieldRadius(view: curved.View, projection_mode: SphericalMapProjection) f32 {
-    return switch (projection_mode) {
-        .stereographic => view.params.radius * (@as(f32, std.math.pi) * 0.5) * 0.98,
-        .gnomonic => view.params.radius * 1.10,
-    };
-}
-
-fn drawSphericalMapGeodesic(
-    canvas: *canvas_api.Canvas,
-    rect: NavigatorRect,
-    extent: f32,
-    view: curved.View,
-    map_camera: curved.Camera,
-    projection_mode: SphericalMapProjection,
-    a_chart: curved.Vec3,
-    b_chart: curved.Vec3,
-    tone: u8,
-) void {
-    var prev_point: ?[2]f32 = null;
-
-    for (0..25) |i| {
-        const t = @as(f32, @floatFromInt(i)) / 24.0;
-        const chart = curved.geodesicChartPoint(.spherical, view.params, a_chart, b_chart, t) orelse continue;
-        const ambient = sphericalSignedAmbient(view, chart) orelse continue;
-        const map_point = sphericalMapPoint(map_camera, ambient, projection_mode) orelse {
-            prev_point = null;
-            continue;
-        };
-        const point = projectNavigatorPoint(rect, extent, map_point[0], map_point[1]);
-        if (prev_point) |prev| {
-            canvas.drawLine(prev[0], prev[1], point[0], point[1], '#', tone);
-        }
-        prev_point = point;
-    }
-}
-
-fn drawSphericalGroundGridLine(
-    canvas: *canvas_api.Canvas,
-    rect: NavigatorRect,
-    extent: f32,
-    view: curved.View,
-    map_camera: curved.Camera,
-    projection_mode: SphericalMapProjection,
-    constant_lateral: bool,
-    fixed: f32,
-    field_radius: f32,
-    tone: u8,
-) void {
-    var prev_point: ?[2]f32 = null;
-
-    for (0..49) |i| {
-        const t = @as(f32, @floatFromInt(i)) / 48.0;
-        const sweep = (t * 2.0 - 1.0) * field_radius;
-        const lateral = if (constant_lateral) fixed else sweep;
-        const forward = if (constant_lateral) sweep else fixed;
-        if (lateral * lateral + forward * forward > field_radius * field_radius) {
-            prev_point = null;
-            continue;
-        }
-
-        const ambient = curved.ambientFromTangentBasisPoint(
-            .spherical,
-            view.params,
-            map_camera.position,
-            map_camera.right,
-            map_camera.forward,
-            lateral,
-            forward,
-        ) orelse {
-            prev_point = null;
-            continue;
-        };
-        const map_point = sphericalMapPoint(map_camera, ambient, projection_mode) orelse {
-            prev_point = null;
-            continue;
-        };
-        const point = projectNavigatorPoint(rect, extent, map_point[0], map_point[1]);
-        if (prev_point) |prev| {
-            canvas.drawLine(prev[0], prev[1], point[0], point[1], '#', tone);
-        }
-        prev_point = point;
-    }
-}
-
-fn drawSphericalGroundBoundary(
-    canvas: *canvas_api.Canvas,
-    rect: NavigatorRect,
-    extent: f32,
-    view: curved.View,
-    map_camera: curved.Camera,
-    projection_mode: SphericalMapProjection,
-    field_radius: f32,
-    tone: u8,
-) void {
-    var prev_point: ?[2]f32 = null;
-    for (0..65) |i| {
-        const t = @as(f32, @floatFromInt(i)) / 64.0;
-        const theta = t * @as(f32, std.math.pi) * 2.0;
-        const lateral = @cos(theta) * field_radius;
-        const forward = @sin(theta) * field_radius;
-        const ambient = curved.ambientFromTangentBasisPoint(
-            .spherical,
-            view.params,
-            map_camera.position,
-            map_camera.right,
-            map_camera.forward,
-            lateral,
-            forward,
-        ) orelse {
-            prev_point = null;
-            continue;
-        };
-        const map_point = sphericalMapPoint(map_camera, ambient, projection_mode) orelse {
-            prev_point = null;
-            continue;
-        };
-        const point = projectNavigatorPoint(rect, extent, map_point[0], map_point[1]);
-        if (prev_point) |prev| {
-            canvas.drawLine(prev[0], prev[1], point[0], point[1], '#', tone);
-        }
-        prev_point = point;
-    }
-}
-
-fn sphericalGroundMapExtent(
-    view: curved.View,
-    map_camera: curved.Camera,
-    chart_vertices: []const h.Vector,
-    projection_mode: SphericalMapProjection,
-    field_radius: f32,
-) f32 {
-    var extent: f32 = switch (projection_mode) {
-        .stereographic => 2.2,
-        .gnomonic => 1.2,
-    };
-
-    for (0..49) |i| {
-        const t = @as(f32, @floatFromInt(i)) / 48.0;
-        const theta = t * @as(f32, std.math.pi) * 2.0;
-        const lateral = @cos(theta) * field_radius;
-        const forward = @sin(theta) * field_radius;
-        const ambient = curved.ambientFromTangentBasisPoint(
-            .spherical,
-            view.params,
-            map_camera.position,
-            map_camera.right,
-            map_camera.forward,
-            lateral,
-            forward,
-        ) orelse continue;
-        const point = sphericalMapPoint(map_camera, ambient, projection_mode) orelse continue;
-        extent = @max(extent, @abs(point[0]) * 1.08);
-        extent = @max(extent, @abs(point[1]) * 1.08);
-    }
-
-    for (chart_vertices) |vertex| {
-        const ambient = sphericalSignedAmbient(view, vec3FromVector(vertex)) orelse continue;
-        const point = sphericalMapPoint(map_camera, ambient, projection_mode) orelse continue;
-        extent = @max(extent, @abs(point[0]) * 1.06);
-        extent = @max(extent, @abs(point[1]) * 1.06);
-    }
-
-    return extent;
-}
-
-fn drawSphericalGroundOverviewPanel(
-    canvas: *canvas_api.Canvas,
-    rect: NavigatorRect,
-    extent: f32,
-    view: curved.View,
-    chart_vertices: []const h.Vector,
-    edges: []const [2]usize,
-    map_camera: curved.Camera,
-    projection_mode: SphericalMapProjection,
-    field_radius: f32,
-) void {
-    drawNavigatorBackground(canvas, rect);
-    drawNavigatorFrame(canvas, rect);
-    drawNavigatorAxes(canvas, rect);
-
-    drawSphericalGroundBoundary(canvas, rect, extent, view, map_camera, projection_mode, field_radius, 238);
-
-    var line_index: i32 = -4;
-    while (line_index <= 4) : (line_index += 1) {
-        const line_t = @as(f32, @floatFromInt(line_index)) / 4.0;
-        const fixed = line_t * field_radius;
-        drawSphericalGroundGridLine(canvas, rect, extent, view, map_camera, projection_mode, true, fixed, field_radius, 238);
-        drawSphericalGroundGridLine(canvas, rect, extent, view, map_camera, projection_mode, false, fixed, field_radius, 239);
-    }
-
-    for (edges) |edge| {
-        drawSphericalMapGeodesic(
-            canvas,
-            rect,
-            extent,
-            view,
-            map_camera,
-            projection_mode,
-            vec3FromVector(chart_vertices[edge[0]]),
-            vec3FromVector(chart_vertices[edge[1]]),
-            81,
-        );
-    }
-
-    const eye_point = projectNavigatorPoint(rect, extent, 0.0, 0.0);
-    const heading_ambient = curved.ambientFromTangentBasisPoint(
-        .spherical,
-        view.params,
-        map_camera.position,
-        map_camera.right,
-        map_camera.forward,
-        0.0,
-        field_radius * 0.18,
-    ) orelse return;
-    const look_map = sphericalMapPoint(map_camera, heading_ambient, projection_mode) orelse return;
-    const look_point = projectNavigatorPoint(rect, extent, look_map[0], look_map[1]);
-    canvas.drawLine(eye_point[0], eye_point[1], look_point[0], look_point[1], '#', 253);
-    drawNavigatorMarker(canvas, look_point, 253);
-    drawNavigatorMarker(canvas, eye_point, 220);
-}
-
-fn navigatorExtent(chart_vertices: []const h.Vector, eye_chart: curved.Vec3, look_chart: curved.Vec3, metric: curved.Metric) f32 {
-    var extent: f32 = switch (metric) {
-        .hyperbolic => 0.38,
-        .elliptic, .spherical => 1.0,
-    };
-
-    for (chart_vertices) |vertex| {
-        const chart = vec3FromVector(vertex);
-        inline for (chart) |coord| {
-            extent = @max(extent, @abs(coord) * 1.15);
-        }
-    }
-
-    inline for (eye_chart) |coord| extent = @max(extent, @abs(coord) * 1.12);
-    inline for (look_chart) |coord| extent = @max(extent, @abs(coord) * 1.12);
-    return extent;
-}
-
-fn drawNavigatorGeodesic(
-    canvas: *canvas_api.Canvas,
-    rect: NavigatorRect,
-    extent: f32,
-    view: curved.View,
-    axes: NavigatorAxes,
-    a_chart: curved.Vec3,
-    b_chart: curved.Vec3,
-    tone: u8,
-) void {
-    var prev_point: ?[2]f32 = null;
-
-    for (0..19) |i| {
-        const t = @as(f32, @floatFromInt(i)) / 18.0;
-        const chart = curved.geodesicChartPoint(view.metric, view.params, a_chart, b_chart, t) orelse continue;
-        const point = projectNavigatorPoint(rect, extent, chart[axes.horizontal], chart[axes.vertical]);
-        if (prev_point) |prev| {
-            canvas.drawLine(prev[0], prev[1], point[0], point[1], '#', tone);
-        }
-        prev_point = point;
-    }
-}
-
-fn drawNavigatorPanel(
-    canvas: *canvas_api.Canvas,
-    rect: NavigatorRect,
-    extent: f32,
-    view: curved.View,
-    chart_vertices: []const h.Vector,
-    edges: []const [2]usize,
-    eye_chart: curved.Vec3,
-    look_chart: curved.Vec3,
-    axes: NavigatorAxes,
-) void {
-    drawNavigatorBackground(canvas, rect);
-    drawNavigatorFrame(canvas, rect);
-    drawNavigatorAxes(canvas, rect);
-
-    for (edges) |edge| {
-        drawNavigatorGeodesic(
-            canvas,
-            rect,
-            extent,
-            view,
-            axes,
-            vec3FromVector(chart_vertices[edge[0]]),
-            vec3FromVector(chart_vertices[edge[1]]),
-            81,
-        );
-    }
-
-    const eye_point = projectNavigatorPoint(rect, extent, eye_chart[axes.horizontal], eye_chart[axes.vertical]);
-    const look_point = projectNavigatorPoint(rect, extent, look_chart[axes.horizontal], look_chart[axes.vertical]);
-    canvas.drawLine(eye_point[0], eye_point[1], look_point[0], look_point[1], '#', 253);
-    drawNavigatorMarker(canvas, look_point, 253);
-    drawNavigatorMarker(canvas, eye_point, 220);
-}
-
-fn drawCurvedNavigator(
-    canvas: *canvas_api.Canvas,
-    chart_vertices: []const h.Vector,
-    edges: []const [2]usize,
-    view: curved.View,
-    width: usize,
-    height: usize,
-) void {
-    if (width < 54 or height < 26) return;
-
-    const panel_width = @min(@as(usize, 26), @max(@as(usize, 18), width / 4));
-    const panel_height = @min(@as(usize, 10), @max(@as(usize, 7), height / 5));
-    const margin: usize = 2;
-    const gap: usize = 2;
-    const total_height = panel_height *| 2 +| gap;
-    if (panel_width +| margin >= width or total_height +| margin *| 2 >= height) return;
-
-    const panel_x = width - panel_width - margin;
-    const top_y = margin;
-    const bottom_y = top_y + panel_height + gap;
-    const top_rect = NavigatorRect{ .x = panel_x, .y = top_y, .width = panel_width, .height = panel_height };
-    const bottom_rect = NavigatorRect{ .x = panel_x, .y = bottom_y, .width = panel_width, .height = panel_height };
-
-    const eye_chart = curved.chartCoords(view.metric, view.params, view.camera.position);
-    var look_probe = view.camera;
-    curved.moveForward(&look_probe, view.metric, view.params, @min(view.params.radius * 0.18, 0.18));
-    const look_chart = curved.chartCoords(view.metric, view.params, look_probe.position);
-
-    if (view.metric == .spherical) {
-        const map_camera = sphericalGroundOverviewCamera(view);
-        const stereo_radius = sphericalOverviewFieldRadius(view, .stereographic);
-        const gnomonic_radius = sphericalOverviewFieldRadius(view, .gnomonic);
-        const stereo_extent = sphericalGroundMapExtent(view, map_camera, chart_vertices, .stereographic, stereo_radius);
-        const gnomonic_extent = sphericalGroundMapExtent(view, map_camera, chart_vertices, .gnomonic, gnomonic_radius);
-
-        drawSphericalGroundOverviewPanel(canvas, top_rect, stereo_extent, view, chart_vertices, edges, map_camera, .stereographic, stereo_radius);
-        drawSphericalGroundOverviewPanel(canvas, bottom_rect, gnomonic_extent, view, chart_vertices, edges, map_camera, .gnomonic, gnomonic_radius);
-        return;
-    }
-
-    const extent = navigatorExtent(chart_vertices, eye_chart, look_chart, view.metric);
-    drawNavigatorPanel(canvas, top_rect, extent, view, chart_vertices, edges, eye_chart, look_chart, .{ .horizontal = 0, .vertical = 2 });
-    drawNavigatorPanel(canvas, bottom_rect, extent, view, chart_vertices, edges, eye_chart, look_chart, .{ .horizontal = 2, .vertical = 1 });
 }
 
 fn rotorFromGenerator(B: anytype) h.Rotor {
@@ -1804,7 +1348,6 @@ test "spherical walk backward movement evolves smoothly across chart wrap" {
     const pos_dot = initial_pos[0] * final_pos[0] + initial_pos[1] * final_pos[1] +
         initial_pos[2] * final_pos[2] + initial_pos[3] * final_pos[3];
     try std.testing.expect(@abs(pos_dot) < 0.99);
-
 }
 
 test "spherical backward walk step keeps position continuous in locked walk mode" {

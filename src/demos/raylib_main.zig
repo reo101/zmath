@@ -1,6 +1,7 @@
 const std = @import("std");
 const zmath = @import("zmath");
 const canvas_api = zmath.render.canvas;
+const curved_navigator = zmath.render.curved_navigator;
 const projection = zmath.render.projection;
 const sdf = zmath.render.sdf;
 const curved = zmath.geometry.constant_curvature;
@@ -947,14 +948,6 @@ fn vec3FromVector(v: demo.H.Vector) curved.Vec3 {
     };
 }
 
-fn lerpVec3(a: curved.Vec3, b: curved.Vec3, t: f32) curved.Vec3 {
-    return .{
-        a[0] * (1.0 - t) + b[0] * t,
-        a[1] * (1.0 - t) + b[1] * t,
-        a[2] * (1.0 - t) + b[2] * t,
-    };
-}
-
 fn isSphericalGnomonic(view: curved.View) bool {
     return view.metric == .spherical and view.projection == .gnomonic;
 }
@@ -989,25 +982,10 @@ fn curvedGroundSubdivideDepth(world_view: curved.View, render_view: curved.View)
         native_ground_subdivide_depth;
 }
 
-fn scaleVec4(v: curved.Vec4, s: f32) curved.Vec4 {
-    return .{ v[0] * s, v[1] * s, v[2] * s, v[3] * s };
-}
-
-fn addVec4(a: curved.Vec4, b: curved.Vec4) curved.Vec4 {
-    return .{ a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3] };
-}
-
-fn metricDot4(metric: curved.Metric, a: curved.Vec4, b: curved.Vec4) f32 {
-    return switch (metric) {
-        .hyperbolic => -a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3],
-        .elliptic, .spherical => a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3],
-    };
-}
-
 fn signedAmbientForView(view: curved.View, ambient_input: curved.Vec4) curved.Vec4 {
     var ambient = ambient_input;
     if (view.metric == .spherical and view.scene_sign < 0.0) {
-        ambient = scaleVec4(ambient, -1.0);
+        ambient = curved.ambientScale(view.metric, ambient, -1.0);
     }
     return ambient;
 }
@@ -1095,10 +1073,10 @@ fn nativeSphericalConformalSampleForPass(
 fn signedGroundBasisForView(view: curved.View, basis: GroundBasis) GroundBasis {
     if (view.metric != .spherical or view.scene_sign >= 0.0) return basis;
     return .{
-        .origin = scaleVec4(basis.origin, -1.0),
-        .right = scaleVec4(basis.right, -1.0),
-        .forward = scaleVec4(basis.forward, -1.0),
-        .up = scaleVec4(basis.up, -1.0),
+        .origin = curved.ambientScale(view.metric, basis.origin, -1.0),
+        .right = curved.ambientScale(view.metric, basis.right, -1.0),
+        .forward = curved.ambientScale(view.metric, basis.forward, -1.0),
+        .up = curved.ambientScale(view.metric, basis.up, -1.0),
     };
 }
 
@@ -1155,13 +1133,18 @@ fn sphericalGroundHitForScreenPoint(
 
     const basis = signedGroundBasisForView(view, basis_input);
     const local_dir = inverseGroundScreenDirection(view.projection, screen, point) orelse return null;
-    const direction = addVec4(
-        addVec4(scaleVec4(view.camera.right, local_dir[0]), scaleVec4(view.camera.up, local_dir[1])),
-        scaleVec4(view.camera.forward, local_dir[2]),
+    const direction = curved.ambientAdd(
+        .spherical,
+        curved.ambientAdd(
+            .spherical,
+            curved.ambientScale(.spherical, view.camera.right, local_dir[0]),
+            curved.ambientScale(.spherical, view.camera.up, local_dir[1]),
+        ),
+        curved.ambientScale(.spherical, view.camera.forward, local_dir[2]),
     );
 
-    const a = metricDot4(.spherical, view.camera.position, basis.up);
-    const b = metricDot4(.spherical, direction, basis.up);
+    const a = curved.ambientDot(.spherical, view.camera.position, basis.up);
+    const b = curved.ambientDot(.spherical, direction, basis.up);
     if (@abs(a) <= 1e-6 and @abs(b) <= 1e-6) return null;
 
     var theta = std.math.atan2(-a, b);
@@ -1169,13 +1152,14 @@ fn sphericalGroundHitForScreenPoint(
     if (theta > @as(f32, std.math.pi)) theta -= @as(f32, std.math.pi);
     if (theta <= 1e-4) return null;
 
-    const ambient = addVec4(
-        scaleVec4(view.camera.position, @cos(theta)),
-        scaleVec4(direction, @sin(theta)),
+    const ambient = curved.ambientAdd(
+        .spherical,
+        curved.ambientScale(.spherical, view.camera.position, @cos(theta)),
+        curved.ambientScale(.spherical, direction, @sin(theta)),
     );
-    const origin_coord = metricDot4(.spherical, ambient, basis.origin);
-    const lateral_coord = metricDot4(.spherical, ambient, basis.right);
-    const forward_coord = metricDot4(.spherical, ambient, basis.forward);
+    const origin_coord = curved.ambientDot(.spherical, ambient, basis.origin);
+    const lateral_coord = curved.ambientDot(.spherical, ambient, basis.right);
+    const forward_coord = curved.ambientDot(.spherical, ambient, basis.forward);
     const planar_norm = @sqrt(lateral_coord * lateral_coord + forward_coord * forward_coord);
     if (planar_norm <= 1e-6) {
         return .{
@@ -1290,9 +1274,9 @@ fn rasterizeSphericalGroundFullscreen(
 }
 
 fn bilerpCurvedQuad(a: curved.Vec3, b: curved.Vec3, c: curved.Vec3, d: curved.Vec3, u: f32, v: f32) curved.Vec3 {
-    const ab = lerpVec3(a, b, u);
-    const dc = lerpVec3(d, c, u);
-    return lerpVec3(ab, dc, v);
+    const ab = curved.flatLerp3(a, b, u);
+    const dc = curved.flatLerp3(d, c, u);
+    return curved.flatLerp3(ab, dc, v);
 }
 
 fn mapSphericalPassSample(
@@ -2125,10 +2109,10 @@ fn appendSphericalLocalCellRecursive(
     }
 
     if (depth > 0) {
-        const top_mid = lerpVec3(quad[0], quad[1], 0.5);
-        const right_mid = lerpVec3(quad[1], quad[2], 0.5);
-        const bottom_mid = lerpVec3(quad[3], quad[2], 0.5);
-        const left_mid = lerpVec3(quad[0], quad[3], 0.5);
+        const top_mid = curved.flatLerp3(quad[0], quad[1], 0.5);
+        const right_mid = curved.flatLerp3(quad[1], quad[2], 0.5);
+        const bottom_mid = curved.flatLerp3(quad[3], quad[2], 0.5);
+        const left_mid = curved.flatLerp3(quad[0], quad[3], 0.5);
 
         appendSphericalLocalCellRecursive(base_view, render_view, render_pass, screen, .{ quad[0], top_mid, center_local, left_mid }, face_index, depth - 1, far_distance, cells, cell_count);
         appendSphericalLocalCellRecursive(base_view, render_view, render_pass, screen, .{ top_mid, quad[1], right_mid, center_local }, face_index, depth - 1, far_distance, cells, cell_count);
@@ -2279,7 +2263,7 @@ fn drawSphericalLocalSegment(
 
     for (0..edge_steps + 1) |i| {
         const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(edge_steps));
-        const sample = sampleSphericalLocalPoint(base_view, render_view, render_pass, lerpVec3(a, b, t), screen);
+        const sample = sampleSphericalLocalPoint(base_view, render_view, render_pass, curved.flatLerp3(a, b, t), screen);
         if (sample.status != .visible or sample.projected == null) {
             prev_point = null;
             continue;
@@ -2871,7 +2855,7 @@ fn sphericalNativeOverviewCamera(view: curved.View) curved.Camera {
     };
 }
 
-fn sphericalNativeOverviewRadius(view: curved.View, projection_mode: demo.SphericalMapProjection) f32 {
+fn sphericalNativeOverviewRadius(view: curved.View, projection_mode: curved_navigator.SphericalMapProjection) f32 {
     return switch (projection_mode) {
         .stereographic => view.params.radius * (@as(f32, std.math.pi) * 0.5) * 0.98,
         .gnomonic => view.params.radius * 0.72,
@@ -2881,7 +2865,7 @@ fn sphericalNativeOverviewRadius(view: curved.View, projection_mode: demo.Spheri
 fn sphericalNativeMapPoint(
     map_camera: curved.Camera,
     ambient: curved.Vec4,
-    projection_mode: demo.SphericalMapProjection,
+    projection_mode: curved_navigator.SphericalMapProjection,
 ) ?[2]f32 {
     const model: curved.CameraModel = switch (projection_mode) {
         .stereographic => .conformal,
@@ -2894,7 +2878,7 @@ fn sphericalNativeMapPoint(
 fn sphericalNativeMapExtent(
     view: curved.View,
     map_camera: curved.Camera,
-    projection_mode: demo.SphericalMapProjection,
+    projection_mode: curved_navigator.SphericalMapProjection,
     field_radius: f32,
 ) f32 {
     var extent: f32 = switch (projection_mode) {
@@ -2929,7 +2913,7 @@ fn drawNativeSphericalGroundGridLine(
     extent: f32,
     view: curved.View,
     map_camera: curved.Camera,
-    projection_mode: demo.SphericalMapProjection,
+    projection_mode: curved_navigator.SphericalMapProjection,
     constant_lateral: bool,
     fixed: f32,
     field_radius: f32,
@@ -2980,7 +2964,7 @@ fn drawNativeSphericalGroundBoundary(
     extent: f32,
     view: curved.View,
     map_camera: curved.Camera,
-    projection_mode: demo.SphericalMapProjection,
+    projection_mode: curved_navigator.SphericalMapProjection,
     field_radius: f32,
     color: rl.Color,
 ) void {
@@ -3021,7 +3005,7 @@ fn drawNativeSphericalLocalEdge(
     extent: f32,
     view: curved.View,
     map_camera: curved.Camera,
-    projection_mode: demo.SphericalMapProjection,
+    projection_mode: curved_navigator.SphericalMapProjection,
     a_local: curved.Vec3,
     b_local: curved.Vec3,
     color: rl.Color,
@@ -3029,7 +3013,7 @@ fn drawNativeSphericalLocalEdge(
     var prev: ?rl.Vector2 = null;
     for (0..9) |i| {
         const t = @as(f32, @floatFromInt(i)) / 8.0;
-        const local = lerpVec3(a_local, b_local, t);
+        const local = curved.flatLerp3(a_local, b_local, t);
         const ambient = signedAmbientForView(view, demo.sphericalDemoAmbientPoint(view.params, local));
         const map_point = sphericalNativeMapPoint(map_camera, ambient, projection_mode) orelse {
             prev = null;
@@ -3053,7 +3037,7 @@ fn drawNativeSphericalNavigatorPanel(
     view: curved.View,
     local_vertices: []const demo.H.Vector,
     edges: []const [2]usize,
-    projection_mode: demo.SphericalMapProjection,
+    projection_mode: curved_navigator.SphericalMapProjection,
 ) void {
     const map_camera = sphericalNativeOverviewCamera(view);
     const field_radius = sphericalNativeOverviewRadius(view, projection_mode);
