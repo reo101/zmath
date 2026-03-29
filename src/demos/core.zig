@@ -177,16 +177,16 @@ pub const CameraState = struct {
                 default_hyperbolic_params,
                 .gnomonic,
                 .{ .near = hyperbolic_near_distance, .far = hyperbolic_far_distance },
-                .{ 0.0, 0.0, -default_hyperbolic_params.radius * 0.78 },
-                .{ 0.0, 0.0, 0.0 },
+                curved.vec3(0.0, 0.0, -default_hyperbolic_params.radius * 0.78),
+                curved.vec3(0.0, 0.0, 0.0),
             ),
             .spherical = try curved.View.init(
                 .spherical,
                 default_spherical_params,
                 .stereographic,
                 .{ .near = spherical_near_distance, .far = spherical_far_distance },
-                .{ 0.0, 0.0, -0.82 },
-                .{ 0.0, 0.0, 0.0 },
+                curved.vec3(0.0, 0.0, -0.82),
+                curved.vec3(0.0, 0.0, 0.0),
             ),
         };
     }
@@ -537,7 +537,8 @@ fn gaCross(a: h.Vector, b: h.Vector) h.Vector {
 }
 
 fn debugPrintVec3(name: []const u8, v: curved.Vec3) void {
-    std.debug.print("{s}=.{{ {d:.6}, {d:.6}, {d:.6} }}\n", .{ name, v[0], v[1], v[2] });
+    const coords = curved.vec3Coords(v);
+    std.debug.print("{s}=.{{ {d:.6}, {d:.6}, {d:.6} }}\n", .{ name, coords[0], coords[1], coords[2] });
 }
 
 fn debugPrintVec4(name: []const u8, v: curved.Vec4) void {
@@ -648,11 +649,11 @@ pub fn euclideanCameraBasis(camera: CameraState) EuclideanCameraBasis {
 }
 
 fn vec3FromVector(v: h.Vector) curved.Vec3 {
-    return .{
-        v.coeffNamed("e1"),
-        v.coeffNamed("e2"),
-        v.coeffNamed("e3"),
-    };
+    return curved.vec3(v.coeffNamed("e1"), v.coeffNamed("e2"), v.coeffNamed("e3"));
+}
+
+fn vectorFromVec3(v: curved.Vec3) h.Vector {
+    return h.Vector.init(curved.vec3Coords(v));
 }
 
 fn vec3ArrayFromVectors(comptime N: usize, vertices: [N]h.Vector) [N]curved.Vec3 {
@@ -1107,7 +1108,7 @@ fn animateSphericalCamera(camera: *CameraState, angle: f32, delta: f32) void {
 }
 
 fn vec3Length(v: curved.Vec3) f32 {
-    return h.Vector.init(v).magnitude();
+    return v.magnitude();
 }
 
 fn curvatureTargetForMode(mode: DemoMode) CurvatureTarget {
@@ -1257,7 +1258,7 @@ fn sphericalCubeChartVertices(local_vertices: [unit_cube_vertices.len]h.Vector, 
     var chart_vertices: [unit_cube_vertices.len]h.Vector = undefined;
     for (local_vertices, 0..) |vertex, i| {
         const ambient = sphericalDemoAmbientPoint(params, vec3FromVector(vertex));
-        chart_vertices[i] = h.Vector.init(curved.chartCoords(.spherical, params, ambient));
+        chart_vertices[i] = vectorFromVec3(curved.chartCoords(.spherical, params, ambient));
     }
     return chart_vertices;
 }
@@ -1292,7 +1293,7 @@ test "flat modes report curvature as unavailable" {
 test "hyperbolic curvature adjustment changes the demo probe and radius floor" {
     var camera = try CameraState.init();
     const screen = curvedScreen(160, 90, camera.hyper.params.angular_zoom);
-    const probe = curved.Vec3{ hyperbolic_prism_chart_radius, 0.0, hyperbolic_prism_half_depth };
+    const probe = curved.vec3(hyperbolic_prism_chart_radius, 0.0, hyperbolic_prism_half_depth);
     const before = camera.hyper.sampleProjectedPoint(probe, screen);
     try std.testing.expectEqual(curved.SampleStatus.visible, before.status);
 

@@ -4,9 +4,6 @@ const projection = @import("../render/projection.zig");
 const hpga = @import("../flavours/hpga.zig");
 const epga = @import("../flavours/epga.zig");
 
-pub const Vec3 = [3]f32;
-pub const Vec4 = [4]f32;
-
 pub const Metric = enum { hyperbolic, elliptic, spherical };
 
 pub const ChartModel = enum {
@@ -98,9 +95,13 @@ const hyper_ambient_naming = ga.SignedBladeNamingOptions.withBasisSpans(ga.Basis
 const round_ambient_naming = ga.SignedBladeNamingOptions.withBasisSpans(ga.BasisIndexSpans.init(.{
     .positive = .range(0, 3),
 }));
+const Flat3 = ga.Algebra(.euclidean(3)).Instantiate(f32);
+
+pub const Vec3 = Flat3.Vector;
+pub const Vec4 = [4]f32;
+
 const HyperAmbient = ga.AlgebraWithNamingOptions(.{ .p = 3, .q = 1 }, hyper_ambient_naming).Instantiate(f32);
 const RoundAmbient = ga.AlgebraWithNamingOptions(.{ .p = 4 }, round_ambient_naming).Instantiate(f32);
-const Flat3 = ga.Algebra(.euclidean(3)).Instantiate(f32);
 
 pub const SphericalRenderPass = enum { near, far };
 
@@ -110,6 +111,30 @@ const SphericalPassSelection = struct {
     pass: SphericalRenderPass,
     near_distance: f32,
 };
+
+pub fn vec3(x: f32, y: f32, z: f32) Vec3 {
+    return Vec3.init(.{ x, y, z });
+}
+
+pub fn vec3x(v: Vec3) f32 {
+    return v.coeffNamed("e1");
+}
+
+pub fn vec3y(v: Vec3) f32 {
+    return v.coeffNamed("e2");
+}
+
+pub fn vec3z(v: Vec3) f32 {
+    return v.coeffNamed("e3");
+}
+
+pub fn vec3Coords(v: Vec3) [3]f32 {
+    return .{ vec3x(v), vec3y(v), vec3z(v) };
+}
+
+pub fn coerceVec3(value: anytype) Vec3 {
+    return if (@TypeOf(value) == Vec3) value else Vec3.init(value);
+}
 
 fn sphericalUsesMultipass(projection_mode: projection.DirectionProjection) bool {
     return switch (projection_mode) {
@@ -131,15 +156,15 @@ pub const View = struct {
         params: Params,
         projection_mode: projection.DirectionProjection,
         clip: DistanceClip,
-        eye_chart: Vec3,
-        target_chart: Vec3,
+        eye_chart: anytype,
+        target_chart: anytype,
     ) CameraError!View {
         return .{
             .metric = metric,
             .params = params,
             .projection = projection_mode,
             .clip = clip,
-            .camera = try initCamera(metric, params, eye_chart, target_chart),
+            .camera = try initCamera(metric, params, coerceVec3(eye_chart), coerceVec3(target_chart)),
             .scene_sign = 1.0,
         };
     }
@@ -348,7 +373,7 @@ pub const View = struct {
         return if (self.metric == .spherical) (@as(f32, std.math.pi) * self.params.radius) else self.clip.far;
     }
 
-    fn sceneAmbientPoint(self: View, chart: Vec3) ?Vec4 {
+    fn sceneAmbientPoint(self: View, chart: anytype) ?Vec4 {
         var ambient = embedPoint(self.metric, self.params, chart) orelse return null;
         if (self.metric == .spherical and self.scene_sign < 0.0) {
             ambient = scale4(self.metric, ambient, -1.0);
@@ -356,7 +381,7 @@ pub const View = struct {
         return ambient;
     }
 
-    pub fn sampleProjectedPoint(self: View, chart: Vec3, screen: Screen) ProjectedSample {
+    pub fn sampleProjectedPoint(self: View, chart: anytype, screen: Screen) ProjectedSample {
         const ambient = self.sceneAmbientPoint(chart) orelse return .{};
         return sampleProjectedAmbientPoint(self, ambient, screen);
     }
@@ -369,7 +394,7 @@ pub const View = struct {
         return sampleProjectedAmbientPoint(self, ambient, screen);
     }
 
-    pub fn sampleProjectedPointForSphericalPass(self: View, pass: SphericalRenderPass, chart: Vec3, screen: Screen) ProjectedSample {
+    pub fn sampleProjectedPointForSphericalPass(self: View, pass: SphericalRenderPass, chart: anytype, screen: Screen) ProjectedSample {
         const ambient = self.sceneAmbientPoint(chart) orelse return .{};
         return sampleProjectedAmbientForSphericalPass(pass, ambient, screen);
     }
@@ -424,7 +449,7 @@ pub const View = struct {
         };
     }
 
-    pub fn cameraModelPoint(self: View, chart: Vec3, model: CameraModel) ?Vec3 {
+    pub fn cameraModelPoint(self: View, chart: anytype, model: CameraModel) ?Vec3 {
         const ambient = self.sceneAmbientPoint(chart) orelse return null;
         return modelPointForAmbient(self.metric, self.camera, ambient, model);
     }
@@ -473,11 +498,7 @@ fn coordsFromRoundAmbient(v: RoundAmbient.Vector) Vec4 {
 }
 
 fn coordsFromFlatVector(v: Flat3.Vector) Vec3 {
-    return .{
-        v.coeffNamed("e1"),
-        v.coeffNamed("e2"),
-        v.coeffNamed("e3"),
-    };
+    return v;
 }
 
 pub fn ambientAdd(metric: Metric, a: Vec4, b: Vec4) Vec4 {
@@ -496,11 +517,13 @@ pub fn ambientDot(metric: Metric, a: Vec4, b: Vec4) f32 {
     return metricDot(metric, a, b);
 }
 
-pub fn flatLerp3(a: Vec3, b: Vec3, t: f32) Vec3 {
-    return coordsFromFlatVector(flatVector(a).scale(1.0 - t).add(flatVector(b).scale(t)));
+pub fn flatLerp3(a_input: anytype, b_input: anytype, t: f32) Vec3 {
+    const a = coerceVec3(a_input);
+    const b = coerceVec3(b_input);
+    return a.scale(1.0 - t).add(b.scale(t));
 }
 
-pub fn flatBilerpQuad(a: Vec3, b: Vec3, c: Vec3, d: Vec3, u: f32, v: f32) Vec3 {
+pub fn flatBilerpQuad(a: anytype, b: anytype, c: anytype, d: anytype, u: f32, v: f32) Vec3 {
     const ab = flatLerp3(a, b, u);
     const dc = flatLerp3(d, c, u);
     return flatLerp3(ab, dc, v);
@@ -528,7 +551,7 @@ fn scale4(metric: Metric, v: Vec4, s: f32) Vec4 {
 }
 
 fn flatVector(point: Vec3) Flat3.Vector {
-    return Flat3.Vector.init(point);
+    return point;
 }
 
 fn chartScale(params: Params) f32 {
@@ -551,34 +574,36 @@ fn hemisphereDistance(params: Params) f32 {
     return maxSphericalDistance(params) * 0.5;
 }
 
-pub fn sphericalAmbientFromLocalPoint(params: Params, local: Vec3) Vec4 {
-    const local_radius = flatVector(local).magnitude();
+pub fn sphericalAmbientFromLocalPoint(params: Params, local_input: anytype) Vec4 {
+    const local = coerceVec3(local_input);
+    const local_radius = local.magnitude();
     if (local_radius <= 1e-6) return .{ 1.0, 0.0, 0.0, 0.0 };
 
     const theta = local_radius / params.radius;
     const spatial_scale = @sin(theta) / local_radius;
     return .{
         @cos(theta),
-        local[0] * spatial_scale,
-        local[1] * spatial_scale,
-        local[2] * spatial_scale,
+        vec3x(local) * spatial_scale,
+        vec3y(local) * spatial_scale,
+        vec3z(local) * spatial_scale,
     };
 }
 
-pub fn sphericalAmbientFromGroundHeightPoint(params: Params, local: Vec3) Vec4 {
+pub fn sphericalAmbientFromGroundHeightPoint(params: Params, local_input: anytype) Vec4 {
+    const local = coerceVec3(local_input);
     const base = ambientFromTangentBasisPoint(
         .spherical,
         params,
         .{ 1.0, 0.0, 0.0, 0.0 },
         .{ 0.0, 1.0, 0.0, 0.0 },
         .{ 0.0, 0.0, 0.0, 1.0 },
-        local[0],
-        local[2],
+        vec3x(local),
+        vec3z(local),
     ) orelse return .{ 1.0, 0.0, 0.0, 0.0 };
-    if (@abs(local[1]) <= 1e-6) return base;
+    if (@abs(vec3y(local)) <= 1e-6) return base;
 
     const up = worldUpAt(.spherical, base) orelse return base;
-    const normalized_height = local[1] / params.radius;
+    const normalized_height = vec3y(local) / params.radius;
     return normalizeAmbient(.spherical, add4(
         .spherical,
         scale4(.spherical, base, @cos(normalized_height)),
@@ -795,19 +820,16 @@ fn orthonormalCandidate(metric: Metric, position: Vec4, candidate: Vec4, refs: [
 // https://arxiv.org/abs/1310.2713
 // and Gunn, "Geometry in the Hyperbolic Plane and Beyond"
 // https://arxiv.org/pdf/1602.08562
-pub fn embedPoint(metric: Metric, params: Params, chart: Vec3) ?Vec4 {
+pub fn embedPoint(metric: Metric, params: Params, chart_input: anytype) ?Vec4 {
+    const chart = coerceVec3(chart_input);
     const scale = chartScale(params);
-    const scaled = Vec3{
-        chart[0] / scale,
-        chart[1] / scale,
-        chart[2] / scale,
-    };
-    const r2 = scaled[0] * scaled[0] + scaled[1] * scaled[1] + scaled[2] * scaled[2];
+    const scaled = vec3(vec3x(chart) / scale, vec3y(chart) / scale, vec3z(chart) / scale);
+    const r2 = scaled.scalarProduct(scaled);
 
     return switch (metric) {
         .hyperbolic => switch (params.chart_model) {
             .projective => {
-                const point = hpga.Point.proper(scaled[0], scaled[1], scaled[2]) orelse return null;
+                const point = hpga.Point.proper(vec3x(scaled), vec3y(scaled), vec3z(scaled)) orelse return null;
                 return hpga.ambientCoords(point);
             },
             // Hyperbolica devlog #3 uses the conformal Poincare ball internally.
@@ -817,14 +839,14 @@ pub fn embedPoint(metric: Metric, params: Params, chart: Vec3) ?Vec4 {
                 const denom = 1.0 - r2;
                 return .{
                     (1.0 + r2) / denom,
-                    2.0 * scaled[0] / denom,
-                    2.0 * scaled[1] / denom,
-                    2.0 * scaled[2] / denom,
+                    2.0 * vec3x(scaled) / denom,
+                    2.0 * vec3y(scaled) / denom,
+                    2.0 * vec3z(scaled) / denom,
                 };
             },
         },
         .elliptic, .spherical => switch (params.chart_model) {
-            .projective => epga.ambientCoords(epga.Point.proper(scaled[0], scaled[1], scaled[2])),
+            .projective => epga.ambientCoords(epga.Point.proper(vec3x(scaled), vec3y(scaled), vec3z(scaled))),
             // Hyperbolica devlogs #2 and #3 treat spherical space through the
             // conformal stereographic chart so the far side can wrap cleanly.
             // https://www.youtube.com/watch?v=yY9GAyJtuJ0
@@ -833,9 +855,9 @@ pub fn embedPoint(metric: Metric, params: Params, chart: Vec3) ?Vec4 {
                 const denom = 1.0 + r2;
                 return .{
                     (1.0 - r2) / denom,
-                    2.0 * scaled[0] / denom,
-                    2.0 * scaled[1] / denom,
-                    2.0 * scaled[2] / denom,
+                    2.0 * vec3x(scaled) / denom,
+                    2.0 * vec3y(scaled) / denom,
+                    2.0 * vec3z(scaled) / denom,
                 };
             },
         },
@@ -852,19 +874,11 @@ pub fn chartCoords(metric: Metric, params: Params, ambient: Vec4) Vec3 {
     return switch (params.chart_model) {
         .projective => {
             const inv_w = scale / safeDivDenom(point[0]);
-            return .{
-                point[1] * inv_w,
-                point[2] * inv_w,
-                point[3] * inv_w,
-            };
+            return vec3(point[1] * inv_w, point[2] * inv_w, point[3] * inv_w);
         },
         .conformal => {
             const inv = scale / safeDivDenom(1.0 + point[0]);
-            return .{
-                point[1] * inv,
-                point[2] * inv,
-                point[3] * inv,
-            };
+            return vec3(point[1] * inv, point[2] * inv, point[3] * inv);
         },
     };
 }
@@ -928,7 +942,7 @@ fn geodesicAmbientPoint(metric: Metric, a: Vec4, b_input: Vec4, t: f32) ?Vec4 {
 // References:
 // https://arxiv.org/abs/1310.2713
 // https://arxiv.org/pdf/1602.08562
-pub fn geodesicChartPoint(metric: Metric, params: Params, a_chart: Vec3, b_chart: Vec3, t: f32) ?Vec3 {
+pub fn geodesicChartPoint(metric: Metric, params: Params, a_chart: anytype, b_chart: anytype, t: f32) ?Vec3 {
     const a = embedPoint(metric, params, a_chart) orelse return null;
     const b = embedPoint(metric, params, b_chart) orelse return null;
     const ambient = geodesicAmbientPoint(metric, a, b, t) orelse return null;
@@ -971,11 +985,11 @@ fn relativeCoords(metric: Metric, camera: Camera, ambient: Vec4) RelativeCoords 
 }
 
 fn relativeSpatialLength(relative: RelativeCoords) f32 {
-    return flatVector(.{ relative.x, relative.y, relative.z }).magnitude();
+    return vec3(relative.x, relative.y, relative.z).magnitude();
 }
 
 fn modelRadius(point: Vec3) f32 {
-    return flatVector(point).magnitude();
+    return point.magnitude();
 }
 
 fn sampleModelPoint(metric: Metric, projection_mode: projection.DirectionProjection, params: Params, model_point: Vec3) ?Sample {
@@ -1000,9 +1014,9 @@ fn sampleModelPoint(metric: Metric, projection_mode: projection.DirectionProject
     const spatial_norm = @max(radius, 1e-6);
     return .{
         .distance = distance,
-        .x_dir = model_point[0] / spatial_norm,
-        .y_dir = model_point[1] / spatial_norm,
-        .z_dir = model_point[2] / spatial_norm,
+        .x_dir = vec3x(model_point) / spatial_norm,
+        .y_dir = vec3y(model_point) / spatial_norm,
+        .z_dir = vec3z(model_point) / spatial_norm,
     };
 }
 
@@ -1018,9 +1032,9 @@ pub fn sampleProjectedModelPoint(
     const projected = switch (cameraModelForRender(metric, projection_mode) orelse return .{}) {
         .linear => projection.projectDirectionWith(
             projection_mode,
-            model_point[0],
-            model_point[1],
-            model_point[2],
+            vec3x(model_point),
+            vec3y(model_point),
+            vec3z(model_point),
             screen.width,
             screen.height,
             screen.zoom,
@@ -1029,7 +1043,7 @@ pub fn sampleProjectedModelPoint(
     };
     return .{
         .distance = point_sample.distance,
-        .render_depth = model_point[2],
+        .render_depth = vec3z(model_point),
         .projected = projected,
         .status = sampleStatus(point_sample.distance, clip, projected),
     };
@@ -1042,8 +1056,8 @@ fn projectConformalModelPoint(
     zoom: f32,
 ) ?[2]f32 {
     const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
-    const x = (model_point[0] * zoom / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) * 0.5);
-    const y = (1.0 - model_point[1] * zoom) * (@as(f32, @floatFromInt(canvas_height)) * 0.5);
+    const x = (vec3x(model_point) * zoom / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) * 0.5);
+    const y = (1.0 - vec3y(model_point) * zoom) * (@as(f32, @floatFromInt(canvas_height)) * 0.5);
     const limit = @as(f32, @floatFromInt(@max(canvas_width, canvas_height))) * 4.0;
     if (x < -limit or x > @as(f32, @floatFromInt(canvas_width)) + limit) return null;
     if (y < -limit or y > @as(f32, @floatFromInt(canvas_height)) + limit) return null;
@@ -1056,7 +1070,9 @@ fn reorthonormalize(metric: Metric, camera: *Camera) void {
     camera.up = orthonormalCandidate(metric, camera.position, camera.up, &.{ camera.forward, camera.right }) orelse camera.up;
 }
 
-pub fn initCamera(metric: Metric, params: Params, eye_chart: Vec3, target_chart: Vec3) CameraError!Camera {
+pub fn initCamera(metric: Metric, params: Params, eye_chart_input: anytype, target_chart_input: anytype) CameraError!Camera {
+    const eye_chart = coerceVec3(eye_chart_input);
+    const target_chart = coerceVec3(target_chart_input);
     const position = embedPoint(metric, params, eye_chart) orelse return error.InvalidChartPoint;
     const target = embedPoint(metric, params, target_chart) orelse return error.InvalidChartPoint;
     const forward = geodesicDirection(metric, position, target) orelse return error.DegenerateDirection;
@@ -1258,7 +1274,7 @@ fn sampleAmbientPoint(metric: Metric, params: Params, camera: Camera, ambient: V
     };
 }
 
-pub fn samplePoint(metric: Metric, params: Params, camera: Camera, chart: Vec3) ?Sample {
+pub fn samplePoint(metric: Metric, params: Params, camera: Camera, chart: anytype) ?Sample {
     const ambient = embedPoint(metric, params, chart) orelse return null;
     return sampleAmbientPoint(metric, params, camera, ambient);
 }
@@ -1277,11 +1293,7 @@ fn modelPointForAmbient(metric: Metric, camera: Camera, ambient: Vec4, model: Ca
         .conformal => 1.0 + relative.w,
     };
     if (@abs(denom) <= 1e-6) return null;
-    return .{
-        relative.x / denom,
-        relative.y / denom,
-        relative.z / denom,
-    };
+    return vec3(relative.x / denom, relative.y / denom, relative.z / denom);
 }
 
 pub fn modelPointForAmbientWithCamera(metric: Metric, camera: Camera, ambient: Vec4, model: CameraModel) ?Vec3 {
@@ -1948,7 +1960,7 @@ test "conformal chart roundtrips for hyperbolic and spherical spaces" {
         .angular_zoom = 0.72,
         .chart_model = .conformal,
     };
-    const hyper_chart = Vec3{ 0.10, -0.04, 0.08 };
+    const hyper_chart = vec3(0.10, -0.04, 0.08);
     const hyper_roundtrip = chartCoords(.hyperbolic, hyper_params, embedPoint(.hyperbolic, hyper_params, hyper_chart).?);
     inline for (hyper_chart, 0..) |expected, i| {
         try std.testing.expectApproxEqAbs(expected, hyper_roundtrip[i], 1e-5);
@@ -1959,7 +1971,7 @@ test "conformal chart roundtrips for hyperbolic and spherical spaces" {
         .angular_zoom = 1.0,
         .chart_model = .conformal,
     };
-    const spherical_chart = Vec3{ 0.35, -0.12, 0.28 };
+    const spherical_chart = vec3(0.35, -0.12, 0.28);
     const spherical_roundtrip = chartCoords(.spherical, spherical_params, embedPoint(.spherical, spherical_params, spherical_chart).?);
     inline for (spherical_chart, 0..) |expected, i| {
         try std.testing.expectApproxEqAbs(expected, spherical_roundtrip[i], 1e-5);
@@ -1972,7 +1984,7 @@ test "spherical local exponential map preserves distance from the origin" {
         .angular_zoom = 1.0,
         .chart_model = .conformal,
     };
-    const local = Vec3{ 0.31, -0.22, 0.18 };
+    const local = vec3(0.31, -0.22, 0.18);
     const ambient = sphericalAmbientFromLocalPoint(params, local);
     const local_distance = flatVector(local).magnitude();
     const spherical_distance = params.radius * std.math.acos(std.math.clamp(ambient[0], -1.0, 1.0));
@@ -1987,14 +1999,14 @@ test "spherical ground-height mapping matches the radial map on horizontal and v
         .chart_model = .conformal,
     };
 
-    const horizontal = Vec3{ 0.31, 0.0, -0.22 };
+    const horizontal = vec3(0.31, 0.0, -0.22);
     const horizontal_exp = sphericalAmbientFromLocalPoint(params, horizontal);
     const horizontal_ground = sphericalAmbientFromGroundHeightPoint(params, horizontal);
     inline for (horizontal_exp, 0..) |expected, i| {
         try std.testing.expectApproxEqAbs(expected, horizontal_ground[i], 1e-5);
     }
 
-    const vertical = Vec3{ 0.0, 0.27, 0.0 };
+    const vertical = vec3(0.0, 0.27, 0.0);
     const vertical_exp = sphericalAmbientFromLocalPoint(params, vertical);
     const vertical_ground = sphericalAmbientFromGroundHeightPoint(params, vertical);
     inline for (vertical_exp, 0..) |expected, i| {
@@ -2008,22 +2020,22 @@ test "spherical ground-height mapping lifts from the wrapped footprint along loc
         .angular_zoom = 1.0,
         .chart_model = .conformal,
     };
-    const local = Vec3{ 0.31, 0.27, -0.22 };
+    const local = vec3(0.31, 0.27, -0.22);
     const base = ambientFromTangentBasisPoint(
         .spherical,
         params,
         .{ 1.0, 0.0, 0.0, 0.0 },
         .{ 0.0, 1.0, 0.0, 0.0 },
         .{ 0.0, 0.0, 0.0, 1.0 },
-        local[0],
-        local[2],
+        vec3x(local),
+        vec3z(local),
     ).?;
     const up = worldUpAt(.spherical, base).?;
     const ambient = sphericalAmbientFromGroundHeightPoint(params, local);
     const direction = geodesicDirection(.spherical, base, ambient).?;
     const height_distance = params.radius * std.math.acos(std.math.clamp(metricDot(.spherical, base, ambient), -1.0, 1.0));
 
-    try std.testing.expectApproxEqAbs(local[1], height_distance, 1e-5);
+    try std.testing.expectApproxEqAbs(vec3y(local), height_distance, 1e-5);
     try std.testing.expectApproxEqAbs(1.0, metricDot(.spherical, direction, up), 1e-5);
 }
 
@@ -2033,15 +2045,15 @@ test "ambient from tangent basis point matches spherical horizontal ground mappi
         .angular_zoom = 1.0,
         .chart_model = .conformal,
     };
-    const local = Vec3{ 0.31, 0.0, -0.22 };
+    const local = vec3(0.31, 0.0, -0.22);
     const ambient = ambientFromTangentBasisPoint(
         .spherical,
         params,
         .{ 1.0, 0.0, 0.0, 0.0 },
         .{ 0.0, 1.0, 0.0, 0.0 },
         .{ 0.0, 0.0, 0.0, 1.0 },
-        local[0],
-        local[2],
+        vec3x(local),
+        vec3z(local),
     ).?;
     const expected = sphericalAmbientFromGroundHeightPoint(params, local);
     inline for (expected, 0..) |coord, i| {
@@ -2063,7 +2075,7 @@ test "spherical direct ambient sampling respects scene sign after chart wrap" {
         .{ 0.0, 0.0, 0.0 },
     );
     const screen = Screen{ .width = 160, .height = 90, .zoom = 1.0 };
-    const local = Vec3{ 0.26, 0.18, 0.31 };
+    const local = vec3(0.26, 0.18, 0.31);
     const ambient = sphericalAmbientFromLocalPoint(view.params, local);
     const chart = chartCoords(.spherical, view.params, ambient);
 

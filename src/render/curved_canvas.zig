@@ -16,7 +16,7 @@ pub const MeshStyle = struct {
     wrapped_face_fill_steps: usize = 48,
     edge_steps: usize = 64,
     face_tones: []const u8,
-    light_direction: curved.Vec3 = .{ 0.45, 0.75, -0.48 },
+    light_direction: curved.Vec3 = curved.vec3(0.45, 0.75, -0.48),
     edge_char: u8 = '#',
     edge_near_tone: u8 = 255,
     edge_far_tone: u8 = 243,
@@ -170,7 +170,7 @@ fn faceTone(style: MeshStyle, index: usize) u8 {
 }
 
 fn flatVector(v: curved.Vec3) Flat3.Vector {
-    return Flat3.Vector.init(v);
+    return v;
 }
 
 fn safeNormalize(v: Flat3.Vector, fallback: Flat3.Vector) Flat3.Vector {
@@ -182,10 +182,10 @@ fn flatCross(a: Flat3.Vector, b: Flat3.Vector) Flat3.Vector {
 }
 
 fn faceShade(a: curved.Vec3, b: curved.Vec3, d: curved.Vec3, light_direction: curved.Vec3) u8 {
-    const light = safeNormalize(flatVector(light_direction), Flat3.Vector.init(.{ 0.0, 1.0, 0.0 }));
+    const light = safeNormalize(flatVector(light_direction), curved.vec3(0.0, 1.0, 0.0));
     const normal = safeNormalize(
         flatCross(flatVector(b).sub(flatVector(a)), flatVector(d).sub(flatVector(a))),
-        Flat3.Vector.init(.{ 0.0, 0.0, -1.0 }),
+        curved.vec3(0.0, 0.0, -1.0),
     );
     const brightness = std.math.clamp(normal.scalarProduct(light), 0.0, 1.0);
     return 1 + @as(u8, @intFromFloat(brightness * 3.999));
@@ -209,15 +209,15 @@ test "drawMesh paints visible curved cells and edges" {
         params,
         .gnomonic,
         .{ .near = 0.08, .far = 1.55 },
-        .{ 0.0, 0.0, -params.radius * 0.78 },
-        .{ 0.0, 0.0, 0.0 },
+        curved.vec3(0.0, 0.0, -params.radius * 0.78),
+        curved.vec3(0.0, 0.0, 0.0),
     );
     const screen = curved.Screen{ .width = 80, .height = 40, .zoom = params.angular_zoom };
     const vertices = [_]curved.Vec3{
-        .{ -0.15, -0.15, 0.02 },
-        .{ 0.15, -0.15, 0.02 },
-        .{ 0.15, 0.15, 0.02 },
-        .{ -0.15, 0.15, 0.02 },
+        curved.vec3(-0.15, -0.15, 0.02),
+        curved.vec3(0.15, -0.15, 0.02),
+        curved.vec3(0.15, 0.15, 0.02),
+        curved.vec3(-0.15, 0.15, 0.02),
     };
     const mesh = Mesh{
         .vertices = vertices[0..],
@@ -250,15 +250,15 @@ test "drawEdge marks clipped near transitions" {
         params,
         .gnomonic,
         .{ .near = 0.28, .far = 1.55 },
-        .{ 0.0, 0.0, -params.radius * 0.78 },
-        .{ 0.0, 0.0, 0.0 },
+        curved.vec3(0.0, 0.0, -params.radius * 0.78),
+        curved.vec3(0.0, 0.0, 0.0),
     );
     const screen = curved.Screen{ .width = 80, .height = 40, .zoom = params.angular_zoom };
 
     drawEdge(
         &canvas,
-        .{ -0.02, 0.0, -params.radius * 0.70 },
-        .{ -0.02, 0.0, 0.18 },
+        curved.vec3(-0.02, 0.0, -params.radius * 0.70),
+        curved.vec3(-0.02, 0.0, 0.18),
         view,
         screen,
         .{ .steps = 96 },

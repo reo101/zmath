@@ -2,6 +2,7 @@ const std = @import("std");
 const zmath = @import("zmath");
 const canvas_api = zmath.render.canvas;
 const curved_navigator = zmath.render.curved_navigator;
+const curved_ground = zmath.render.curved_ground;
 const curved_navigator_geometry = zmath.render.curved_navigator_geometry;
 const projection = zmath.render.projection;
 const sdf = zmath.render.sdf;
@@ -521,12 +522,7 @@ const CurvedRenderPass = union(enum) {
     spherical: curved.SphericalRenderPass,
 };
 
-const GroundBasis = struct {
-    origin: curved.Vec4,
-    right: curved.Vec4,
-    forward: curved.Vec4,
-    up: curved.Vec4,
-};
+const GroundBasis = curved_ground.GroundBasis;
 
 const GroundExtents = struct {
     lateral: f32,
@@ -942,11 +938,7 @@ fn drawNativeEuclideanScene(app: *const demo.App, viewport: rl.Rectangle, overla
 }
 
 fn vec3FromVector(v: demo.H.Vector) curved.Vec3 {
-    return .{
-        v.coeffNamed("e1"),
-        v.coeffNamed("e2"),
-        v.coeffNamed("e3"),
-    };
+    return curved.vec3(v.coeffNamed("e1"), v.coeffNamed("e2"), v.coeffNamed("e3"));
 }
 
 fn isSphericalGnomonic(view: curved.View) bool {
@@ -1013,12 +1005,12 @@ fn sampleAmbientForNativeRender(view: curved.View, ambient_input: curved.Vec4, s
 }
 
 fn projectNativeSphericalConformalPoint(model_point: curved.Vec3, screen: curved.Screen) ?[2]f32 {
-    const z = model_point[2];
+    const z = curved.vec3z(model_point);
     if (z <= 1e-4) return null;
 
     const aspect = @as(f32, @floatFromInt(screen.width)) / @as(f32, @floatFromInt(screen.height * 2));
-    const x = (model_point[0] * screen.zoom / (z * aspect) + 1.0) * (@as(f32, @floatFromInt(screen.width)) * 0.5);
-    const y = (1.0 - model_point[1] * screen.zoom / z) * (@as(f32, @floatFromInt(screen.height)) * 0.5);
+    const x = (curved.vec3x(model_point) * screen.zoom / (z * aspect) + 1.0) * (@as(f32, @floatFromInt(screen.width)) * 0.5);
+    const y = (1.0 - curved.vec3y(model_point) * screen.zoom / z) * (@as(f32, @floatFromInt(screen.height)) * 0.5);
     const limit = @as(f32, @floatFromInt(@max(screen.width, screen.height))) * 6.0;
     if (x < -limit or x > @as(f32, @floatFromInt(screen.width)) + limit) return null;
     if (y < -limit or y > @as(f32, @floatFromInt(screen.height)) + limit) return null;
@@ -1047,17 +1039,19 @@ fn nativeSphericalConformalSampleForPass(
         ambient,
         .conformal,
     ) orelse return .{};
-    const radius2 = model_point[0] * model_point[0] + model_point[1] * model_point[1] + model_point[2] * model_point[2];
+    const radius2 = curved.vec3x(model_point) * curved.vec3x(model_point) +
+        curved.vec3y(model_point) * curved.vec3y(model_point) +
+        curved.vec3z(model_point) * curved.vec3z(model_point);
     if (radius2 <= 1e-6) return .{};
 
     const projected_point = switch (pass) {
         .near => if (radius2 <= 1.0) model_point else return .{},
         .far => if (radius2 >= 1.0)
-            .{
-                model_point[0] / radius2,
-                model_point[1] / radius2,
-                model_point[2] / radius2,
-            }
+            curved.vec3(
+                curved.vec3x(model_point) / radius2,
+                curved.vec3y(model_point) / radius2,
+                curved.vec3z(model_point) / radius2,
+            )
         else
             return .{},
     };
@@ -1065,128 +1059,10 @@ fn nativeSphericalConformalSampleForPass(
     const projected = projectNativeSphericalConformalPoint(projected_point, screen);
     return .{
         .distance = distance,
-        .render_depth = projected_point[2],
+        .render_depth = curved.vec3z(projected_point),
         .projected = projected,
         .status = nativeSphericalSampleStatus(distance, base_view.clip, projected),
     };
-}
-
-fn signedGroundBasisForView(view: curved.View, basis: GroundBasis) GroundBasis {
-    if (view.metric != .spherical or view.scene_sign >= 0.0) return basis;
-    return .{
-        .origin = curved.ambientScale(view.metric, basis.origin, -1.0),
-        .right = curved.ambientScale(view.metric, basis.right, -1.0),
-        .forward = curved.ambientScale(view.metric, basis.forward, -1.0),
-        .up = curved.ambientScale(view.metric, basis.up, -1.0),
-    };
-}
-
-fn inverseStereographicScreenDirection(screen: curved.Screen, point: [2]f32) curved.Vec3 {
-    const aspect = @as(f32, @floatFromInt(screen.width)) / @as(f32, @floatFromInt(screen.height * 2));
-    const x_raw = ((point[0] / @as(f32, @floatFromInt(screen.width))) * 2.0 - 1.0) * aspect / screen.zoom;
-    const y_raw = (1.0 - (point[1] / (@as(f32, @floatFromInt(screen.height)) * 0.5))) / screen.zoom;
-    const denom = x_raw * x_raw + y_raw * y_raw + 4.0;
-    return .{
-        4.0 * x_raw / denom,
-        4.0 * y_raw / denom,
-        (4.0 - x_raw * x_raw - y_raw * y_raw) / denom,
-    };
-}
-
-fn inverseWrappedScreenDirection(screen: curved.Screen, point: [2]f32) curved.Vec3 {
-    const x_unit = ((point[0] / @as(f32, @floatFromInt(screen.width))) - 0.5) / screen.zoom + 0.5;
-    const azimuth = (x_unit - 0.5) * (@as(f32, std.math.pi) * 2.0);
-    const elevation = (1.0 - (point[1] / (@as(f32, @floatFromInt(screen.height)) * 0.5))) *
-        ((@as(f32, std.math.pi) * 0.5) / screen.zoom);
-    const planar = @cos(elevation);
-    return .{
-        @sin(azimuth) * planar,
-        @sin(elevation),
-        @cos(azimuth) * planar,
-    };
-}
-
-fn inverseGroundScreenDirection(
-    projection_mode: projection.DirectionProjection,
-    screen: curved.Screen,
-    point: [2]f32,
-) ?curved.Vec3 {
-    return switch (projection_mode) {
-        .stereographic => inverseStereographicScreenDirection(screen, point),
-        .wrapped => inverseWrappedScreenDirection(screen, point),
-        else => null,
-    };
-}
-
-const SphericalGroundHit = struct {
-    distance: f32,
-    lateral: f32,
-    forward: f32,
-};
-
-fn sphericalGroundHitForScreenPoint(
-    view: curved.View,
-    basis_input: GroundBasis,
-    screen: curved.Screen,
-    point: [2]f32,
-) ?SphericalGroundHit {
-    if (view.metric != .spherical) return null;
-
-    const basis = signedGroundBasisForView(view, basis_input);
-    const local_dir = inverseGroundScreenDirection(view.projection, screen, point) orelse return null;
-    const direction = curved.ambientAdd(
-        .spherical,
-        curved.ambientAdd(
-            .spherical,
-            curved.ambientScale(.spherical, view.camera.right, local_dir[0]),
-            curved.ambientScale(.spherical, view.camera.up, local_dir[1]),
-        ),
-        curved.ambientScale(.spherical, view.camera.forward, local_dir[2]),
-    );
-
-    const a = curved.ambientDot(.spherical, view.camera.position, basis.up);
-    const b = curved.ambientDot(.spherical, direction, basis.up);
-    if (@abs(a) <= 1e-6 and @abs(b) <= 1e-6) return null;
-
-    var theta = std.math.atan2(-a, b);
-    if (theta <= 1e-4) theta += @as(f32, std.math.pi);
-    if (theta > @as(f32, std.math.pi)) theta -= @as(f32, std.math.pi);
-    if (theta <= 1e-4) return null;
-
-    const ambient = curved.ambientAdd(
-        .spherical,
-        curved.ambientScale(.spherical, view.camera.position, @cos(theta)),
-        curved.ambientScale(.spherical, direction, @sin(theta)),
-    );
-    const origin_coord = curved.ambientDot(.spherical, ambient, basis.origin);
-    const lateral_coord = curved.ambientDot(.spherical, ambient, basis.right);
-    const forward_coord = curved.ambientDot(.spherical, ambient, basis.forward);
-    const planar_norm = @sqrt(lateral_coord * lateral_coord + forward_coord * forward_coord);
-    if (planar_norm <= 1e-6) {
-        return .{
-            .distance = theta * view.params.radius,
-            .lateral = 0.0,
-            .forward = 0.0,
-        };
-    }
-
-    const tangent_radius = std.math.atan2(planar_norm, origin_coord) * view.params.radius;
-    const tangent_scale = tangent_radius / planar_norm;
-    return .{
-        .distance = theta * view.params.radius,
-        .lateral = lateral_coord * tangent_scale,
-        .forward = forward_coord * tangent_scale,
-    };
-}
-
-fn checkerCoord(value: f32, cell_size: f32) i32 {
-    return @as(i32, @intFromFloat(@floor(value / cell_size)));
-}
-
-fn gridLineStrength(value: f32, cell_size: f32, line_half_width: f32) f32 {
-    const wrapped = @mod(value, cell_size);
-    const distance = @min(wrapped, cell_size - wrapped);
-    return std.math.clamp(1.0 - distance / line_half_width, 0.0, 1.0);
 }
 
 fn drawSphericalGroundFullscreen(
@@ -1210,12 +1086,12 @@ fn drawSphericalGroundFullscreen(
         for (0..ground_screen.width) |xi| {
             const x0 = @as(f32, @floatFromInt(xi));
             const x1 = @as(f32, @floatFromInt(xi + 1));
-            const hit = sphericalGroundHitForScreenPoint(view, basis, ground_screen, .{ x0 + 0.5, y0 + 0.5 }) orelse continue;
-            const checker = ((checkerCoord(hit.lateral, cell_size) + checkerCoord(hit.forward, cell_size)) & 1) == 0;
+            const hit = curved_ground.sphericalGroundHitForScreenPoint(view, basis, ground_screen, .{ x0 + 0.5, y0 + 0.5 }) orelse continue;
+            const checker = ((curved_ground.checkerCoord(hit.lateral, cell_size) + curved_ground.checkerCoord(hit.forward, cell_size)) & 1) == 0;
             var fill = groundFillColor(.spherical, hit.distance, view.clip.near, far_distance, checker);
             const line_strength = @max(
-                gridLineStrength(hit.lateral, cell_size, line_half_width),
-                gridLineStrength(hit.forward, cell_size, line_half_width),
+                curved_ground.gridLineStrength(hit.lateral, cell_size, line_half_width),
+                curved_ground.gridLineStrength(hit.forward, cell_size, line_half_width),
             );
             if (line_strength > 0.0) {
                 fill = mixColor(fill, white, line_strength * 0.16);
@@ -1256,12 +1132,12 @@ fn rasterizeSphericalGroundFullscreen(
         const canvas_y = (@as(f32, @floatFromInt(yi)) + 0.5) / @as(f32, @floatFromInt(subpixel_y));
         for (0..pixel_width) |xi| {
             const canvas_x = (@as(f32, @floatFromInt(xi)) + 0.5) / @as(f32, @floatFromInt(subpixel_x));
-            const hit = sphericalGroundHitForScreenPoint(view, basis, screen, .{ canvas_x, canvas_y }) orelse continue;
-            const checker = ((checkerCoord(hit.lateral, cell_size) + checkerCoord(hit.forward, cell_size)) & 1) == 0;
+            const hit = curved_ground.sphericalGroundHitForScreenPoint(view, basis, screen, .{ canvas_x, canvas_y }) orelse continue;
+            const checker = ((curved_ground.checkerCoord(hit.lateral, cell_size) + curved_ground.checkerCoord(hit.forward, cell_size)) & 1) == 0;
             var fill = groundFillColor(.spherical, hit.distance, view.clip.near, far_distance, checker);
             const line_strength = @max(
-                gridLineStrength(hit.lateral, cell_size, line_half_width),
-                gridLineStrength(hit.forward, cell_size, line_half_width),
+                curved_ground.gridLineStrength(hit.lateral, cell_size, line_half_width),
+                curved_ground.gridLineStrength(hit.forward, cell_size, line_half_width),
             );
             if (line_strength > 0.0) {
                 fill = mixColor(fill, white, line_strength * 0.16);
@@ -1377,39 +1253,6 @@ fn liftedWalkView(view: curved.View, pitch_angle: f32) curved.View {
         walkEyeHeight(view),
     );
     return lifted;
-}
-
-fn worldGroundBasis(metric: curved.Metric) GroundBasis {
-    _ = metric;
-    return .{
-        .origin = .{ 1.0, 0.0, 0.0, 0.0 },
-        .right = .{ 0.0, 1.0, 0.0, 0.0 },
-        .forward = .{ 0.0, 0.0, 0.0, 1.0 },
-        .up = .{ 0.0, 0.0, 1.0, 0.0 },
-    };
-}
-
-fn sphericalGroundBasisForPass(pass: curved.SphericalRenderPass) GroundBasis {
-    const basis = worldGroundBasis(.spherical);
-    return switch (pass) {
-        .near => basis,
-        .far => .{
-            .origin = .{ -basis.origin[0], -basis.origin[1], -basis.origin[2], -basis.origin[3] },
-            .right = basis.right,
-            .forward = basis.forward,
-            .up = basis.up,
-        },
-    };
-}
-
-fn walkGroundBasis(view: curved.View, pitch_angle: f32) ?GroundBasis {
-    const basis = view.walkSurfaceBasis(pitch_angle) orelse return null;
-    return .{
-        .origin = view.camera.position,
-        .right = basis.right,
-        .forward = basis.forward,
-        .up = basis.up,
-    };
 }
 
 fn groundSampleForCurvedRender(
@@ -2584,7 +2427,7 @@ fn rasterizeSphericalNativeOverlay(app: *const demo.App, pixels: []rl.Color, dep
         spherical.view;
 
     if (app.camera.movement_mode == .walk and spherical.view.projection != .wrapped) {
-        const ground_basis = worldGroundBasis(.spherical);
+        const ground_basis = curved_ground.worldGroundBasis(.spherical);
         const ground_far_start = benchStart();
         rasterizeSphericalGroundPatchOverlay(
             spherical.view,
@@ -2664,7 +2507,7 @@ fn drawNativeCurvedScene(app: *const demo.App, viewport: rl.Rectangle, spherical
                 hyper.view;
             drawCurvedSceneBackdrop(render_view, viewport);
             if (app.camera.movement_mode == .walk) {
-                const ground_basis = walkGroundBasis(hyper.view, app.camera.euclid_pitch) orelse worldGroundBasis(hyper.view.metric);
+                const ground_basis = curved_ground.walkGroundBasis(hyper.view, app.camera.euclid_pitch) orelse curved_ground.worldGroundBasis(hyper.view.metric);
                 drawCurvedGroundPatch(
                     hyper.view,
                     render_view,
@@ -2696,7 +2539,7 @@ fn drawNativeCurvedScene(app: *const demo.App, viewport: rl.Rectangle, spherical
             if (spherical.view.projection == .wrapped) {
                 if (app.camera.movement_mode == .walk) {
                     const ground_start = benchStart();
-                    const ground_basis = worldGroundBasis(.spherical);
+                    const ground_basis = curved_ground.worldGroundBasis(.spherical);
                     drawSphericalGroundFullscreen(
                         render_view,
                         ground_basis,
