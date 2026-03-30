@@ -292,7 +292,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
 
         pub const use_simd = canUseLaneWiseSimd(T, stored_blade_count);
         pub const Storage = if (use_simd) @Vector(stored_blade_count, T) else [stored_blade_count]T;
-        pub const Named = off: {
+        pub const Named = if (dimensions <= 5) off: {
             const naming_options = blade_parsing.SignedBladeNamingOptions.fromSignature(sig);
             const basis_names = blk: {
                 var names: [dimensions][]const u8 = undefined;
@@ -320,11 +320,10 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                 &field_types,
                 &field_attrs,
             );
-        };
+        } else extern struct {};
 
         coeffs: Storage,
         named: Named,
-        array: [stored_blade_count]T,
 
         pub const Self = @This();
 
@@ -365,17 +364,37 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         /// Returns the coefficients as a standard array for indexing.
         /// This is a no-op if Storage is already an array, or a @bitCast if it's a @Vector.
         pub inline fn coeffsArray(self: Self) [stored_blade_count]T {
-            return self.array;
+            const Array = [stored_blade_count]T;
+            if (comptime use_simd) {
+                if (@sizeOf(Storage) == @sizeOf(Array)) {
+                    return @bitCast(self.coeffs);
+                } else {
+                    return @as(*const Array, @ptrCast(&self.coeffs)).*;
+                }
+            } else {
+                return self.coeffs;
+            }
         }
 
         /// Initializes the multivector from coefficients in `blades` order.
         pub inline fn init(coeffs: [stored_blade_count]T) Self {
-            return .{ .array = coeffs };
+            var self: Self = undefined;
+            if (comptime use_simd) {
+                if (@sizeOf(Storage) == @sizeOf([stored_blade_count]T)) {
+                    self.coeffs = @bitCast(coeffs);
+                } else {
+                    self.coeffs = @splat(0);
+                    @as(*[stored_blade_count]T, @ptrCast(&self.coeffs)).* = coeffs;
+                }
+            } else {
+                self.coeffs = coeffs;
+            }
+            return self;
         }
 
         /// Returns the additive identity for this carrier type.
         pub inline fn zero() Self {
-            return .{ .array = std.mem.zeroes([stored_blade_count]T) };
+            return .{ .coeffs = if (comptime use_simd) @splat(0) else std.mem.zeroes(Storage) };
         }
 
         /// Constructs a compile-time signed blade using this carrier's coefficient type.
