@@ -186,6 +186,26 @@ fn writeBlade(writer: *std.Io.Writer, comptime dimension: usize, mask: BladeMask
     }
 }
 
+fn bladeName(comptime mask: BladeMask, comptime dimension: usize, comptime options: blade_parsing.SignedBladeNamingOptions) []const u8 {
+    if (mask.toInt() == 0) return "s";
+    return bladeNameInternal(mask.toInt(), 0, dimension, options);
+}
+
+fn bladeNameInternal(comptime mask_val: blade_ops.BladeMaskInt, comptime bit_idx: usize, comptime dimension: usize, comptime options: blade_parsing.SignedBladeNamingOptions) []const u8 {
+    @setEvalBranchQuota(1_000_000);
+    if (bit_idx >= dimension) return "";
+    if ((mask_val >> @intCast(bit_idx)) & 1 != 0) {
+        const named_index = options.basis_spans.resolveInternalToNamed(bit_idx + 1, dimension).?;
+        if (bit_idx == @ctz(mask_val)) {
+            const prefix: [1]u8 = .{options.basis_prefix};
+            return prefix ++ std.fmt.comptimePrint("{d}", .{named_index}) ++ bladeNameInternal(mask_val, bit_idx + 1, dimension, options);
+        }
+        return std.fmt.comptimePrint("{d}", .{named_index}) ++ bladeNameInternal(mask_val, bit_idx + 1, dimension, options);
+    } else {
+        return bladeNameInternal(mask_val, bit_idx + 1, dimension, options);
+    }
+}
+
 /// Writes any multivector value through a generic writer interface.
 pub fn renderMultivector(writer: anytype, value: anytype) !void {
     comptime {
@@ -273,6 +293,32 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
 
         pub const use_simd = canUseLaneWiseSimd(T, stored_blade_count);
         pub const Storage = if (use_simd) @Vector(stored_blade_count, T) else [stored_blade_count]T;
+        pub const Named = off: {
+            var field_names: [stored_blade_count][]const u8 = undefined;
+            var field_types: [stored_blade_count]type = undefined;
+            var field_attrs: [stored_blade_count]std.builtin.Type.StructField.Attributes = undefined;
+
+            const naming_options = blade_parsing.SignedBladeNamingOptions.fromSignature(sig);
+
+            for (blade_masks, 0..) |mask, i| {
+                field_names[i] = bladeName(mask, dimensions, naming_options);
+                field_types[i] = T;
+                field_attrs[i] = .{};
+            }
+
+            const Fields = @Struct(
+                .@"extern",
+                null,
+                field_names[0..],
+                &field_types,
+                &field_attrs,
+            );
+
+            break :off extern union {
+                fields: Fields,
+                coeffs: [stored_blade_count]T,
+            };
+        };
 
         pub const Self = @This();
 
@@ -310,17 +356,17 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         /// Related grade-2 bivector carrier type.
         pub const BivectorType = KVector(T, 2, sig);
 
-        coeffs: Storage = if (use_simd) @as(Storage, @splat(0)) else std.mem.zeroes(Storage),
+        coeffs: Storage = @splat(0),
 
         /// Returns the coefficients as a standard array for indexing.
         /// This is a no-op if Storage is already an array, or a @bitCast if it's a @Vector.
         pub inline fn coeffsArray(self: Self) [stored_blade_count]T {
-            return if (comptime use_simd) @bitCast(self.coeffs) else self.coeffs;
+            return self.coeffs;
         }
 
         /// Initializes the multivector from coefficients in `blades` order.
         pub inline fn init(coeffs: [stored_blade_count]T) Self {
-            return .{ .coeffs = if (use_simd) coeffsToSimd(T, stored_blade_count, coeffs) else coeffs };
+            return .{ .coeffs = coeffs };
         }
 
         /// Returns the additive identity for this carrier type.
@@ -1243,6 +1289,24 @@ pub fn BasisWithNamingOptions(
             return fullSignedBladeFromIndicesWithSignature(T, sig, indices);
         }
     };
+}
+
+test "multivector Named struct allows field access" {
+    const Vec2 = Vector(f32, .euclidean(2));
+    const v = Vec2.init(.{ 1.0, 2.0 });
+    const named: Vec2.Named = .{ .coeffs = v.coeffs };
+    try std.testing.expectEqual(@as(f32, 1.0), named.fields.e1);
+    try std.testing.expectEqual(@as(f32, 2.0), named.fields.e2);
+
+    const Biv2 = Bivector(f32, .euclidean(2));
+    const b = Biv2.init(.{3.0});
+    const named_b: Biv2.Named = .{ .coeffs = b.coeffs };
+    try std.testing.expectEqual(@as(f32, 3.0), named_b.fields.e12);
+
+    const Scal2 = Scalar(f32, .euclidean(2));
+    const s = Scal2.init(.{4.0});
+    const named_s: Scal2.Named = .{ .coeffs = s.coeffs };
+    try std.testing.expectEqual(@as(f32, 4.0), named_s.fields.s);
 }
 
 test "aliases and signed blades expose more than just plain vectors" {
