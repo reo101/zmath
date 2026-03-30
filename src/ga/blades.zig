@@ -351,6 +351,48 @@ pub const BasisIndexSpans = struct {
         return null;
     }
 
+    /// Resolves one internal sequential one-based basis index back to its
+    /// configured named index.
+    pub fn resolveInternalToNamed(self: BasisIndexSpans, internal_index: usize, comptime dimension: usize) ?usize {
+        @setEvalBranchQuota(10_000);
+        self.assertValidForDimension(dimension);
+
+        var next_internal_index: usize = 1;
+        for (std.meta.tags(SignatureClass)) |class| {
+            if (self.spanFor(class)) |span| {
+                const span_len = span.len();
+
+                if (internal_index >= next_internal_index and internal_index < next_internal_index + span_len) {
+                    return span.start + (internal_index - next_internal_index);
+                }
+
+                next_internal_index += span_len;
+            }
+        }
+
+        return null;
+    }
+
+    /// Runtime-capable counterpart to `resolveInternalToNamed`.
+    pub fn resolveInternalToNamedRuntime(self: BasisIndexSpans, internal_index: usize, dimension: usize) ValidationError!?usize {
+        try self.validateForDimension(dimension);
+
+        var next_internal_index: usize = 1;
+        for (std.meta.tags(SignatureClass)) |class| {
+            if (self.spanFor(class)) |span| {
+                const span_len = span.len();
+
+                if (internal_index >= next_internal_index and internal_index < next_internal_index + span_len) {
+                    return span.start + (internal_index - next_internal_index);
+                }
+
+                next_internal_index += span_len;
+            }
+        }
+
+        return null;
+    }
+
     pub fn assertValidForDimension(self: BasisIndexSpans, comptime dimension: usize) void {
         const classes = comptime std.meta.tags(SignatureClass);
 
