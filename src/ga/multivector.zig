@@ -195,7 +195,8 @@ fn bladeName(comptime mask: BladeMask, comptime dimension: usize, comptime prefi
     const first_bit = @ctz(mask.toInt());
     inline for (0..dimension) |i| {
         if ((mask.toInt() >> @intCast(i)) & 1 != 0) {
-            if (i > first_bit) {
+            // Separate indices by `_` when `e12` could both mean the 12th basis or `e1 * e2`
+            if (dimension >= 10 and i > first_bit) {
                 name = name ++ "_";
             }
             name = name ++ basis_names[i];
@@ -293,7 +294,9 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         pub const use_simd = canUseLaneWiseSimd(T, stored_blade_count);
         pub const Storage = if (use_simd) @Vector(stored_blade_count, T) else [stored_blade_count]T;
         pub const Named = if (dimensions <= 5) off: {
+            // FIXME: should be configurable
             const naming_options = blade_parsing.SignedBladeNamingOptions.fromSignature(sig);
+
             const basis_names = blk: {
                 var names: [dimensions][]const u8 = undefined;
                 for (0..dimensions) |i| {
@@ -362,39 +365,26 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         pub const BivectorType = KVector(T, 2, sig);
 
         /// Returns the coefficients as a standard array for indexing.
-        /// This is a no-op if Storage is already an array, or a @bitCast if it's a @Vector.
+        /// This is a no-op if Storage is already an array, or a pointer cast if it's a @Vector.
         pub inline fn coeffsArray(self: Self) [stored_blade_count]T {
-            const Array = [stored_blade_count]T;
-            if (comptime use_simd) {
-                if (@sizeOf(Storage) == @sizeOf(Array)) {
-                    return @bitCast(self.coeffs);
-                } else {
-                    return @as(*const Array, @ptrCast(&self.coeffs)).*;
-                }
-            } else {
-                return self.coeffs;
-            }
+            return @as(*const [stored_blade_count]T, @ptrCast(&self.coeffs)).*;
+        }
+
+        /// Returns a pointer to the coefficients as a standard array.
+        pub inline fn coeffsArrayPtr(self: *Self) *[stored_blade_count]T {
+            return @as(*[stored_blade_count]T, @ptrCast(self));
         }
 
         /// Initializes the multivector from coefficients in `blades` order.
         pub inline fn init(coeffs: [stored_blade_count]T) Self {
-            var self: Self = undefined;
-            if (comptime use_simd) {
-                if (@sizeOf(Storage) == @sizeOf([stored_blade_count]T)) {
-                    self.coeffs = @bitCast(coeffs);
-                } else {
-                    self.coeffs = @splat(0);
-                    @as(*[stored_blade_count]T, @ptrCast(&self.coeffs)).* = coeffs;
-                }
-            } else {
-                self.coeffs = coeffs;
-            }
+            var self = Self{ .coeffs = std.mem.zeroes(Storage) };
+            self.coeffsArrayPtr().* = coeffs;
             return self;
         }
 
         /// Returns the additive identity for this carrier type.
         pub inline fn zero() Self {
-            return .{ .coeffs = if (comptime use_simd) @splat(0) else std.mem.zeroes(Storage) };
+            return .{ .coeffs = std.mem.zeroes(Storage) };
         }
 
         /// Constructs a compile-time signed blade using this carrier's coefficient type.
@@ -496,6 +486,25 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         /// Returns the scalar coefficient.
         pub fn scalarCoeff(self: Self) T {
             return self.coeff(BladeMask.init(0));
+        }
+
+        /// Returns a pointer to the coefficient of a blade mask, or null if not stored.
+        pub fn coeffPtr(self: *Self, mask: BladeMask) ?*T {
+            const mask_idx = mask.index();
+            const index = Self.blade_index_by_mask[mask_idx];
+            if (index < Self.stored_blade_count) {
+                // Since this is an extern union, the start of the union is the start of coeffs.
+                const array_ptr: *[stored_blade_count]T = @ptrCast(self);
+                return &array_ptr[index];
+            }
+            return null;
+        }
+
+        /// Sets the coefficient of a blade mask if it is stored in this carrier.
+        pub fn setCoeff(self: *Self, mask: BladeMask, value: T) void {
+            if (self.coeffPtr(mask)) |ptr| {
+                ptr.* = value;
+            }
         }
 
         /// Returns `-self`.
@@ -1324,7 +1333,7 @@ test "multivector Named struct allows field access" {
     const Biv2 = Bivector(f32, .euclidean(2));
     const b = Biv2.init(.{3.0});
     const named_b: Biv2 = .{ .coeffs = b.coeffs };
-    try std.testing.expectEqual(@as(f32, 3.0), named_b.named.e1_2);
+    try std.testing.expectEqual(@as(f32, 3.0), named_b.named.e12);
 
     const Scal2 = Scalar(f32, .euclidean(2));
     const s = Scal2.init(.{4.0});
