@@ -22,46 +22,20 @@ pub const h = algebra.Instantiate(f32);
 
 pub const Point = struct {
     pub fn init(x: f32, y: f32, z: f32) h.Full {
-        const E = h.Basis;
         // PGA points are trivectors: x*e234 + y*e314 + z*e124 + e123
-        const res = E.e(2).wedge(E.e(3)).wedge(E.e(4)).scale(x)
-            .add(E.e(3).wedge(E.e(1)).wedge(E.e(4)).scale(y))
-            .add(E.e(1).wedge(E.e(2)).wedge(E.e(4)).scale(z))
-            .add(E.e(1).wedge(E.e(2)).wedge(E.e(3)));
-
-        var full = h.Full.zero();
-        inline for (h.Full.blades, 0..) |mask, i| {
-            full.coeffs[i] = res.coeff(mask);
-        }
-        return full;
+        // e4 is the degenerate basis vector (e0)
+        return h.exprAs(h.Full, "{x}*e2∧3∧4 + {y}*e3∧1∧4 + {z}*e1∧2∧4 + e1∧2∧3", .{ .x = x, .y = y, .z = z });
     }
 
     pub fn direction(x: f32, y: f32, z: f32) h.Full {
-        const E = h.Basis;
-        const res = E.e(2).wedge(E.e(3)).wedge(E.e(4)).scale(x)
-            .add(E.e(3).wedge(E.e(1)).wedge(E.e(4)).scale(y))
-            .add(E.e(1).wedge(E.e(2)).wedge(E.e(4)).scale(z));
-        var full = h.Full.zero();
-        inline for (h.Full.blades, 0..) |mask, i| {
-            full.coeffs[i] = res.coeff(mask);
-        }
-        return full;
+        return h.exprAs(h.Full, "{x}*e2∧3∧4 + {y}*e3∧1∧4 + {z}*e1∧2∧4", .{ .x = x, .y = y, .z = z });
     }
 };
 
 pub const Plane = struct {
     pub fn init(a: f32, b: f32, c: f32, d: f32) h.Full {
-        const E = h.Basis;
         // Plane: a*e1 + b*e2 + c*e3 + d*e4
-        const res = E.e(1).scale(a)
-            .add(E.e(2).scale(b))
-            .add(E.e(3).scale(c))
-            .add(E.e(4).scale(d));
-        var full = h.Full.zero();
-        inline for (h.Full.blades, 0..) |mask, i| {
-            full.coeffs[i] = res.coeff(mask);
-        }
-        return full;
+        return h.exprAs(h.Full, "{a}*e1 + {b}*e2 + {c}*e3 + {d}*e4", .{ .a = a, .b = b, .c = c, .d = d });
     }
 };
 
