@@ -288,8 +288,19 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         pub const blades = blade_masks;
         pub const stored_blade_count = blade_masks.len;
         pub const has_all_blades = blade_masks.len == blade_ops.bladeCount(sig.dimension());
-        pub const blade_index_by_mask = blade_ops.bladeIndexByMask(sig.dimension(), blade_masks);
+        pub const blade_index_by_mask = if (dimensions <= 12) blade_ops.bladeIndexByMask(sig.dimension(), blade_masks) else struct {};
+        pub const sorted_blade_index_map = if (dimensions > 12) blade_ops.SortedBladeMaskMap(blade_masks) else struct {};
         pub const missing_blade_index = blade_masks.len;
+
+        /// Returns the internal storage index for a blade mask,
+        /// or `missing_blade_index` if not stored.
+        pub inline fn getBladeIndex(mask: BladeMask) usize {
+            if (comptime dimensions <= 12) {
+                return blade_index_by_mask[mask.index()];
+            } else {
+                return sorted_blade_index_map.get(mask) orelse missing_blade_index;
+            }
+        }
 
         pub const use_simd = canUseLaneWiseSimd(T, stored_blade_count);
         pub const Storage = if (use_simd) @Vector(stored_blade_count, T) else [stored_blade_count]T;
@@ -365,26 +376,19 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         pub const BivectorType = KVector(T, 2, sig);
 
         /// Returns the coefficients as a standard array for indexing.
-        /// This is a no-op if Storage is already an array, or a pointer cast if it's a @Vector.
+        /// This is a no-op if Storage is already an array, or a coercion if it's a @Vector.
         pub inline fn coeffsArray(self: Self) [stored_blade_count]T {
-            return @as(*const [stored_blade_count]T, @ptrCast(&self.coeffs)).*;
-        }
-
-        /// Returns a pointer to the coefficients as a standard array.
-        pub inline fn coeffsArrayPtr(self: *Self) *[stored_blade_count]T {
-            return @as(*[stored_blade_count]T, @ptrCast(self));
+            return self.coeffs;
         }
 
         /// Initializes the multivector from coefficients in `blades` order.
         pub inline fn init(coeffs: [stored_blade_count]T) Self {
-            var self = Self{ .coeffs = std.mem.zeroes(Storage) };
-            self.coeffsArrayPtr().* = coeffs;
-            return self;
+            return .{ .coeffs = coeffs };
         }
 
         /// Returns the additive identity for this carrier type.
         pub inline fn zero() Self {
-            return .{ .coeffs = std.mem.zeroes(Storage) };
+            return .{ .coeffs = @splat(0) };
         }
 
         /// Constructs a compile-time signed blade using this carrier's coefficient type.
@@ -447,7 +451,6 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
 
         /// Returns the coefficient of a (comptime/runtime) blade mask.
         pub fn coeff(self: Self, mask: BladeMask) T {
-            const mask_idx = mask.index();
             if (@inComptime()) {
                 if (comptime mask.toInt() >= blade_ops.bladeCount(dimensions)) {
                     @compileError("blade mask outside the algebra dimensions");
@@ -456,10 +459,10 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
 
             const coeffs_array = self.coeffsArray();
             if (comptime Self.has_all_blades) {
-                return coeffs_array[mask_idx];
+                return coeffs_array[mask.index()];
             }
 
-            const index = Self.blade_index_by_mask[mask_idx];
+            const index = Self.getBladeIndex(mask);
             if (index < Self.stored_blade_count) {
                 return coeffs_array[index];
             } else {
@@ -488,22 +491,11 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
             return self.coeff(BladeMask.init(0));
         }
 
-        /// Returns a pointer to the coefficient of a blade mask, or null if not stored.
-        pub fn coeffPtr(self: *Self, mask: BladeMask) ?*T {
-            const mask_idx = mask.index();
-            const index = Self.blade_index_by_mask[mask_idx];
-            if (index < Self.stored_blade_count) {
-                // Since this is an extern union, the start of the union is the start of coeffs.
-                const array_ptr: *[stored_blade_count]T = @ptrCast(self);
-                return &array_ptr[index];
-            }
-            return null;
-        }
-
         /// Sets the coefficient of a blade mask if it is stored in this carrier.
         pub fn setCoeff(self: *Self, mask: BladeMask, value: T) void {
-            if (self.coeffPtr(mask)) |ptr| {
-                ptr.* = value;
+            const index = Self.getBladeIndex(mask);
+            if (index < Self.stored_blade_count) {
+                self.coeffs[index] = value;
             }
         }
 
@@ -606,7 +598,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
 
             inline for (blade_masks, 0..) |lhs_mask, lhs_index| {
                 inline for (Rhs.blades, 0..) |rhs_mask, rhs_index| {
-                    const result_index = comptime Result.blade_index_by_mask[BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt()).index()];
+                    const result_index = comptime Result.getBladeIndex(BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt()));
                     const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, sig);
 
                     std.debug.assert(result_index < Result.stored_blade_count);
@@ -632,7 +624,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                 inline for (Rhs.blades, 0..) |rhs_mask, rhs_index| {
                     if ((lhs_mask.toInt() & rhs_mask.toInt()) != 0) continue;
 
-                    const result_index = comptime Result.blade_index_by_mask[BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt()).index()];
+                    const result_index = comptime Result.getBladeIndex(BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt()));
                     const sign = lhs_mask.geometricProductSign(rhs_mask);
                     std.debug.assert(result_index < Result.stored_blade_count);
                     result_coeffs[result_index] += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @intFromEnum(sign);
@@ -657,7 +649,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                 inline for (Rhs.blades, 0..) |rhs_mask, rhs_index| {
                     if ((lhs_mask.toInt() & rhs_mask.toInt()) != lhs_mask.toInt()) continue;
 
-                    const result_index = comptime Result.blade_index_by_mask[lhs_mask.bitset.xorWith(rhs_mask.bitset).mask];
+                    const result_index = comptime Result.getBladeIndex(BladeMask.init(lhs_mask.bitset.xorWith(rhs_mask.bitset).mask));
                     const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, sig);
                     std.debug.assert(result_index < Result.stored_blade_count);
                     result_coeffs[result_index] += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @intFromEnum(sign);
@@ -682,7 +674,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                 inline for (Rhs.blades, 0..) |rhs_mask, rhs_index| {
                     if ((lhs_mask.toInt() & rhs_mask.toInt()) != rhs_mask.toInt()) continue;
 
-                    const result_index = comptime Result.blade_index_by_mask[lhs_mask.bitset.xorWith(rhs_mask.bitset).mask];
+                    const result_index = comptime Result.getBladeIndex(BladeMask.init(lhs_mask.bitset.xorWith(rhs_mask.bitset).mask));
                     const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, sig);
                     std.debug.assert(result_index < Result.stored_blade_count);
                     result_coeffs[result_index] += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @intFromEnum(sign);
@@ -725,7 +717,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
                     const result_grade = blade_ops.bladeGrade(result_mask);
                     if (result_grade != target_grade) continue;
 
-                    const result_index = Result.blade_index_by_mask[result_mask.index()];
+                    const result_index = Result.getBladeIndex(result_mask);
                     const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, sig);
                     std.debug.assert(result_index < Result.stored_blade_count);
                     result_coeffs[result_index] += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @intFromEnum(sign);
@@ -753,7 +745,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
             const rhs_coeffs = rhs.coeffsArray();
 
             inline for (blade_masks, 0..) |lhs_mask, lhs_index| {
-                const rhs_index = Rhs.blade_index_by_mask[lhs_mask.index()];
+                const rhs_index = Rhs.getBladeIndex(lhs_mask);
                 if (rhs_index == Rhs.missing_blade_index) continue;
 
                 result += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @intFromEnum(lhs_mask.geometricProductClassWithSignature(lhs_mask, sig));
@@ -803,7 +795,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
 
             inline for (blade_masks, 0..) |mask, index| {
                 if (comptime blade_ops.bladeGrade(mask) == target_grade) {
-                    const result_index = comptime Result.blade_index_by_mask[mask.index()];
+                    const result_index = comptime Result.getBladeIndex(mask);
                     if (result_index < Result.stored_blade_count) result_coeffs[result_index] = coeffs_array[index];
                 }
             }
@@ -840,8 +832,8 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
             const self_coeffs = self.coeffsArray();
 
             inline for (blade_masks, 0..) |mask, i| {
-                const target_mask = mask.bitset.mask ^ pseudoscalar_mask;
-                const result_idx = Result.blade_index_by_mask[target_mask];
+                const target_mask = BladeMask.init(mask.bitset.mask ^ pseudoscalar_mask);
+                const result_idx = Result.getBladeIndex(target_mask);
                 const sign = mask.geometricProductSign(BladeMask.init(pseudoscalar_mask));
                 result_coeffs[result_idx] = self_coeffs[i] * @intFromEnum(sign);
             }
@@ -858,7 +850,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
             const self_coeffs = self.coeffsArray();
 
             inline for (blade_masks, 0..) |mask, i| {
-                const to_idx = To.blade_index_by_mask[mask.index()];
+                const to_idx = To.getBladeIndex(mask);
                 if (to_idx < To.stored_blade_count) {
                     result_coeffs[to_idx] = self_coeffs[i];
                 }
@@ -880,7 +872,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
             const self_coeffs = self.coeffsArray();
 
             inline for (blade_masks, 0..) |mask, i| {
-                const to_idx = To.blade_index_by_mask[mask.index()];
+                const to_idx = To.getBladeIndex(mask);
                 if (to_idx < To.stored_blade_count) {
                     result_coeffs[to_idx] = self_coeffs[i];
                 } else if (self_coeffs[i] != 0) {
@@ -954,7 +946,8 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
 
                 if (theta == 0) {
                     var res_coeffs = std.mem.zeroes([stored_blade_count]T);
-                    if (Self.blade_index_by_mask[0] < stored_blade_count) res_coeffs[Self.blade_index_by_mask[0]] = 1;
+                    const scalar_idx = Self.getBladeIndex(BladeMask.init(0));
+                    if (scalar_idx < stored_blade_count) res_coeffs[scalar_idx] = 1;
                     return Self.init(res_coeffs);
                 }
 
@@ -963,7 +956,8 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
 
                 // Result = cos(theta) + (B/theta) * sin(theta)
                 var res_coeffs = std.mem.zeroes([stored_blade_count]T);
-                if (Self.blade_index_by_mask[0] < stored_blade_count) res_coeffs[Self.blade_index_by_mask[0]] = c;
+                const scalar_idx = Self.getBladeIndex(BladeMask.init(0));
+                if (scalar_idx < stored_blade_count) res_coeffs[scalar_idx] = c;
 
                 inline for (blade_masks, 0..) |mask, i| {
                     if (mask.bitset.mask != 0) {
@@ -1326,19 +1320,16 @@ pub fn BasisWithNamingOptions(
 test "multivector Named struct allows field access" {
     const Vec2 = Vector(f32, .euclidean(2));
     const v = Vec2.init(.{ 1.0, 2.0 });
-    const named: Vec2 = .{ .coeffs = v.coeffs };
-    try std.testing.expectEqual(@as(f32, 1.0), named.named.e1);
-    try std.testing.expectEqual(@as(f32, 2.0), named.named.e2);
+    try std.testing.expectEqual(@as(f32, 1.0), v.named.e1);
+    try std.testing.expectEqual(@as(f32, 2.0), v.named.e2);
 
     const Biv2 = Bivector(f32, .euclidean(2));
     const b = Biv2.init(.{3.0});
-    const named_b: Biv2 = .{ .coeffs = b.coeffs };
-    try std.testing.expectEqual(@as(f32, 3.0), named_b.named.e12);
+    try std.testing.expectEqual(@as(f32, 3.0), b.named.e12);
 
     const Scal2 = Scalar(f32, .euclidean(2));
     const s = Scal2.init(.{4.0});
-    const named_s: Scal2 = .{ .coeffs = s.coeffs };
-    try std.testing.expectEqual(@as(f32, 4.0), named_s.named.s);
+    try std.testing.expectEqual(@as(f32, 4.0), s.named.s);
 }
 
 test "aliases and signed blades expose more than just plain vectors" {
