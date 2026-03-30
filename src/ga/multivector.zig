@@ -137,6 +137,9 @@ fn assertCompatibleMultivector(comptime Lhs: type, comptime Rhs: type) void {
     if (Rhs.Coefficient != Lhs.Coefficient) {
         @compileError("cross-coefficient multivector operations are not implemented yet");
     }
+    if (!@hasDecl(Rhs, "getBladeIndex")) {
+        @compileError("multivector argument must provide `getBladeIndex` for sparse lookups");
+    }
 }
 
 fn coeffZero(comptime T: type) T {
@@ -273,23 +276,39 @@ fn signedBladeImpl(
     return result;
 }
 
-/// Generic sparse multivector whose storage is restricted to `blade_masks`.
+/// Generic multivector carrier whose storage is restricted to `blade_masks`.
 ///
-/// A concrete metric signature is baked in via `sig`. Metric-aware methods
-/// (`.gp()` and `.scalarProduct()`) use it by default.
+/// This type is the core of the geometric algebra library. It provides:
+/// - **Storage**: Compact representation of multivectors, using SIMD vectors
+///   when appropriate.
+/// - **Named Fields**: Layout-compatible access to coefficients using basis-blade
+///   names (e.g. `.named.e12`) for algebras with up to 5 dimensions.
+/// - **GA Operations**: Type-safe implementations of the geometric product (`.gp()`),
+///   wedge product (`.wedge()`), dot products, contractions, and more.
+/// - **Metric Awareness**: A concrete metric signature is baked in via `sig`,
+///   driving metric-dependent products by default.
 pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, comptime sig: MetricSignature) type {
     // Zig's memoization should handle this if the function is pure.
     // Let's ensure it stays pure by moving all logic into an anonymous struct.
     @setEvalBranchQuota(5_000_000);
     return extern union {
+        /// The coefficient type (e.g. `f32`, `f64`, `i32`).
         pub const Coefficient = T;
+        /// The dimension of the ambient space.
         pub const dimensions = sig.dimension();
+        /// The metric signature Cl(p, q, r).
         pub const metric_signature = sig;
+        /// The set of basis blades represented by this carrier.
         pub const blades = blade_masks;
+        /// The number of coefficients stored in this multivector.
         pub const stored_blade_count = blade_masks.len;
+        /// Whether this carrier stores every possible blade in the algebra.
         pub const has_all_blades = blade_masks.len == blade_ops.bladeCount(sig.dimension());
+        /// Dense lookup table from blade mask to index (only for dimensions <= 12).
         pub const blade_index_by_mask = if (dimensions <= 12) blade_ops.bladeIndexByMask(sig.dimension(), blade_masks) else struct {};
+        /// Compact map for high-dimensional mask lookups.
         pub const sorted_blade_index_map = if (dimensions > 12) blade_ops.SortedBladeMaskMap(blade_masks) else struct {};
+        /// Sentinel value indicating a blade is not represented by this carrier.
         pub const missing_blade_index = blade_masks.len;
 
         /// Returns the internal storage index for a blade mask,
@@ -302,8 +321,12 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
             }
         }
 
+        /// Whether this multivector uses SIMD vector storage.
         pub const use_simd = canUseLaneWiseSimd(T, stored_blade_count);
+        /// The underlying storage type (either a @Vector or a standard array).
         pub const Storage = if (use_simd) @Vector(stored_blade_count, T) else [stored_blade_count]T;
+        /// An `extern struct` providing named field access to coefficients.
+        /// Only populated for algebras with up to 5 dimensions.
         pub const Named = if (dimensions <= 5) off: {
             // FIXME: should be configurable
             const naming_options = blade_parsing.SignedBladeNamingOptions.fromSignature(sig);
@@ -336,43 +359,45 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
             );
         } else extern struct {};
 
+        /// Compact storage of all represented coefficients.
         coeffs: Storage,
+        /// Layout-compatible view providing named field access (e.g. `.named.e12`).
         named: Named,
 
         pub const Self = @This();
 
-        /// Related carrier type for the same coefficient type and signature
+        /// Returns a multivector type for the same coefficient type and signature
         /// but with a different set of stored blade masks.
         pub fn Rebind(comptime new_masks: []const BladeMask) type {
             return Multivector(T, new_masks, sig);
         }
 
-        /// Related carrier type for a single blade mask.
+        /// Returns a carrier type restricted to a single blade mask.
         pub fn BasisBladeType(comptime mask: BladeMask) type {
             return Rebind(&.{mask});
         }
 
-        /// Related carrier type storing every blade in the algebra.
+        /// Returns the carrier type storing every blade in the algebra.
         pub const FullType = FullMultivector(T, sig);
 
-        /// Related carrier type restricted to one grade.
+        /// Returns the carrier type restricted to one grade.
         pub fn GradeType(comptime target_grade: usize) type {
             return KVector(T, target_grade, sig);
         }
 
-        /// Related carrier type restricted to even grades.
+        /// Returns the carrier type restricted to even grades.
         pub const EvenType = EvenMultivector(T, sig);
 
-        /// Related carrier type restricted to odd grades.
+        /// Returns the carrier type restricted to odd grades.
         pub const OddType = OddMultivector(T, sig);
 
-        /// Related scalar carrier type.
+        /// Returns the scalar carrier type.
         pub const ScalarType = KVector(T, 0, sig);
 
-        /// Related grade-1 vector carrier type.
+        /// Returns the grade-1 vector carrier type.
         pub const VectorType = KVector(T, 1, sig);
 
-        /// Related grade-2 bivector carrier type.
+        /// Returns the grade-2 bivector carrier type.
         pub const BivectorType = KVector(T, 2, sig);
 
         /// Returns the coefficients as a standard array for indexing.
@@ -495,7 +520,8 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         pub fn setCoeff(self: *Self, mask: BladeMask, value: T) void {
             const index = Self.getBladeIndex(mask);
             if (index < Self.stored_blade_count) {
-                self.coeffs[index] = value;
+                const array_ptr: *[stored_blade_count]T = @ptrCast(self);
+                array_ptr[index] = value;
             }
         }
 
@@ -1540,4 +1566,33 @@ test "vga helpers use SIMD storage when appropriate" {
             try std.testing.expect(false);
         },
     }
+}
+
+test "multivector magnitude and wedge helpers" {
+    const E2 = Basis(f64, .euclidean(2));
+    const v = E2.e(1).scale(3).add(E2.e(2).scale(4));
+    try std.testing.expectEqual(@as(f64, 5.0), v.magnitude());
+
+    const e1 = E2.e(1);
+    const e2 = E2.e(2);
+    try std.testing.expect(e1.wedge(e2).eql(E2.signedBlade("e12")));
+
+    // Test wedge between different grades
+    const v_blade = E2.e(1);
+    const biv = E2.signedBlade("e12");
+    const Full = FullMultivector(f64, .euclidean(2));
+    try std.testing.expect(v_blade.wedge(biv).scalarCoeff() == 0);
+    try std.testing.expect(v_blade.wedge(biv).cast(Full).eql(Full.zero()));
+}
+
+test "multivector setCoeff modifies values correctly" {
+    const sig = comptime MetricSignature.euclidean(2);
+    const Vec2 = Vector(f32, sig);
+    var v = Vec2.zero();
+
+    v.setCoeff(blade_ops.basisVectorMask(2, 1), 10.0);
+    v.setCoeff(blade_ops.basisVectorMask(2, 2), 20.0);
+
+    try std.testing.expectEqual(@as(f32, 10.0), v.coeffNamed("e1"));
+    try std.testing.expectEqual(@as(f32, 20.0), v.coeffNamed("e2"));
 }
