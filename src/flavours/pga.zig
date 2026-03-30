@@ -24,11 +24,11 @@ pub const Point = struct {
     pub fn init(x: f32, y: f32, z: f32) h.Full {
         // PGA points are trivectors: x*e234 + y*e314 + z*e124 + e123
         // e4 is the degenerate basis vector (e0)
-        return h.exprAs(h.Full, "{x}*e2∧3∧4 + {y}*e3∧1∧4 + {z}*e1∧2∧4 + e1∧2∧3", .{ .x = x, .y = y, .z = z });
+        return h.exprAs(h.Full, "{x}*e234 + {y}*e314 + {z}*e124 + e123", .{ .x = x, .y = y, .z = z });
     }
 
     pub fn direction(x: f32, y: f32, z: f32) h.Full {
-        return h.exprAs(h.Full, "{x}*e2∧3∧4 + {y}*e3∧1∧4 + {z}*e1∧2∧4", .{ .x = x, .y = y, .z = z });
+        return h.exprAs(h.Full, "{x}*e234 + {y}*e314 + {z}*e124", .{ .x = x, .y = y, .z = z });
     }
 };
 
@@ -161,6 +161,18 @@ test "pga signed blade parser accepts e0 alias for degenerate basis" {
     try std.testing.expectError(error.InvalidBasisIndex, ga.resolveNamedBasisIndex(4, dimension, naming_options, false));
     try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBlade("e4", dimension, naming_options, false));
     try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBlade("e14", dimension, naming_options, false));
+}
+
+test "Point.init correctly constructs trivectors" {
+    const p = Point.init(1, 2, 3);
+    const E = h.Basis;
+
+    // x*e234 + y*e314 + z*e124 + e123
+    // e4 is e0
+    try std.testing.expectEqual(@as(f32, 1), p.coeff(E.mask(2).bitset.unionWith(E.mask(3).bitset).unionWith(E.mask(0).bitset))); // e234 (e230)
+    try std.testing.expectEqual(@as(f32, 2), p.coeff(E.mask(3).bitset.unionWith(E.mask(1).bitset).unionWith(E.mask(0).bitset))); // e314 (e310)
+    try std.testing.expectEqual(@as(f32, 3), p.coeff(E.mask(1).bitset.unionWith(E.mask(2).bitset).unionWith(E.mask(0).bitset))); // e124 (e120)
+    try std.testing.expectEqual(@as(f32, 1), p.coeff(E.mask(1).bitset.unionWith(E.mask(2).bitset).unionWith(E.mask(3).bitset))); // e123
 }
 
 test "toMatrix4x4 with identity rotor" {
