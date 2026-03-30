@@ -1103,6 +1103,51 @@ fn rightContractionMaskTable(
     return marked;
 }
 
+/// Compact map from blade mask to index, efficient for high dimensions.
+pub fn SortedBladeMaskMap(comptime blade_masks: []const BladeMask) type {
+    const Entry = struct {
+        mask: BladeMaskInt,
+        index: usize,
+
+        fn lessThan(_: void, lhs: @This(), rhs: @This()) bool {
+            return lhs.mask < rhs.mask;
+        }
+    };
+
+    const sorted_entries = blk: {
+        var entries: [blade_masks.len]Entry = undefined;
+        for (blade_masks, 0..) |mask, i| {
+            entries[i] = .{ .mask = mask.toInt(), .index = i };
+        }
+        std.mem.sort(Entry, &entries, {}, Entry.lessThan);
+        break :blk entries;
+    };
+
+    return struct {
+        pub const entries = sorted_entries;
+
+        pub fn get(mask: BladeMask) ?usize {
+            const m = mask.toInt();
+            var left: usize = 0;
+            var right: usize = entries.len;
+
+            while (left < right) {
+                const mid = left + (right - left) / 2;
+                const mid_mask = entries[mid].mask;
+                if (mid_mask == m) {
+                    return entries[mid].index;
+                } else if (mid_mask < m) {
+                    left = mid + 1;
+                } else {
+                    right = mid;
+                }
+            }
+
+            return null;
+        }
+    };
+}
+
 /// Returns a dense lookup table from blade mask to index within `blade_masks`.
 pub fn bladeIndexByMask(
     comptime dimension: usize,

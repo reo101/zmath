@@ -72,7 +72,7 @@ pub fn lorentzBoost(rapidity: f64, direction: Bivector) Rotor {
 
     // Direction part (bivector components)
     inline for (h.Bivector.blades, 0..) |mask, b_idx| {
-        const r_idx = h.Rotor.blade_index_by_mask[mask.toInt()];
+        const r_idx = h.Rotor.getBladeIndex(mask);
         rotor.coeffs[r_idx] = direction.coeffs[b_idx] * sinh_half;
     }
 

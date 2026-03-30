@@ -4,6 +4,8 @@ const blade_parsing = @import("blade_parsing.zig");
 const multivector = @import("multivector.zig");
 const meta = @import("../meta.zig");
 
+pub const BladeMask = blades.BladeMask;
+
 fn tupleFieldName(comptime index: usize) []const u8 {
     return std.fmt.comptimePrint("{d}", .{index});
 }
@@ -34,7 +36,7 @@ fn coerceScalar(comptime T: type, value: anytype) T {
 fn scalarConstant(comptime T: type, comptime sig: blades.MetricSignature, value: T) multivector.FullMultivector(T, sig) {
     const Full = multivector.FullMultivector(T, sig);
     var result = Full.zero();
-    result.coeffs[Full.blade_index_by_mask[0]] = value;
+    result.coeffs[Full.getBladeIndex(BladeMask.init(0))] = value;
     return result;
 }
 
@@ -378,6 +380,26 @@ fn ConstantValue(comptime T: type, comptime sig: blades.MetricSignature) type {
             return Self.fromFull(self.toFull().gp(rhs.toFull()));
         }
 
+        pub fn wedge(self: Self, rhs: Self) Self {
+            return Self.fromFull(self.toFull().wedge(rhs.toFull()).cast(Full));
+        }
+
+        pub fn join(self: Self, rhs: Self) Self {
+            return Self.fromFull(self.toFull().join(rhs.toFull()).cast(Full));
+        }
+
+        pub fn dot(self: Self, rhs: Self) Self {
+            return Self.fromFull(self.toFull().dot(rhs.toFull()).cast(Full));
+        }
+
+        pub fn leftContraction(self: Self, rhs: Self) Self {
+            return Self.fromFull(self.toFull().leftContraction(rhs.toFull()).cast(Full));
+        }
+
+        pub fn rightContraction(self: Self, rhs: Self) Self {
+            return Self.fromFull(self.toFull().rightContraction(rhs.toFull()).cast(Full));
+        }
+
         pub fn inverse(self: Self) ?Self {
             const inverse_value = self.toFull().inverse() orelse return null;
             return Self.fromFull(inverse_value.cast(Full));
@@ -394,6 +416,11 @@ fn ParserTypes(comptime T: type, comptime sig: blades.MetricSignature) type {
             plus: void,
             minus: void,
             star: void,
+            wedge: void,
+            join: void,
+            dot: void,
+            left_contraction: void,
+            right_contraction: void,
             lparen: void,
             rparen: void,
             inverse: void,
@@ -419,6 +446,11 @@ fn ParserTypes(comptime T: type, comptime sig: blades.MetricSignature) type {
             scale: Scale,
             add: Binary,
             gp: Binary,
+            wedge: Binary,
+            join: Binary,
+            dot: Binary,
+            left_contraction: Binary,
+            right_contraction: Binary,
         };
 
         pub const NodeInfo = struct {
@@ -577,6 +609,101 @@ fn parserBuildGp(
     return self.newNode(.{ .gp = .{ .lhs = lhs, .rhs = rhs } }, .{});
 }
 
+fn parserBuildWedge(
+    comptime T: type,
+    comptime sig: blades.MetricSignature,
+    self: anytype,
+    lhs: usize,
+    rhs: usize,
+) @TypeOf(self.*).ParserError!usize {
+    const lhs_info = self.nodeInfo(lhs);
+    const rhs_info = self.nodeInfo(rhs);
+
+    if (lhs_info.constant) |lhs_constant| {
+        if (rhs_info.constant) |rhs_constant| {
+            return parserConstantNode(T, sig, self, lhs_constant.wedge(rhs_constant));
+        }
+    }
+
+    return self.newNode(.{ .wedge = .{ .lhs = lhs, .rhs = rhs } }, .{});
+}
+
+fn parserBuildJoin(
+    comptime T: type,
+    comptime sig: blades.MetricSignature,
+    self: anytype,
+    lhs: usize,
+    rhs: usize,
+) @TypeOf(self.*).ParserError!usize {
+    const lhs_info = self.nodeInfo(lhs);
+    const rhs_info = self.nodeInfo(rhs);
+
+    if (lhs_info.constant) |lhs_constant| {
+        if (rhs_info.constant) |rhs_constant| {
+            return parserConstantNode(T, sig, self, lhs_constant.join(rhs_constant));
+        }
+    }
+
+    return self.newNode(.{ .join = .{ .lhs = lhs, .rhs = rhs } }, .{});
+}
+
+fn parserBuildDot(
+    comptime T: type,
+    comptime sig: blades.MetricSignature,
+    self: anytype,
+    lhs: usize,
+    rhs: usize,
+) @TypeOf(self.*).ParserError!usize {
+    const lhs_info = self.nodeInfo(lhs);
+    const rhs_info = self.nodeInfo(rhs);
+
+    if (lhs_info.constant) |lhs_constant| {
+        if (rhs_info.constant) |rhs_constant| {
+            return parserConstantNode(T, sig, self, lhs_constant.dot(rhs_constant));
+        }
+    }
+
+    return self.newNode(.{ .dot = .{ .lhs = lhs, .rhs = rhs } }, .{});
+}
+
+fn parserBuildLeftContraction(
+    comptime T: type,
+    comptime sig: blades.MetricSignature,
+    self: anytype,
+    lhs: usize,
+    rhs: usize,
+) @TypeOf(self.*).ParserError!usize {
+    const lhs_info = self.nodeInfo(lhs);
+    const rhs_info = self.nodeInfo(rhs);
+
+    if (lhs_info.constant) |lhs_constant| {
+        if (rhs_info.constant) |rhs_constant| {
+            return parserConstantNode(T, sig, self, lhs_constant.leftContraction(rhs_constant));
+        }
+    }
+
+    return self.newNode(.{ .left_contraction = .{ .lhs = lhs, .rhs = rhs } }, .{});
+}
+
+fn parserBuildRightContraction(
+    comptime T: type,
+    comptime sig: blades.MetricSignature,
+    self: anytype,
+    lhs: usize,
+    rhs: usize,
+) @TypeOf(self.*).ParserError!usize {
+    const lhs_info = self.nodeInfo(lhs);
+    const rhs_info = self.nodeInfo(rhs);
+
+    if (lhs_info.constant) |lhs_constant| {
+        if (rhs_info.constant) |rhs_constant| {
+            return parserConstantNode(T, sig, self, lhs_constant.rightContraction(rhs_constant));
+        }
+    }
+
+    return self.newNode(.{ .right_contraction = .{ .lhs = lhs, .rhs = rhs } }, .{});
+}
+
 fn parserBuildInverse(
     comptime T: type,
     comptime sig: blades.MetricSignature,
@@ -653,6 +780,61 @@ fn parserLexPlaceholder(
     return .{ .placeholder = name };
 }
 
+fn parserLexLatexOperator(
+    comptime T: type,
+    comptime sig: blades.MetricSignature,
+    self: anytype,
+) @TypeOf(self.*).ParserError!ParserTypes(T, sig).Token {
+    const start = self.position;
+    self.position += 1; // skip \
+    const name_start = self.position;
+
+    while (self.position < self.source.len and std.ascii.isAlphabetic(self.source[self.position])) {
+        self.position += 1;
+    }
+
+    const name = self.source[name_start..self.position];
+    if (std.mem.eql(u8, name, "wedge")) return .{ .wedge = {} };
+    if (std.mem.eql(u8, name, "vee")) return .{ .join = {} };
+    if (std.mem.eql(u8, name, "cdot")) return .{ .dot = {} };
+    if (std.mem.eql(u8, name, "rfloor")) return .{ .left_contraction = {} };
+    if (std.mem.eql(u8, name, "lfloor")) return .{ .right_contraction = {} };
+
+    self.position = start;
+    return error.UnexpectedToken;
+}
+
+fn parserLexUnicodeOperator(
+    comptime T: type,
+    comptime sig: blades.MetricSignature,
+    self: anytype,
+) @TypeOf(self.*).ParserError!ParserTypes(T, sig).Token {
+    const Types = ParserTypes(T, sig);
+    const Mapping = struct {
+        symbol: []const u8,
+        token: Types.Token,
+    };
+
+    const mappings = [_]Mapping{
+        .{ .symbol = "\u{2227}", .token = .{ .wedge = {} } }, // ∧
+        .{ .symbol = "\u{2228}", .token = .{ .join = {} } }, // ∨
+        .{ .symbol = "\u{22C5}", .token = .{ .dot = {} } }, // ⋅
+        .{ .symbol = "\u{00B7}", .token = .{ .dot = {} } }, // ·
+        .{ .symbol = "\u{230B}", .token = .{ .left_contraction = {} } }, // ⌋
+        .{ .symbol = "\u{230A}", .token = .{ .right_contraction = {} } }, // ⌊
+    };
+
+    const rest = self.source[self.position..];
+    inline for (mappings) |m| {
+        if (std.mem.startsWith(u8, rest, m.symbol)) {
+            self.position += m.symbol.len;
+            return m.token;
+        }
+    }
+
+    return error.UnexpectedToken;
+}
+
 fn parserNextToken(
     comptime T: type,
     comptime sig: blades.MetricSignature,
@@ -665,7 +847,8 @@ fn parserNextToken(
         return .{ .eof = {} };
     }
 
-    return switch (self.source[self.position]) {
+    const char = self.source[self.position];
+    return switch (char) {
         '+' => blk: {
             self.position += 1;
             break :blk .{ .plus = {} };
@@ -678,6 +861,40 @@ fn parserNextToken(
             self.position += 1;
             break :blk .{ .star = {} };
         },
+        '^' => blk: {
+            if (std.mem.startsWith(u8, self.source[self.position..], "^-1")) {
+                self.position += 3;
+                break :blk .{ .inverse = {} };
+            }
+            self.position += 1;
+            break :blk .{ .wedge = {} };
+        },
+        '&' => blk: {
+            self.position += 1;
+            break :blk .{ .join = {} };
+        },
+        '.' => blk: {
+            const next_pos = self.position + 1;
+            if (next_pos < self.source.len and std.ascii.isDigit(self.source[next_pos])) {
+                break :blk parserLexNumber(T, sig, self);
+            }
+            self.position += 1;
+            break :blk .{ .dot = {} };
+        },
+        '<' => blk: {
+            if (std.mem.startsWith(u8, self.source[self.position..], "<<")) {
+                self.position += 2;
+                break :blk .{ .left_contraction = {} };
+            }
+            return error.UnexpectedToken;
+        },
+        '>' => blk: {
+            if (std.mem.startsWith(u8, self.source[self.position..], ">>")) {
+                self.position += 2;
+                break :blk .{ .right_contraction = {} };
+            }
+            return error.UnexpectedToken;
+        },
         '(' => blk: {
             self.position += 1;
             break :blk .{ .lparen = {} };
@@ -686,16 +903,13 @@ fn parserNextToken(
             self.position += 1;
             break :blk .{ .rparen = {} };
         },
-        '^' => blk: {
-            if (!std.mem.startsWith(u8, self.source[self.position..], "^-1")) {
-                return error.UnsupportedExponent;
-            }
-            self.position += 3;
-            break :blk .{ .inverse = {} };
-        },
         '{' => parserLexPlaceholder(T, sig, self),
-        else => |char| blk: {
-            if (std.ascii.isDigit(char) or char == '.') {
+        '\\' => parserLexLatexOperator(T, sig, self),
+        else => blk: {
+            if (char & 0x80 != 0) {
+                break :blk parserLexUnicodeOperator(T, sig, self);
+            }
+            if (std.ascii.isDigit(char)) {
                 break :blk parserLexNumber(T, sig, self);
             }
             if (parserIsBladePrefixStart(self, char)) {
@@ -765,20 +979,37 @@ fn parserParseExpression(
     var lhs = try parserParsePrefix(T, sig, self);
 
     while (true) {
-        switch (self.current) {
+        const current_token = self.current;
+        switch (current_token) {
             .inverse => {
                 const left_bp: u8 = 9;
                 if (left_bp < min_bp) break;
                 try parserAdvance(T, sig, self);
                 lhs = try parserBuildInverse(T, sig, self, lhs);
             },
-            .star => {
+            .star, .wedge, .dot, .left_contraction, .right_contraction => |tag| {
+                _ = tag;
                 const left_bp: u8 = 5;
                 const right_bp: u8 = 6;
                 if (left_bp < min_bp) break;
                 try parserAdvance(T, sig, self);
                 const rhs = try parserParseExpression(T, sig, self, right_bp);
-                lhs = try parserBuildGp(T, sig, self, lhs, rhs);
+                lhs = switch (current_token) {
+                    .star => try parserBuildGp(T, sig, self, lhs, rhs),
+                    .wedge => try parserBuildWedge(T, sig, self, lhs, rhs),
+                    .dot => try parserBuildDot(T, sig, self, lhs, rhs),
+                    .left_contraction => try parserBuildLeftContraction(T, sig, self, lhs, rhs),
+                    .right_contraction => try parserBuildRightContraction(T, sig, self, lhs, rhs),
+                    else => unreachable,
+                };
+            },
+            .join => {
+                const left_bp: u8 = 4;
+                const right_bp: u8 = 5;
+                if (left_bp < min_bp) break;
+                try parserAdvance(T, sig, self);
+                const rhs = try parserParseExpression(T, sig, self, right_bp);
+                lhs = try parserBuildJoin(T, sig, self, lhs, rhs);
             },
             .plus => {
                 const left_bp: u8 = 3;
@@ -1132,13 +1363,19 @@ fn evalNode(
     comptime index: usize,
     args: anytype,
 ) multivector.FullMultivector(T, sig) {
+    const Full = multivector.FullMultivector(T, sig);
     return switch (compiled.nodes[index]) {
         .constant => |value| value.toFull(),
         .placeholder => |slot| promoteArg(T, sig, placeholderArg(placeholder_names, slot, args)),
         .negate => |child| evalNode(T, sig, placeholder_names, compiled, child, args).negate(),
         .scale => |scale| evalNode(T, sig, placeholder_names, compiled, scale.child, args).scale(scale.scalar),
-        .add => |binary| evalNode(T, sig, placeholder_names, compiled, binary.lhs, args).add(evalNode(T, sig, placeholder_names, compiled, binary.rhs, args)),
-        .gp => |binary| evalNode(T, sig, placeholder_names, compiled, binary.lhs, args).gp(evalNode(T, sig, placeholder_names, compiled, binary.rhs, args)),
+        .add => |binary| evalNode(T, sig, placeholder_names, compiled, binary.lhs, args).add(evalNode(T, sig, placeholder_names, compiled, binary.rhs, args)).cast(Full),
+        .gp => |binary| evalNode(T, sig, placeholder_names, compiled, binary.lhs, args).gp(evalNode(T, sig, placeholder_names, compiled, binary.rhs, args)).cast(Full),
+        .wedge => |binary| evalNode(T, sig, placeholder_names, compiled, binary.lhs, args).wedge(evalNode(T, sig, placeholder_names, compiled, binary.rhs, args)).cast(Full),
+        .join => |binary| evalNode(T, sig, placeholder_names, compiled, binary.lhs, args).join(evalNode(T, sig, placeholder_names, compiled, binary.rhs, args)).cast(Full),
+        .dot => |binary| evalNode(T, sig, placeholder_names, compiled, binary.lhs, args).dot(evalNode(T, sig, placeholder_names, compiled, binary.rhs, args)).cast(Full),
+        .left_contraction => |binary| evalNode(T, sig, placeholder_names, compiled, binary.lhs, args).leftContraction(evalNode(T, sig, placeholder_names, compiled, binary.rhs, args)).cast(Full),
+        .right_contraction => |binary| evalNode(T, sig, placeholder_names, compiled, binary.lhs, args).rightContraction(evalNode(T, sig, placeholder_names, compiled, binary.rhs, args)).cast(Full),
     };
 }
 
@@ -1150,13 +1387,19 @@ fn evalNodeRuntimeArgs(
     index: usize,
     args: anytype,
 ) RuntimeEvalError!multivector.FullMultivector(T, sig) {
+    const Full = multivector.FullMultivector(T, sig);
     return switch (nodes[index]) {
         .constant => |value| value.toFull(),
         .placeholder => |slot| placeholderArgRuntimeToFull(T, sig, placeholder_names, slot, args),
         .negate => |child| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, child, args)).negate(),
         .scale => |scale| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, scale.child, args)).scale(scale.scalar),
-        .add => |binary| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.lhs, args)).add(try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.rhs, args)),
-        .gp => |binary| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.lhs, args)).gp(try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.rhs, args)),
+        .add => |binary| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.lhs, args)).add(try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.rhs, args)).cast(Full),
+        .gp => |binary| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.lhs, args)).gp(try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.rhs, args)).cast(Full),
+        .wedge => |binary| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.lhs, args)).wedge(try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.rhs, args)).cast(Full),
+        .join => |binary| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.lhs, args)).join(try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.rhs, args)).cast(Full),
+        .dot => |binary| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.lhs, args)).dot(try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.rhs, args)).cast(Full),
+        .left_contraction => |binary| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.lhs, args)).leftContraction(try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.rhs, args)).cast(Full),
+        .right_contraction => |binary| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.lhs, args)).rightContraction(try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.rhs, args)).cast(Full),
     };
 }
 
@@ -1167,13 +1410,19 @@ fn evalNodeRuntimeSlots(
     index: usize,
     slot_values: []const multivector.FullMultivector(T, sig),
 ) RuntimeEvalError!multivector.FullMultivector(T, sig) {
+    const Full = multivector.FullMultivector(T, sig);
     return switch (nodes[index]) {
         .constant => |value| value.toFull(),
         .placeholder => |slot| slotValueRuntimeToFull(T, sig, slot_values, slot),
         .negate => |child| (try evalNodeRuntimeSlots(T, sig, nodes, child, slot_values)).negate(),
         .scale => |scale| (try evalNodeRuntimeSlots(T, sig, nodes, scale.child, slot_values)).scale(scale.scalar),
-        .add => |binary| (try evalNodeRuntimeSlots(T, sig, nodes, binary.lhs, slot_values)).add(try evalNodeRuntimeSlots(T, sig, nodes, binary.rhs, slot_values)),
-        .gp => |binary| (try evalNodeRuntimeSlots(T, sig, nodes, binary.lhs, slot_values)).gp(try evalNodeRuntimeSlots(T, sig, nodes, binary.rhs, slot_values)),
+        .add => |binary| (try evalNodeRuntimeSlots(T, sig, nodes, binary.lhs, slot_values)).add(try evalNodeRuntimeSlots(T, sig, nodes, binary.rhs, slot_values)).cast(Full),
+        .gp => |binary| (try evalNodeRuntimeSlots(T, sig, nodes, binary.lhs, slot_values)).gp(try evalNodeRuntimeSlots(T, sig, nodes, binary.rhs, slot_values)).cast(Full),
+        .wedge => |binary| (try evalNodeRuntimeSlots(T, sig, nodes, binary.lhs, slot_values)).wedge(try evalNodeRuntimeSlots(T, sig, nodes, binary.rhs, slot_values)).cast(Full),
+        .join => |binary| (try evalNodeRuntimeSlots(T, sig, nodes, binary.lhs, slot_values)).join(try evalNodeRuntimeSlots(T, sig, nodes, binary.rhs, slot_values)).cast(Full),
+        .dot => |binary| (try evalNodeRuntimeSlots(T, sig, nodes, binary.lhs, slot_values)).dot(try evalNodeRuntimeSlots(T, sig, nodes, binary.rhs, slot_values)).cast(Full),
+        .left_contraction => |binary| (try evalNodeRuntimeSlots(T, sig, nodes, binary.lhs, slot_values)).leftContraction(try evalNodeRuntimeSlots(T, sig, nodes, binary.rhs, slot_values)).cast(Full),
+        .right_contraction => |binary| (try evalNodeRuntimeSlots(T, sig, nodes, binary.lhs, slot_values)).rightContraction(try evalNodeRuntimeSlots(T, sig, nodes, binary.rhs, slot_values)).cast(Full),
     };
 }
 
@@ -1363,7 +1612,9 @@ pub fn compile(
 /// - numeric literals such as `0`, `1`, `2`, `0.5`
 /// - signed blades such as `e12`, `e(1,2)`, `e0`
 /// - placeholders such as `{v}` or `{}`
-/// - operators `+`, `-`, `*`, unary `+/-`, parentheses, and postfix `^-1`
+/// - operators `+`, `-`, `*`, `^`, `&`, `.`, `<<`, `>>`, unary `+/-`, parentheses, and postfix `^-1`
+/// - unicode operators `∧` (`^`), `∨` (`&`), `⋅`/`·` (`.`), `⌋` (`<<`), `⌊` (`>>`)
+/// - latex-style operators `\wedge`, `\vee`, `\cdot`, `\rfloor`, `\lfloor`
 ///
 /// Constant-only subexpressions are folded at comptime. Placeholder-bearing
 /// subtrees are left as residual operations and specialized into the generated
@@ -1387,6 +1638,38 @@ pub fn evaluateAs(
     args: anytype,
 ) Result {
     return compile(T, sig, naming_options, source).evalAs(Result, args);
+}
+
+test "expression supports GA operators" {
+    const sig = comptime blades.MetricSignature.euclidean(3);
+    const options = comptime blade_parsing.SignedBladeNamingOptions.euclidean(3);
+    const Basis = multivector.Basis(f32, sig);
+    const e1 = Basis.e(1);
+    const e2 = Basis.e(2);
+
+    // Wedge
+    try std.testing.expect(evaluate(f32, sig, options, "e1 ^ e2", .{}).eql(Basis.signedBlade("e12")));
+    try std.testing.expect(evaluate(f32, sig, options, "e1 ∧ e2", .{}).eql(Basis.signedBlade("e12")));
+    try std.testing.expect(evaluate(f32, sig, options, "e1 \\wedge e2", .{}).eql(Basis.signedBlade("e12")));
+
+    // Dot
+    try std.testing.expect(evaluate(f32, sig, options, "e1 . e1", .{}).scalarCoeff() == 1.0);
+    try std.testing.expect(evaluate(f32, sig, options, "e1 ⋅ e1", .{}).scalarCoeff() == 1.0);
+    try std.testing.expect(evaluate(f32, sig, options, "e1 · e1", .{}).scalarCoeff() == 1.0);
+    try std.testing.expect(evaluate(f32, sig, options, "e1 \\cdot e1", .{}).scalarCoeff() == 1.0);
+
+    // Contractions
+    try std.testing.expect(evaluate(f32, sig, options, "e1 << e12", .{}).eql(e2));
+    try std.testing.expect(evaluate(f32, sig, options, "e1 ⌋ e12", .{}).eql(e2));
+    try std.testing.expect(evaluate(f32, sig, options, "e1 \\rfloor e12", .{}).eql(e2));
+    try std.testing.expect(evaluate(f32, sig, options, "e12 >> e2", .{}).eql(e1));
+    try std.testing.expect(evaluate(f32, sig, options, "e12 ⌊ e2", .{}).eql(e1));
+    try std.testing.expect(evaluate(f32, sig, options, "e12 \\lfloor e2", .{}).eql(e1));
+
+    // Join
+    try std.testing.expect(evaluate(f32, sig, options, "e12 & e23", .{}).eql(Basis.e(2).negate()));
+    try std.testing.expect(evaluate(f32, sig, options, "e12 ∨ e23", .{}).eql(Basis.e(2).negate()));
+    try std.testing.expect(evaluate(f32, sig, options, "e12 \\vee e23", .{}).eql(Basis.e(2).negate()));
 }
 
 test "expression folds constant blade arithmetic" {
