@@ -1462,18 +1462,6 @@ pub fn RuntimeCompiledExpression(comptime T: type, comptime sig: blades.MetricSi
             return try exactResultCast(Result, T, sig, try self.eval(args));
         }
 
-        pub fn evaluate(self: Self, args: anytype) RuntimeEvalError!Full {
-            return self.eval(args);
-        }
-
-        pub fn evaluateAs(
-            self: Self,
-            comptime Result: type,
-            args: anytype,
-        ) (RuntimeEvalError || multivector.ExactCastError)!Result {
-            return self.evalAs(Result, args);
-        }
-
         pub fn evalSlots(self: Self, slot_values: []const Full) RuntimeEvalError!Full {
             if (slot_values.len != self.placeholders.len) return error.PlaceholderCountMismatch;
             return evalNodeRuntimeSlots(T, sig, self.nodes, self.root, slot_values);
@@ -1582,20 +1570,13 @@ pub fn CompiledExpression(
             return evalNode(T, sig, placeholder_names, compiled, compiled.root, args);
         }
 
-        pub fn evalAs(_: Self, comptime Result: type, args: anytype) Result {
-            return exactResultCast(Result, T, sig, Self.eval(.{}, args)) catch @panic("expression result had non-zero coefficients outside the requested carrier");
-        }
-
-        pub fn evaluate(self: Self, args: anytype) Full {
-            return self.eval(args);
-        }
-
-        pub fn evaluateAs(self: Self, comptime Result: type, args: anytype) Result {
-            return self.evalAs(Result, args);
+        pub fn evalAs(self: Self, comptime Result: type, args: anytype) Result {
+            return exactResultCast(Result, T, sig, self.eval(args)) catch @panic("expression result had non-zero coefficients outside the requested carrier");
         }
     };
 }
 
+/// Compiles a small multivector expression at comptime.
 pub fn compile(
     comptime T: type,
     comptime sig: blades.MetricSignature,
@@ -1619,7 +1600,7 @@ pub fn compile(
 /// Constant-only subexpressions are folded at comptime. Placeholder-bearing
 /// subtrees are left as residual operations and specialized into the generated
 /// code.
-pub fn evaluate(
+pub fn eval(
     comptime T: type,
     comptime sig: blades.MetricSignature,
     comptime naming_options: blade_parsing.SignedBladeNamingOptions,
@@ -1629,7 +1610,8 @@ pub fn evaluate(
     return compile(T, sig, naming_options, source).eval(args);
 }
 
-pub fn evaluateAs(
+/// Like `eval`, but casts the result to `Result` carrier type.
+pub fn evalAs(
     comptime Result: type,
     comptime T: type,
     comptime sig: blades.MetricSignature,
@@ -1648,33 +1630,33 @@ test "expression supports GA operators" {
     const e2 = Basis.e(2);
 
     // Wedge
-    try std.testing.expect(evaluate(f32, sig, options, "e1 ^ e2", .{}).eql(Basis.signedBlade("e12")));
-    try std.testing.expect(evaluate(f32, sig, options, "e1 ∧ e2", .{}).eql(Basis.signedBlade("e12")));
-    try std.testing.expect(evaluate(f32, sig, options, "e1 \\wedge e2", .{}).eql(Basis.signedBlade("e12")));
+    try std.testing.expect(eval(f32, sig, options, "e1 ^ e2", .{}).eql(Basis.signedBlade("e12")));
+    try std.testing.expect(eval(f32, sig, options, "e1 ∧ e2", .{}).eql(Basis.signedBlade("e12")));
+    try std.testing.expect(eval(f32, sig, options, "e1 \\wedge e2", .{}).eql(Basis.signedBlade("e12")));
 
     // Dot
-    try std.testing.expect(evaluate(f32, sig, options, "e1 . e1", .{}).scalarCoeff() == 1.0);
-    try std.testing.expect(evaluate(f32, sig, options, "e1 ⋅ e1", .{}).scalarCoeff() == 1.0);
-    try std.testing.expect(evaluate(f32, sig, options, "e1 · e1", .{}).scalarCoeff() == 1.0);
-    try std.testing.expect(evaluate(f32, sig, options, "e1 \\cdot e1", .{}).scalarCoeff() == 1.0);
+    try std.testing.expect(eval(f32, sig, options, "e1 . e1", .{}).scalarCoeff() == 1.0);
+    try std.testing.expect(eval(f32, sig, options, "e1 ⋅ e1", .{}).scalarCoeff() == 1.0);
+    try std.testing.expect(eval(f32, sig, options, "e1 · e1", .{}).scalarCoeff() == 1.0);
+    try std.testing.expect(eval(f32, sig, options, "e1 \\cdot e1", .{}).scalarCoeff() == 1.0);
 
     // Contractions
-    try std.testing.expect(evaluate(f32, sig, options, "e1 << e12", .{}).eql(e2));
-    try std.testing.expect(evaluate(f32, sig, options, "e1 ⌋ e12", .{}).eql(e2));
-    try std.testing.expect(evaluate(f32, sig, options, "e1 \\rfloor e12", .{}).eql(e2));
-    try std.testing.expect(evaluate(f32, sig, options, "e12 >> e2", .{}).eql(e1));
-    try std.testing.expect(evaluate(f32, sig, options, "e12 ⌊ e2", .{}).eql(e1));
-    try std.testing.expect(evaluate(f32, sig, options, "e12 \\lfloor e2", .{}).eql(e1));
+    try std.testing.expect(eval(f32, sig, options, "e1 << e12", .{}).eql(e2));
+    try std.testing.expect(eval(f32, sig, options, "e1 ⌋ e12", .{}).eql(e2));
+    try std.testing.expect(eval(f32, sig, options, "e1 \\rfloor e12", .{}).eql(e2));
+    try std.testing.expect(eval(f32, sig, options, "e12 >> e2", .{}).eql(e1));
+    try std.testing.expect(eval(f32, sig, options, "e12 ⌊ e2", .{}).eql(e1));
+    try std.testing.expect(eval(f32, sig, options, "e12 \\lfloor e2", .{}).eql(e1));
 
     // Join
-    try std.testing.expect(evaluate(f32, sig, options, "e12 & e23", .{}).eql(Basis.e(2).negate()));
-    try std.testing.expect(evaluate(f32, sig, options, "e12 ∨ e23", .{}).eql(Basis.e(2).negate()));
-    try std.testing.expect(evaluate(f32, sig, options, "e12 \\vee e23", .{}).eql(Basis.e(2).negate()));
+    try std.testing.expect(eval(f32, sig, options, "e12 & e23", .{}).eql(Basis.e(2).negate()));
+    try std.testing.expect(eval(f32, sig, options, "e12 ∨ e23", .{}).eql(Basis.e(2).negate()));
+    try std.testing.expect(eval(f32, sig, options, "e12 \\vee e23", .{}).eql(Basis.e(2).negate()));
 }
 
 test "expression folds constant blade arithmetic" {
     const sig = comptime blades.MetricSignature.euclidean(3);
-    const value = evaluate(f32, sig, blade_parsing.SignedBladeNamingOptions.euclidean(3), "2*e12 + e21", .{});
+    const value = eval(f32, sig, blade_parsing.SignedBladeNamingOptions.euclidean(3), "2*e12 + e21", .{});
 
     try std.testing.expectEqual(@as(f32, 1), value.coeffNamed("e12"));
     try std.testing.expectEqual(@as(f32, 0), value.coeffNamed("e13"));
@@ -1717,7 +1699,7 @@ test "expression reuses placeholder names" {
 
 test "expression supports postfix inverse on comptime values" {
     const sig = comptime blades.MetricSignature.euclidean(3);
-    const value = evaluate(f32, sig, blade_parsing.SignedBladeNamingOptions.euclidean(3), "(2*e1)^-1", .{});
+    const value = eval(f32, sig, blade_parsing.SignedBladeNamingOptions.euclidean(3), "(2*e1)^-1", .{});
 
     try std.testing.expectEqual(@as(f32, 0.5), value.coeffNamed("e1"));
 }

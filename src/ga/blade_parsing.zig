@@ -41,13 +41,13 @@ pub const SignedBladeNamingOptions = struct {
     /// Whether compact spellings like `e12` are accepted.
     allow_compact_form: bool = true,
 
-    /// Whether underscore spellings like `e_10_2` are accepted.
+    /// Whether underscore spellings like `e_1_2` are accepted.
     allow_underscore_form: bool = true,
 
-    /// Whether parenthesized spellings like `e(10,2)` are accepted.
+    /// Whether parenthesized spellings like `e(1,2)` are accepted.
     allow_parenthesized_form: bool = true,
 
-    /// Whether bracketed spellings like `e[10,2]` are accepted.
+    /// Whether bracketed spellings like `e[1,2]` are accepted.
     allow_bracketed_form: bool = true,
 
     /// Builds naming options from basis spans while keeping parser syntax
@@ -95,7 +95,7 @@ pub const SignedBladeNamingOptions = struct {
 };
 
 fn isDigit(char: u8) bool {
-    return char >= '0' and char <= '9';
+    return std.ascii.isDigit(char);
 }
 
 fn runtimeDefaultOptions(dimension: usize) SignedBladeNamingOptions {

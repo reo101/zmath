@@ -36,8 +36,8 @@ pub const normSquared = rotors.normSquared;
 pub const normalize = rotors.normalize;
 pub const normalized = rotors.normalized;
 pub const normalizedRotor = rotors.normalizedRotor;
-pub const dual = rotors.dual; // Wait, dual is in Multivector, let's export a generic one if possible or just use Multivector.dual
 
+/// Parses a signed blade name into a canonical spec.
 pub fn parseSignedBlade(
     comptime name: []const u8,
     comptime dimension: usize,
@@ -47,6 +47,7 @@ pub fn parseSignedBlade(
     return blade_parsing.parseSignedBlade(name, dimension, options, panicking);
 }
 
+/// Parses a signed blade name, panicking on failure.
 pub fn expectSignedBlade(
     comptime name: []const u8,
     comptime dimension: usize,
@@ -55,6 +56,7 @@ pub fn expectSignedBlade(
     return parseSignedBlade(name, dimension, options, true);
 }
 
+/// Resolves a named basis index into its sequential internal index.
 pub fn resolveNamedBasisIndex(
     comptime named_index: usize,
     comptime dimension: usize,
@@ -64,6 +66,7 @@ pub fn resolveNamedBasisIndex(
     return blade_parsing.resolveNamedBasisIndex(named_index, dimension, options, panicking);
 }
 
+/// Resolves a named basis index, panicking on failure.
 pub fn expectNamedBasisIndex(
     comptime named_index: usize,
     comptime dimension: usize,
@@ -72,22 +75,22 @@ pub fn expectNamedBasisIndex(
     return resolveNamedBasisIndex(named_index, dimension, options, true);
 }
 
-pub const MultivectorWithSignature = multivector.Multivector;
-pub const BasisWithSignature = multivector.Basis;
-pub const FullMultivectorWithSignature = multivector.FullMultivector;
-pub const KVectorWithSignature = multivector.KVector;
-pub const EvenMultivectorWithSignature = multivector.EvenMultivector;
-pub const OddMultivectorWithSignature = multivector.OddMultivector;
-pub const ScalarWithSignature = multivector.Scalar;
-pub const VectorWithSignature = multivector.Vector;
-pub const BivectorWithSignature = multivector.Bivector;
-pub const TrivectorWithSignature = multivector.Trivector;
-pub const PseudoscalarWithSignature = multivector.Pseudoscalar;
-pub const RotorWithSignature = multivector.Rotor;
-pub const basisBladeWithSignature = multivector.basisBlade;
-pub const basisVectorWithSignature = multivector.basisVector;
-pub const signedBladeWithSignature = multivector.signedBlade;
-pub const signedBladeWithSignatureAndOptions = multivector.signedBladeWithOptions;
+pub const Multivector = multivector.Multivector;
+pub const Basis = multivector.Basis;
+pub const FullMultivector = multivector.FullMultivector;
+pub const KVector = multivector.KVector;
+pub const EvenMultivector = multivector.EvenMultivector;
+pub const OddMultivector = multivector.OddMultivector;
+pub const Scalar = multivector.Scalar;
+pub const Vector = multivector.Vector;
+pub const Bivector = multivector.Bivector;
+pub const Trivector = multivector.Trivector;
+pub const Pseudoscalar = multivector.Pseudoscalar;
+pub const Rotor = multivector.Rotor;
+pub const basisBlade = multivector.basisBlade;
+pub const basisVector = multivector.basisVector;
+pub const signedBlade = multivector.signedBlade;
+pub const signedBladeWithOptions = multivector.signedBladeWithOptions;
 
 /// Returns a signature-baked algebra namespace for a fixed `Cl(p, q, r)`.
 pub fn Algebra(comptime sig: MetricSignature) type {
@@ -102,18 +105,22 @@ pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_o
         pub const dimension = metric_signature.dimension();
         pub const naming = naming_options;
 
+        /// Generic multivector type for this algebra.
         pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask) type {
             return multivector.Multivector(T, blade_masks, metric_signature);
         }
 
+        /// Basis helper for this algebra.
         pub fn Basis(comptime T: type) type {
             return multivector.BasisWithNamingOptions(T, metric_signature, naming);
         }
 
+        /// Full multivector carrier for this algebra.
         pub fn FullMultivector(comptime T: type) type {
             return multivector.FullMultivector(T, metric_signature);
         }
 
+        /// Grade-restricted multivector carrier for this algebra.
         pub fn KVector(comptime T: type, comptime grade: usize) type {
             return multivector.KVector(T, grade, metric_signature);
         }
@@ -150,6 +157,7 @@ pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_o
             return multivector.Rotor(T, metric_signature);
         }
 
+        /// Constructs a unit basis blade from a mask.
         pub fn basisBlade(
             comptime T: type,
             comptime mask: BladeMask,
@@ -157,6 +165,7 @@ pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_o
             return multivector.basisBlade(T, mask, metric_signature);
         }
 
+        /// Constructs a basis vector from a one-based index.
         pub fn basisVector(
             comptime T: type,
             comptime one_based_index: usize,
@@ -164,6 +173,7 @@ pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_o
             return multivector.basisVector(T, one_based_index, metric_signature);
         }
 
+        /// Constructs a signed blade from a name string.
         pub fn signedBlade(
             comptime T: type,
             comptime name: []const u8,
@@ -171,6 +181,7 @@ pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_o
             return multivector.signedBladeWithOptions(T, name, metric_signature, naming);
         }
 
+        /// Constructs a signed blade from internal indices.
         pub fn fullSignedBladeFromIndices(
             comptime T: type,
             indices: []const usize,
@@ -192,54 +203,72 @@ pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_o
                 pub const Rotor = Self.Rotor(T);
                 pub const Basis = Self.Basis(T);
 
+                /// Constructs a unit basis blade from a mask.
                 pub fn basisBlade(comptime mask: BladeMask) multivector.BasisBladeType(T, mask, metric_signature) {
                     return Self.basisBlade(T, mask);
                 }
 
+                /// Constructs a basis vector from a one-based index.
                 pub fn basisVector(comptime index: usize) multivector.BasisBladeType(T, blades.basisVectorMask(metric_signature.dimension(), index), metric_signature) {
                     return Self.basisVector(T, index);
                 }
 
+                /// Constructs a signed blade from a name string.
                 pub fn signedBlade(comptime name: []const u8) multivector.SignedBladeTypeWithOptions(T, name, metric_signature, naming) {
                     return Self.signedBlade(T, name);
                 }
 
+                /// Returns the Euclidean norm of a multivector.
                 pub fn norm(mv: anytype) T {
                     return rotors.norm(mv);
                 }
 
+                /// Returns the Euclidean norm squared of a multivector.
                 pub fn normSquared(mv: anytype) T {
                     return rotors.normSquared(mv);
                 }
 
+                /// Normalizes a multivector to unit magnitude.
                 pub fn normalize(mv: anytype) rotors.RotorError!@TypeOf(mv) {
                     return rotors.normalize(mv);
                 }
 
+                /// Normalizes a multivector, returning it as is if zero.
                 pub fn normalized(mv: anytype) @TypeOf(mv) {
                     return rotors.normalized(mv);
                 }
 
+                /// Normalizes a rotor, returning it as is if zero.
                 pub fn normalizedRotor(rotor: anytype) @TypeOf(rotor) {
                     return rotors.normalizedRotor(rotor);
                 }
 
+                /// Returns the magnitude of a multivector.
                 pub fn magnitude(mv: anytype) T {
                     return rotors.norm(mv);
                 }
 
+                /// Returns the Hodge/Poincaré dual of a multivector.
                 pub fn dual(mv: anytype) multivector.DualResultType(T, @TypeOf(mv).blades, metric_signature) {
                     return mv.dual();
                 }
 
+                /// Returns the outer product (wedge) of two multivectors.
+                pub fn wedge(lhs: anytype, rhs: anytype) @TypeOf(lhs.wedge(rhs)) {
+                    return lhs.wedge(rhs);
+                }
+
+                /// Compiles a multivector expression string at comptime.
                 pub fn compileExpr(comptime source: []const u8) expression.CompiledExpression(T, metric_signature, naming, source) {
                     return expression.compile(T, metric_signature, naming, source);
                 }
 
+                /// Evaluates a multivector expression string.
                 pub fn expr(comptime source: []const u8, args: anytype) multivector.FullMultivector(T, metric_signature) {
                     return compileExpr(source).eval(args);
                 }
 
+                /// Evaluates a multivector expression string into a specific result type.
                 pub fn exprAs(comptime Result: type, comptime source: []const u8, args: anytype) Result {
                     return compileExpr(source).evalAs(Result, args);
                 }
