@@ -15,8 +15,7 @@ pub const SphericalGroundHit = struct {
     forward: f32,
 };
 
-pub fn worldGroundBasis(metric: curved.Metric) GroundBasis {
-    _ = metric;
+pub fn worldGroundBasis() GroundBasis {
     return .{
         .origin = .{ 1.0, 0.0, 0.0, 0.0 },
         .right = .{ 0.0, 1.0, 0.0, 0.0 },
@@ -26,7 +25,7 @@ pub fn worldGroundBasis(metric: curved.Metric) GroundBasis {
 }
 
 pub fn sphericalGroundBasisForPass(pass: curved.SphericalRenderPass) GroundBasis {
-    const basis = worldGroundBasis(.spherical);
+    const basis = worldGroundBasis();
     return switch (pass) {
         .near => basis,
         .far => .{
@@ -184,7 +183,7 @@ test "signedGroundBasisForView flips spherical negative scene" {
         curved.vec3(0.0, 0.0, -0.82),
         curved.vec3(0.0, 0.0, 0.0),
     );
-    const basis = worldGroundBasis(.spherical);
+    const basis = worldGroundBasis();
     const positive = signedGroundBasisForView(view, basis);
     view.scene_sign = -1.0;
     const negative = signedGroundBasisForView(view, basis);
@@ -204,7 +203,7 @@ test "sphericalGroundHitForScreenPoint returns centered finite hit" {
         curved.vec3(0.0, 0.0, -0.82),
         curved.vec3(0.0, 0.0, 0.0),
     );
-    const basis = worldGroundBasis(.spherical);
+    const basis = worldGroundBasis();
     const screen = curved.Screen{ .width = 160, .height = 90, .zoom = 1.0 };
     const hit = sphericalGroundHitForScreenPoint(view, basis, screen, .{ 80.0, 45.0 }) orelse return error.TestUnexpectedResult;
 

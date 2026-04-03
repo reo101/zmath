@@ -1051,6 +1051,136 @@ fn parserParseExpression(
     return lhs;
 }
 
+const CompilerStorageCaps = struct {
+    max_nodes: usize,
+    max_placeholders: usize,
+};
+
+fn tokenStartsImplicitGp(
+    comptime T: type,
+    comptime sig: blades.MetricSignature,
+    token: ParserTypes(T, sig).Token,
+) bool {
+    return switch (token) {
+        .number, .blade, .placeholder, .lparen => true,
+        else => false,
+    };
+}
+
+fn compilerStorageCaps(
+    comptime T: type,
+    comptime sig: blades.MetricSignature,
+    comptime naming_options: blade_parsing.SignedBladeNamingOptions,
+    comptime source: []const u8,
+) CompilerStorageCaps {
+    const Lexer = struct {
+        pub const ParserError = RuntimeCompileError;
+
+        source: []const u8,
+        position: usize = 0,
+        current_start: usize = 0,
+        naming_options: blade_parsing.SignedBladeNamingOptions,
+    };
+
+    const placeholder_token_count = comptime blk: {
+        var lexer = Lexer{
+            .source = source,
+            .naming_options = naming_options,
+        };
+        var count: usize = 0;
+
+        while (true) {
+            const token = parserNextToken(T, sig, &lexer) catch |err| {
+                compileErrorAt(source, lexer.current_start, parserErrorMessage(err));
+            };
+            switch (token) {
+                .eof => break,
+                .placeholder => count += 1,
+                else => {},
+            }
+        }
+
+        break :blk count;
+    };
+
+    var unique_placeholder_names: [placeholder_token_count][]const u8 = undefined;
+    var unique_placeholder_count: usize = 0;
+    var operand_node_count: usize = 0;
+    var operator_node_count: usize = 0;
+    var expecting_prefix = true;
+
+    var lexer = Lexer{
+        .source = source,
+        .naming_options = naming_options,
+    };
+
+    while (true) {
+        const token = parserNextToken(T, sig, &lexer) catch |err| {
+            compileErrorAt(source, lexer.current_start, parserErrorMessage(err));
+        };
+        switch (token) {
+            .eof => break,
+            else => {},
+        }
+
+        if (!expecting_prefix and tokenStartsImplicitGp(T, sig, token)) {
+            operator_node_count += 1;
+            expecting_prefix = true;
+        }
+
+        if (expecting_prefix) {
+            switch (token) {
+                .number, .blade => {
+                    operand_node_count += 1;
+                    expecting_prefix = false;
+                },
+                .placeholder => |name| {
+                    operand_node_count += 1;
+                    if (name.len == 0) {
+                        unique_placeholder_count += 1;
+                    } else {
+                        var found = false;
+                        for (unique_placeholder_names[0..unique_placeholder_count]) |existing| {
+                            if (std.mem.eql(u8, existing, name)) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            unique_placeholder_names[unique_placeholder_count] = name;
+                            unique_placeholder_count += 1;
+                        }
+                    }
+                    expecting_prefix = false;
+                },
+                .lparen, .plus => {},
+                .minus => operator_node_count += 1,
+                else => {},
+            }
+            continue;
+        }
+
+        switch (token) {
+            .inverse => operator_node_count += 1,
+            .star, .wedge, .join, .dot, .left_contraction, .right_contraction, .plus => {
+                operator_node_count += 1;
+                expecting_prefix = true;
+            },
+            .slash, .minus => {
+                operator_node_count += 2;
+                expecting_prefix = true;
+            },
+            .rparen => {},
+            else => {},
+        }
+    }
+
+    return .{
+        .max_nodes = @max(operand_node_count + operator_node_count, 1),
+        .max_placeholders = unique_placeholder_count,
+    };
+}
+
 fn parserCompile(
     comptime T: type,
     comptime sig: blades.MetricSignature,
@@ -1555,11 +1685,12 @@ pub fn CompiledExpression(
     comptime source: []const u8,
 ) type {
     const Full = multivector.FullMultivector(T, sig);
+    const caps = comptime compilerStorageCaps(T, sig, naming_options, source);
     const Storage = FixedCompilerStorage(
         T,
         sig,
-        source.len * 4 + 8,
-        if (source.len == 0) 1 else source.len,
+        caps.max_nodes,
+        caps.max_placeholders,
     );
     const CompilerImpl = Compiler(T, sig, Storage);
     const compiled = comptime blk: {
@@ -1834,6 +1965,37 @@ test "expression supports implicit multiplication" {
     try std.testing.expect(half_inv_i.eql(half_inv_i_spaced));
 }
 
+test "compiler storage caps derive from expression grammar" {
+    const sig = comptime blades.MetricSignature.euclidean(2);
+    const naming = comptime b: {
+        var opts = blade_parsing.SignedBladeNamingOptions.fromSignature(sig);
+        opts.blade_aliases = &.{.{
+            .name = "i",
+            .spec = .{ .sign = .positive, .mask = .init(0b11) },
+        }};
+        break :b opts;
+    };
+
+    const inverse_caps = comptime compilerStorageCaps(f32, sig, naming, "1/2 i");
+    try std.testing.expectEqual(@as(usize, 6), inverse_caps.max_nodes);
+    try std.testing.expectEqual(@as(usize, 0), inverse_caps.max_placeholders);
+
+    const placeholder_caps = comptime compilerStorageCaps(f32, sig, naming, "{a}+{a}+{}");
+    try std.testing.expectEqual(@as(usize, 5), placeholder_caps.max_nodes);
+    try std.testing.expectEqual(@as(usize, 2), placeholder_caps.max_placeholders);
+
+    const Storage = FixedCompilerStorage(f32, sig, placeholder_caps.max_nodes, placeholder_caps.max_placeholders);
+    const CompilerImpl = Compiler(f32, sig, Storage);
+    const compiled = comptime blk: {
+        var compiler = CompilerImpl.init("{a}+{a}+{}", naming, .{});
+        break :blk parserCompile(f32, sig, &compiler) catch |err| switch (err) {
+            error.ExpressionTooLarge => compileErrorAt("{a}+{a}+{}", compiler.current_start, "expression is too large"),
+            inline else => compileErrorAt("{a}+{a}+{}", compiler.current_start, parserErrorMessage(err)),
+        };
+    };
+    try std.testing.expectEqual(@as(usize, 2), compiled.placeholder_count);
+}
+
 test "AST shape of simple expressions" {
     const sig = comptime blades.MetricSignature.euclidean(2);
     const naming = comptime b: {
@@ -1849,7 +2011,8 @@ test "AST shape of simple expressions" {
     const Const = ConstantValue(f32, sig);
     const compileAst = struct {
         fn f(comptime source: []const u8) struct { nodes: []const Node, root: usize, placeholders: []const []const u8 } {
-            const Storage = FixedCompilerStorage(f32, sig, source.len * 4 + 8, if (source.len == 0) 1 else source.len);
+            const caps = comptime compilerStorageCaps(f32, sig, naming, source);
+            const Storage = FixedCompilerStorage(f32, sig, caps.max_nodes, caps.max_placeholders);
             const CompilerImpl = Compiler(f32, sig, Storage);
             const compiled = comptime blk: {
                 var compiler = CompilerImpl.init(source, naming, .{});

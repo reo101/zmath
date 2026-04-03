@@ -63,7 +63,7 @@ fn isSignedIntType(comptime T: type) bool {
 pub fn isMultivectorType(comptime T: type) bool {
     return meta.hasDecls(T, &.{ "dimensions", "Coefficient", "blades", "metric_signature" }) and
         switch (@typeInfo(T)) {
-            .@"struct", .@"union" => @hasField(T, "coeffs"),
+            .@"struct" => @hasField(T, "coeffs"),
             else => false,
         };
 }

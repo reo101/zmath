@@ -2,8 +2,13 @@ const std = @import("std");
 
 pub const ga = @import("../ga.zig");
 
-const algebra = ga.Algebra(ga.euclideanSignature(2));
-pub const h = algebra.Instantiate(f64);
+pub const Algebra = ga.Algebra(ga.euclideanSignature(2));
+
+pub fn Instantiate(comptime T: type) type {
+    return Algebra.Instantiate(T);
+}
+
+pub const h = Instantiate(f64);
 
 pub const rotors = ga.rotors;
 

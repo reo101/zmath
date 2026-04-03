@@ -292,14 +292,13 @@ pub const View = struct {
         };
     }
 
-    pub fn walkSurfaceUp(self: View, pitch_angle: f32) ?Vec4 {
-        _ = pitch_angle;
+    pub fn walkSurfaceUp(self: View) ?Vec4 {
         const basis = headingBasis(self.metric, self.camera) orelse return null;
         return basis.up;
     }
 
     pub fn walkSurfaceBasis(self: View, pitch_angle: f32) ?WalkBasis {
-        const up = self.walkSurfaceUp(pitch_angle) orelse return null;
+        const up = self.walkSurfaceUp() orelse return null;
         const forward = orthonormalCandidate(self.metric, self.camera.position, self.camera.forward, &.{up}) orelse
             fallback_forward: {
                 const up_sign: f32 = if (pitch_angle >= 0.0) -1.0 else 1.0;
@@ -1570,10 +1569,10 @@ test "surface yaw keeps spherical walk surface up fixed" {
         .{ 0.0, 0.0, 0.0 },
     );
     spherical.syncHeadingPitch(0.0, 1.0, 0.95);
-    const before_up = spherical.walkSurfaceUp(0.95).?;
+    const before_up = spherical.walkSurfaceUp().?;
     const before_position = spherical.camera.position;
     spherical.turnSurfaceYaw(0.35, 0.95);
-    const after_up = spherical.walkSurfaceUp(0.95).?;
+    const after_up = spherical.walkSurfaceUp().?;
     const orientation = spherical.walkOrientation().?;
 
     const up_dot = before_up[0] * after_up[0] +
@@ -1600,9 +1599,9 @@ test "surface pitch keeps spherical walk pitch tied to the surface normal" {
         .{ 0.0, 0.0, 0.0 },
     );
     spherical.syncHeadingPitch(0.0, 1.0, 0.35);
-    const before_up = spherical.walkSurfaceUp(0.35).?;
+    const before_up = spherical.walkSurfaceUp().?;
     spherical.syncSurfacePitch(1.05);
-    const after_up = spherical.walkSurfaceUp(1.05).?;
+    const after_up = spherical.walkSurfaceUp().?;
     const orientation = spherical.walkOrientation().?;
 
     const up_dot = before_up[0] * after_up[0] +
