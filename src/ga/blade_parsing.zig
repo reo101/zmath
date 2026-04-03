@@ -27,6 +27,12 @@ pub const SignedBladePrefixParseResult = struct {
     end: usize,
 };
 
+/// A named alias that maps a string to a signed blade spec.
+pub const BladeAlias = struct {
+    name: []const u8,
+    spec: SignedBladeSpec,
+};
+
 /// Naming and parser behavior switches for signed-blade syntax.
 pub const SignedBladeNamingOptions = struct {
     /// Basis-index partition used for parser/programming-visible naming.
@@ -49,6 +55,9 @@ pub const SignedBladeNamingOptions = struct {
 
     /// Whether bracketed spellings like `e[1,2]` are accepted.
     allow_bracketed_form: bool = true,
+
+    /// Custom blade aliases (e.g., `i` → `e12` in Cl(2,0,0)).
+    blade_aliases: []const BladeAlias = &.{},
 
     /// Builds naming options from basis spans while keeping parser syntax
     /// behavior at defaults (`basis_prefix = 'e'`, all forms enabled).
@@ -282,11 +291,19 @@ pub fn parseSignedBlade(
     }
 }
 
+fn resolveAlias(name: []const u8, options: SignedBladeNamingOptions) ?SignedBladeSpec {
+    for (options.blade_aliases) |alias| {
+        if (std.mem.eql(u8, alias.name, name)) return alias.spec;
+    }
+    return null;
+}
+
 fn parseSignedBladeImpl(
     name: []const u8,
     dimension: usize,
     options: SignedBladeNamingOptions,
 ) SignedBladeParseError!SignedBladeSpec {
+    if (resolveAlias(name, options)) |spec| return spec;
     if (name.len == 0 or name[0] != options.basis_prefix) return error.MissingBasisPrefix;
     if (name.len < 2) return error.EmptySignedBlade;
     try options.validate(dimension);
@@ -312,11 +329,26 @@ fn parseSignedBladeImpl(
     };
 }
 
+fn scanAliasTokenEnd(source: []const u8, start: usize, options: SignedBladeNamingOptions) ?usize {
+    var best_end: ?usize = null;
+    for (options.blade_aliases) |alias| {
+        if (start + alias.name.len <= source.len and
+            std.mem.eql(u8, source[start..][0..alias.name.len], alias.name))
+        {
+            if (best_end == null or alias.name.len > best_end.? - start) {
+                best_end = start + alias.name.len;
+            }
+        }
+    }
+    return best_end;
+}
+
 fn scanSignedBladeTokenEnd(
     source: []const u8,
     start: usize,
     options: SignedBladeNamingOptions,
 ) SignedBladeParseError!usize {
+    if (scanAliasTokenEnd(source, start, options)) |end| return end;
     if (start >= source.len or source[start] != options.basis_prefix) return error.MissingBasisPrefix;
     if (start + 1 >= source.len) return error.EmptySignedBlade;
 
@@ -559,6 +591,24 @@ test "syntax policy can gate prefix and accepted forms" {
     };
     try std.testing.expectError(error.InvalidBasisSeparator, parseSignedBlade("e12", 12, no_compact, false));
     try std.testing.expect(isSignedBlade("e_12", 12, no_compact));
+}
+
+test "blade aliases map custom names to signed blade specs" {
+    const options = comptime b: {
+        var opts = SignedBladeNamingOptions.euclidean(2);
+        opts.blade_aliases = &.{
+            .{ .name = "i", .spec = .{ .sign = .positive, .mask = .init(0b11) } },
+            .{ .name = "I", .spec = .{ .sign = .positive, .mask = .init(0b11) } },
+        };
+        break :b opts;
+    };
+
+    const i_spec = try parseSignedBlade("i", 2, options, false);
+    try std.testing.expectEqual(SignedBladeSpec{ .sign = .positive, .mask = .init(0b11) }, i_spec);
+    try std.testing.expect(isSignedBlade("i", 2, options));
+    try std.testing.expect(isSignedBlade("I", 2, options));
+    try std.testing.expect(!isSignedBlade("j", 2, options));
+    try std.testing.expect(isSignedBlade("e12", 2, options));
 }
 
 test "e0 alias is only enabled by singleton degenerate span" {
