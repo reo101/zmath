@@ -423,6 +423,7 @@ fn ParserTypes(comptime T: type, comptime sig: blades.MetricSignature) type {
             right_contraction: void,
             lparen: void,
             rparen: void,
+            slash: void,
             inverse: void,
             number: []const u8,
             blade: blade_parsing.SignedBladeSpec,
@@ -865,6 +866,10 @@ fn parserNextToken(
             self.position += 1;
             break :blk .{ .star = {} };
         },
+        '/' => blk: {
+            self.position += 1;
+            break :blk .{ .slash = {} };
+        },
         '^' => blk: {
             if (std.mem.startsWith(u8, self.source[self.position..], "^-1")) {
                 self.position += 3;
@@ -991,7 +996,7 @@ fn parserParseExpression(
                 try parserAdvance(T, sig, self);
                 lhs = try parserBuildInverse(T, sig, self, lhs);
             },
-            .star, .wedge, .dot, .left_contraction, .right_contraction => |tag| {
+            .star, .slash, .wedge, .dot, .left_contraction, .right_contraction => |tag| {
                 _ = tag;
                 const left_bp: u8 = 5;
                 const right_bp: u8 = 6;
@@ -1000,6 +1005,7 @@ fn parserParseExpression(
                 const rhs = try parserParseExpression(T, sig, self, right_bp);
                 lhs = switch (current_token) {
                     .star => try parserBuildGp(T, sig, self, lhs, rhs),
+                    .slash => try parserBuildGp(T, sig, self, lhs, try parserBuildInverse(T, sig, self, rhs)),
                     .wedge => try parserBuildWedge(T, sig, self, lhs, rhs),
                     .dot => try parserBuildDot(T, sig, self, lhs, rhs),
                     .left_contraction => try parserBuildLeftContraction(T, sig, self, lhs, rhs),
@@ -1030,6 +1036,13 @@ fn parserParseExpression(
                 try parserAdvance(T, sig, self);
                 const rhs = try parserParseExpression(T, sig, self, right_bp);
                 lhs = try parserBuildSub(T, sig, self, lhs, rhs);
+            },
+            .number, .blade, .placeholder, .lparen => {
+                const left_bp: u8 = 7;
+                const right_bp: u8 = 8;
+                if (left_bp < min_bp) break;
+                const rhs = try parserParseExpression(T, sig, self, right_bp);
+                lhs = try parserBuildGp(T, sig, self, lhs, rhs);
             },
             else => break,
         }
@@ -1754,6 +1767,71 @@ test "runtime compiled expression can narrow to an exact carrier type" {
 
     const value = try expr.evalAs(Basis.Vector, .{ .v = Basis.e(2) });
     try std.testing.expect(value.eql(Basis.Vector.init(.{ 2, 3, 0 })));
+}
+
+test "expression supports division operator" {
+    const sig = comptime blades.MetricSignature.euclidean(2);
+    const naming = comptime b: {
+        var opts = blade_parsing.SignedBladeNamingOptions.fromSignature(sig);
+        opts.blade_aliases = &.{.{
+            .name = "i",
+            .spec = .{ .sign = .positive, .mask = .init(0b11) },
+        }};
+        break :b opts;
+    };
+
+    // scalar / scalar
+    try std.testing.expectEqual(@as(f32, 2.5), eval(f32, sig, naming, "5 / 2", .{}).scalarCoeff());
+
+    // scalar / blade
+    const inv_i = eval(f32, sig, naming, "1 / i", .{});
+    try std.testing.expectEqual(@as(f32, -1), inv_i.coeff(.init(0b11)));
+
+    // complex-style division
+    const result = eval(f32, sig, naming, "(3 + 4i) / (2i)", .{});
+    try std.testing.expectApproxEqAbs(@as(f32, 2), result.scalarCoeff(), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, -1.5), result.coeff(.init(0b11)), 1e-6);
+}
+
+test "expression supports implicit multiplication" {
+    const sig = comptime blades.MetricSignature.euclidean(2);
+    const naming = comptime b: {
+        var opts = blade_parsing.SignedBladeNamingOptions.fromSignature(sig);
+        opts.blade_aliases = &.{.{
+            .name = "i",
+            .spec = .{ .sign = .positive, .mask = .init(0b11) },
+        }};
+        break :b opts;
+    };
+
+    // number blade: 5i = 5 * i
+    try std.testing.expectEqual(@as(f32, 5), eval(f32, sig, naming, "5i", .{}).coeff(.init(0b11)));
+
+    // number basis: 3e1 = 3 * e1
+    try std.testing.expectEqual(@as(f32, 3), eval(f32, sig, naming, "3e1", .{}).coeffNamed("e1"));
+
+    // blade lparen: i(1 + i) = i + i² = -1 + i
+    const bi = eval(f32, sig, naming, "i(1 + i)", .{});
+    try std.testing.expectEqual(@as(f32, -1), bi.scalarCoeff());
+    try std.testing.expectEqual(@as(f32, 1), bi.coeff(.init(0b11)));
+
+    // rparen lparen: (2)(3) = 6
+    try std.testing.expectEqual(@as(f32, 6), eval(f32, sig, naming, "(2)(3)", .{}).scalarCoeff());
+
+    // implicit multiply binds tighter than explicit *
+    // 2i * 3e1 vs 2 i*3 e1 — both produce the same since * and implicit
+    // are both left-to-right geometric products
+    try std.testing.expect(eval(f32, sig, naming, "2i * 3e1", .{}).eql(
+        eval(f32, sig, naming, "2*i*3*e1", .{}),
+    ));
+
+    // implicit multiply binds tighter than /,
+    // so `1/2i` parses as `1 / (2i)` regardless of whitespace
+    const half_inv_i = eval(f32, sig, naming, "1/2i", .{});
+    const half_inv_i_spaced = eval(f32, sig, naming, "1/2 i", .{});
+    try std.testing.expectApproxEqAbs(@as(f32, 0), half_inv_i.scalarCoeff(), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, -0.5), half_inv_i.coeff(.init(0b11)), 1e-6);
+    try std.testing.expect(half_inv_i.eql(half_inv_i_spaced));
 }
 
 test "runtime exact typed evaluation rejects non-zero omitted coefficients" {
