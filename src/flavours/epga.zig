@@ -26,17 +26,11 @@ pub const h = Instantiate(f32);
 
 pub const Point = struct {
     pub fn initHomogeneous(w: f32, x: f32, y: f32, z: f32) h.Full {
-        const E = h.Basis;
-        const res = E.signedBlade("e123").scale(w)
-            .add(E.signedBlade("e320").scale(x))
-            .add(E.signedBlade("e130").scale(y))
-            .add(E.signedBlade("e210").scale(z));
-
-        var full = h.Full.zero();
-        inline for (h.Full.blades, 0..) |mask, i| {
-            full.coeffs[i] = res.coeff(mask);
-        }
-        return full;
+        return h.exprAs(
+            h.Full,
+            "{w}*e123 + {x}*e320 + {y}*e130 + {z}*e210",
+            .{ .w = w, .x = x, .y = y, .z = z },
+        );
     }
 
     pub fn init(x: f32, y: f32, z: f32) h.Full {
