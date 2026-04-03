@@ -1834,6 +1834,199 @@ test "expression supports implicit multiplication" {
     try std.testing.expect(half_inv_i.eql(half_inv_i_spaced));
 }
 
+test "AST shape of simple expressions" {
+    const sig = comptime blades.MetricSignature.euclidean(2);
+    const naming = comptime b: {
+        var opts = blade_parsing.SignedBladeNamingOptions.fromSignature(sig);
+        opts.blade_aliases = &.{.{
+            .name = "i",
+            .spec = .{ .sign = .positive, .mask = .init(0b11) },
+        }};
+        break :b opts;
+    };
+
+    const Node = ParserTypes(f32, sig).Node;
+
+    const compileAst = struct {
+        fn f(comptime source: []const u8) struct { nodes: []const Node, root: usize } {
+            const Storage = FixedCompilerStorage(f32, sig, source.len * 4 + 8, if (source.len == 0) 1 else source.len);
+            const CompilerImpl = Compiler(f32, sig, Storage);
+            const compiled = comptime blk: {
+                var compiler = CompilerImpl.init(source, naming, .{});
+                break :blk parserCompile(f32, sig, &compiler) catch |err| switch (err) {
+                    error.ExpressionTooLarge => compileErrorAt(source, compiler.current_start, "expression is too large"),
+                    inline else => compileErrorAt(source, compiler.current_start, parserErrorMessage(err)),
+                };
+            };
+            return .{
+                .nodes = &compiled.nodes,
+                .root = compiled.root,
+            };
+        }
+    }.f;
+
+    // Constant literal folds to a single constant node
+    {
+        const ast = compileAst("42");
+        try std.testing.expectEqual(@as(usize, 0), ast.root);
+        try std.testing.expect(ast.nodes[ast.root] == .constant);
+        try std.testing.expectEqual(@as(f32, 42), ast.nodes[ast.root].constant.scalar);
+    }
+
+    // Constant blade
+    {
+        const ast = compileAst("e1");
+        try std.testing.expect(ast.nodes[ast.root] == .constant);
+        try std.testing.expectEqual(@as(f32, 1), ast.nodes[ast.root].constant.blade.coeff);
+        try std.testing.expectEqual(BladeMask.init(0b01), ast.nodes[ast.root].constant.blade.mask);
+    }
+
+    // Constant arithmetic folds: 2 + 3 → constant(5)
+    {
+        const ast = compileAst("2 + 3");
+        try std.testing.expect(ast.nodes[ast.root] == .constant);
+        try std.testing.expectEqual(@as(f32, 5), ast.nodes[ast.root].constant.scalar);
+    }
+
+    // Placeholder produces a placeholder node
+    {
+        const ast = compileAst("{x}");
+        try std.testing.expect(ast.nodes[ast.root] == .placeholder);
+        try std.testing.expectEqual(@as(usize, 0), ast.nodes[ast.root].placeholder);
+    }
+
+    // {x} + {y} → add(placeholder(0), placeholder(1))
+    {
+        const ast = compileAst("{x} + {y}");
+        try std.testing.expect(ast.nodes[ast.root] == .add);
+        const add = ast.nodes[ast.root].add;
+        try std.testing.expect(ast.nodes[add.lhs] == .placeholder);
+        try std.testing.expectEqual(@as(usize, 0), ast.nodes[add.lhs].placeholder);
+        try std.testing.expect(ast.nodes[add.rhs] == .placeholder);
+        try std.testing.expectEqual(@as(usize, 1), ast.nodes[add.rhs].placeholder);
+    }
+
+    // {x} * {y} → gp(placeholder(0), placeholder(1))
+    {
+        const ast = compileAst("{x} * {y}");
+        try std.testing.expect(ast.nodes[ast.root] == .gp);
+        const gp = ast.nodes[ast.root].gp;
+        try std.testing.expect(ast.nodes[gp.lhs] == .placeholder);
+        try std.testing.expect(ast.nodes[gp.rhs] == .placeholder);
+    }
+
+    // 3 * {x} → scale(3, placeholder(0))
+    {
+        const ast = compileAst("3 * {x}");
+        try std.testing.expect(ast.nodes[ast.root] == .scale);
+        try std.testing.expectEqual(@as(f32, 3), ast.nodes[ast.root].scale.scalar);
+        try std.testing.expect(ast.nodes[ast.nodes[ast.root].scale.child] == .placeholder);
+    }
+
+    // -{x} → negate(placeholder(0))
+    {
+        const ast = compileAst("-{x}");
+        try std.testing.expect(ast.nodes[ast.root] == .negate);
+        try std.testing.expect(ast.nodes[ast.nodes[ast.root].negate] == .placeholder);
+    }
+
+    // {x} ^ {y} → wedge(placeholder(0), placeholder(1))
+    {
+        const ast = compileAst("{x} ^ {y}");
+        try std.testing.expect(ast.nodes[ast.root] == .wedge);
+    }
+
+    // {x} . {y} → dot(placeholder(0), placeholder(1))
+    {
+        const ast = compileAst("{x} . {y}");
+        try std.testing.expect(ast.nodes[ast.root] == .dot);
+    }
+
+    // {x} << {y} → left_contraction
+    {
+        const ast = compileAst("{x} << {y}");
+        try std.testing.expect(ast.nodes[ast.root] == .left_contraction);
+    }
+
+    // {x} >> {y} → right_contraction
+    {
+        const ast = compileAst("{x} >> {y}");
+        try std.testing.expect(ast.nodes[ast.root] == .right_contraction);
+    }
+
+    // Implicit multiply: 2{x} → scale(2, placeholder(0))
+    {
+        const ast = compileAst("2{x}");
+        try std.testing.expect(ast.nodes[ast.root] == .scale);
+        try std.testing.expectEqual(@as(f32, 2), ast.nodes[ast.root].scale.scalar);
+        try std.testing.expect(ast.nodes[ast.nodes[ast.root].scale.child] == .placeholder);
+    }
+
+    // Division: {x} / (2e1) desugars to gp({x}, inverse(2e1))
+    // inverse(2e1) folds to constant(0.5 * e1), leaving gp(placeholder, constant)
+    {
+        const ast = compileAst("{x} / (2e1)");
+        try std.testing.expect(ast.nodes[ast.root] == .gp);
+        const gp = ast.nodes[ast.root].gp;
+        try std.testing.expect(ast.nodes[gp.lhs] == .placeholder);
+        try std.testing.expect(ast.nodes[gp.rhs] == .constant);
+        try std.testing.expectEqual(@as(f32, 0.5), ast.nodes[gp.rhs].constant.blade.coeff);
+    }
+
+    // Precedence: {x} + {y} * {z} → add(placeholder, gp(placeholder, placeholder))
+    {
+        const ast = compileAst("{x} + {y} * {z}");
+        try std.testing.expect(ast.nodes[ast.root] == .add);
+        const add = ast.nodes[ast.root].add;
+        try std.testing.expect(ast.nodes[add.lhs] == .placeholder);
+        try std.testing.expect(ast.nodes[add.rhs] == .gp);
+    }
+
+    // Precedence: implicit mul binds tighter than explicit *
+    // {x}{y} * {z} → gp(gp(placeholder, placeholder), placeholder)
+    {
+        const ast = compileAst("{x}{y} * {z}");
+        try std.testing.expect(ast.nodes[ast.root] == .gp);
+        const outer = ast.nodes[ast.root].gp;
+        try std.testing.expect(ast.nodes[outer.lhs] == .gp);
+        try std.testing.expect(ast.nodes[outer.rhs] == .placeholder);
+    }
+
+    // Double negate folds: --{x} → placeholder(0)
+    {
+        const ast = compileAst("--{x}");
+        try std.testing.expect(ast.nodes[ast.root] == .placeholder);
+    }
+
+    // Scale folding: 2 * (3 * {x}) → scale(6, placeholder)
+    {
+        const ast = compileAst("2 * (3 * {x})");
+        try std.testing.expect(ast.nodes[ast.root] == .scale);
+        try std.testing.expectEqual(@as(f32, 6), ast.nodes[ast.root].scale.scalar);
+        try std.testing.expect(ast.nodes[ast.nodes[ast.root].scale.child] == .placeholder);
+    }
+
+    // Zero folding: 0 * {x} → constant(0)
+    {
+        const ast = compileAst("0 * {x}");
+        try std.testing.expect(ast.nodes[ast.root] == .constant);
+        try std.testing.expectEqual(@as(f32, 0), ast.nodes[ast.root].constant.scalar);
+    }
+
+    // Zero add identity: 0 + {x} → placeholder
+    {
+        const ast = compileAst("0 + {x}");
+        try std.testing.expect(ast.nodes[ast.root] == .placeholder);
+    }
+
+    // Negate of constant folds: -5 → constant(-5)
+    {
+        const ast = compileAst("-5");
+        try std.testing.expect(ast.nodes[ast.root] == .constant);
+        try std.testing.expectEqual(@as(f32, -5), ast.nodes[ast.root].constant.scalar);
+    }
+}
+
 test "runtime exact typed evaluation rejects non-zero omitted coefficients" {
     const sig = comptime blades.MetricSignature.euclidean(3);
     const options = blade_parsing.SignedBladeNamingOptions.euclidean(3);
