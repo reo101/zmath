@@ -324,3 +324,7 @@ test "normalizedRotor remains finite for 3D exponentiated bivectors" {
     }
     try std.testing.expect(nearlyEqual(identity.scalarCoeff(), 1.0, 1e-5));
 }
+
+test "From Zero to Geo 3.6 exercises" {
+
+}

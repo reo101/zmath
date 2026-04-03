@@ -288,6 +288,10 @@ fn signedBladeImpl(
 /// - **Metric Awareness**: A concrete metric signature is baked in via `sig`,
 ///   driving metric-dependent products by default.
 pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, comptime sig: MetricSignature) type {
+    return MultivectorWithNaming(T, blade_masks, sig, blade_parsing.SignedBladeNamingOptions.fromSignature(sig));
+}
+
+pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const BladeMask, comptime sig: MetricSignature, comptime naming_options: blade_parsing.SignedBladeNamingOptions) type {
     // Zig's memoization should handle this if the function is pure.
     // Let's ensure it stays pure by moving all logic into an anonymous struct.
     @setEvalBranchQuota(5_000_000);
@@ -298,6 +302,8 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         pub const dimensions = sig.dimension();
         /// The metric signature Cl(p, q, r).
         pub const metric_signature = sig;
+        /// The naming options used for `.named` field generation and display.
+        pub const naming = naming_options;
         /// The set of basis blades represented by this carrier.
         pub const blades = blade_masks;
         /// The number of coefficients stored in this multivector.
@@ -328,8 +334,6 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         /// An `extern struct` providing named field access to coefficients.
         /// Only populated for algebras with up to 5 dimensions.
         pub const Named = if (dimensions <= 5) off: {
-            // FIXME: should be configurable
-            const naming_options = blade_parsing.SignedBladeNamingOptions.fromSignature(sig);
 
             const basis_names = blk: {
                 var names: [dimensions][]const u8 = undefined;
@@ -369,7 +373,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         /// Returns a multivector type for the same coefficient type and signature
         /// but with a different set of stored blade masks.
         pub fn Rebind(comptime new_masks: []const BladeMask) type {
-            return Multivector(T, new_masks, sig);
+            return MultivectorWithNaming(T, new_masks, sig, naming_options);
         }
 
         /// Returns a carrier type restricted to a single blade mask.
@@ -378,27 +382,27 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         }
 
         /// Returns the carrier type storing every blade in the algebra.
-        pub const FullType = FullMultivector(T, sig);
+        pub const FullType = Rebind(&blade_ops.allBladeMasks(dimensions));
 
         /// Returns the carrier type restricted to one grade.
         pub fn GradeType(comptime target_grade: usize) type {
-            return KVector(T, target_grade, sig);
+            return Rebind(&blade_ops.gradeBladeMasks(dimensions, target_grade));
         }
 
         /// Returns the carrier type restricted to even grades.
-        pub const EvenType = EvenMultivector(T, sig);
+        pub const EvenType = Rebind(&blade_ops.evenBladeMasks(dimensions));
 
         /// Returns the carrier type restricted to odd grades.
-        pub const OddType = OddMultivector(T, sig);
+        pub const OddType = Rebind(&blade_ops.oddBladeMasks(dimensions));
 
         /// Returns the scalar carrier type.
-        pub const ScalarType = KVector(T, 0, sig);
+        pub const ScalarType = Rebind(&blade_ops.gradeBladeMasks(dimensions, 0));
 
         /// Returns the grade-1 vector carrier type.
-        pub const VectorType = KVector(T, 1, sig);
+        pub const VectorType = Rebind(&blade_ops.gradeBladeMasks(dimensions, 1));
 
         /// Returns the grade-2 bivector carrier type.
-        pub const BivectorType = KVector(T, 2, sig);
+        pub const BivectorType = Rebind(&blade_ops.gradeBladeMasks(dimensions, 2));
 
         /// Returns the coefficients as a standard array for indexing.
         /// This is a no-op if Storage is already an array, or a coercion if it's a @Vector.
@@ -417,21 +421,24 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         }
 
         /// Constructs a compile-time signed blade using this carrier's coefficient type.
-        pub fn signedBlade(comptime name: []const u8) SignedBladeType(T, name, sig) {
-            return signedBladeImpl(T, name, sig, blade_parsing.SignedBladeNamingOptions.fromSignature(sig));
+        pub fn signedBlade(comptime name: []const u8) Rebind(&.{blade_parsing.parseSignedBlade(name, dimensions, naming_options, true).mask}) {
+            const spec = comptime blade_parsing.parseSignedBlade(name, dimensions, naming_options, true);
+            return Rebind(&.{spec.mask}).init(.{@intFromEnum(spec.sign)});
         }
 
         /// Constructs a compile-time signed blade using naming options.
         pub fn signedBladeWithOptions(
             comptime name: []const u8,
-            comptime naming_options: blade_parsing.SignedBladeNamingOptions,
-        ) SignedBladeTypeWithOptions(T, name, sig, naming_options) {
-            return signedBladeImpl(T, name, sig, naming_options);
+            comptime opts: blade_parsing.SignedBladeNamingOptions,
+        ) Rebind(&.{blade_parsing.parseSignedBlade(name, dimensions, opts, true).mask}) {
+            const spec = comptime blade_parsing.parseSignedBlade(name, dimensions, opts, true);
+            return Rebind(&.{spec.mask}).init(.{@intFromEnum(spec.sign)});
         }
 
         /// Constructs a signed blade from runtime basis-vector indices.
-        pub fn fromIndices(indices: []const usize) FullMultivector(T, sig) {
-            return fullSignedBladeFromIndicesWithSignature(T, sig, indices);
+        pub fn fromIndices(indices: []const usize) FullType {
+            const raw = fullSignedBladeFromIndicesWithSignature(T, sig, indices);
+            return FullType.init(raw.coeffsArray());
         }
 
         /// Writes this multivector value through the standard Io writer interface.
@@ -571,11 +578,11 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         }
 
         /// Returns the sum of two multivectors.
-        pub fn add(self: Self, rhs: anytype) AddResultType(T, blade_masks, @TypeOf(rhs).blades, sig) {
+        pub fn add(self: Self, rhs: anytype) Rebind(&blade_ops.unionBladeMasks(dimensions, blade_masks, @TypeOf(rhs).blades)) {
             const Rhs = @TypeOf(rhs);
             comptime assertCompatibleMultivector(Self, Rhs);
 
-            const Result = AddResultType(T, blade_masks, Rhs.blades, sig);
+            const Result = Rebind(&blade_ops.unionBladeMasks(dimensions, blade_masks, Rhs.blades));
             if (comptime blade_ops.sameBladeSet(blade_masks, Rhs.blades) and canUseLaneWiseSimd(T, Self.stored_blade_count)) {
                 const lhs_lanes = coeffsToSimd(T, Self.stored_blade_count, self.coeffs);
                 const rhs_lanes = coeffsToSimd(T, Self.stored_blade_count, rhs.coeffs);
@@ -592,11 +599,11 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         }
 
         /// Returns the difference of two multivectors.
-        pub fn sub(self: Self, rhs: anytype) AddResultType(T, blade_masks, @TypeOf(rhs).blades, sig) {
+        pub fn sub(self: Self, rhs: anytype) Rebind(&blade_ops.unionBladeMasks(dimensions, blade_masks, @TypeOf(rhs).blades)) {
             const Rhs = @TypeOf(rhs);
             comptime assertCompatibleMultivector(Self, Rhs);
 
-            const Result = AddResultType(T, blade_masks, Rhs.blades, sig);
+            const Result = Rebind(&blade_ops.unionBladeMasks(dimensions, blade_masks, Rhs.blades));
             if (comptime blade_ops.sameBladeSet(blade_masks, Rhs.blades) and canUseLaneWiseSimd(T, Self.stored_blade_count)) {
                 const lhs_lanes = coeffsToSimd(T, Self.stored_blade_count, self.coeffs);
                 const rhs_lanes = coeffsToSimd(T, Self.stored_blade_count, rhs.coeffs);
@@ -613,10 +620,10 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         }
 
         /// Returns the geometric product of two multivectors.
-        pub fn gp(self: Self, rhs: anytype) GeometricProductResultType(T, blade_masks, @TypeOf(rhs).blades, sig) {
+        pub fn gp(self: Self, rhs: anytype) Rebind(&blade_ops.geometricProductMasks(dimensions, blade_masks, @TypeOf(rhs).blades)) {
             const Rhs = @TypeOf(rhs);
             comptime assertCompatibleMultivector(Self, Rhs);
-            const Result = GeometricProductResultType(T, blade_masks, Rhs.blades, sig);
+            const Result = Rebind(&blade_ops.geometricProductMasks(dimensions, blade_masks, Rhs.blades));
             var result_coeffs = std.mem.zeroes([Result.stored_blade_count]T);
 
             const lhs_coeffs = self.coeffsArray();
@@ -636,11 +643,11 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         }
 
         /// Returns the outer product of two multivectors.
-        pub fn outerProduct(self: Self, rhs: anytype) OuterProductResultType(T, blade_masks, @TypeOf(rhs).blades, sig) {
+        pub fn outerProduct(self: Self, rhs: anytype) Rebind(&blade_ops.outerProductMasks(dimensions, blade_masks, @TypeOf(rhs).blades)) {
             const Rhs = @TypeOf(rhs);
             comptime assertCompatibleMultivector(Self, Rhs);
 
-            const Result = OuterProductResultType(T, blade_masks, Rhs.blades, sig);
+            const Result = Rebind(&blade_ops.outerProductMasks(dimensions, blade_masks, Rhs.blades));
             var result_coeffs = std.mem.zeroes([Result.stored_blade_count]T);
 
             const lhs_coeffs = self.coeffsArray();
@@ -661,11 +668,11 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         }
 
         /// Returns the left contraction (A \rfloor B) of two multivectors.
-        pub fn leftContraction(self: Self, rhs: anytype) LeftContractionResultType(T, blade_masks, @TypeOf(rhs).blades, sig) {
+        pub fn leftContraction(self: Self, rhs: anytype) Rebind(&blade_ops.leftContractionMasks(dimensions, blade_masks, @TypeOf(rhs).blades)) {
             const Rhs = @TypeOf(rhs);
             comptime assertCompatibleMultivector(Self, Rhs);
 
-            const Result = LeftContractionResultType(T, blade_masks, Rhs.blades, sig);
+            const Result = Rebind(&blade_ops.leftContractionMasks(dimensions, blade_masks, Rhs.blades));
             var result_coeffs = std.mem.zeroes([Result.stored_blade_count]T);
 
             const lhs_coeffs = self.coeffsArray();
@@ -686,11 +693,11 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         }
 
         /// Returns the right contraction (A \lfloor B) of two multivectors.
-        pub fn rightContraction(self: Self, rhs: anytype) RightContractionResultType(T, blade_masks, @TypeOf(rhs).blades, sig) {
+        pub fn rightContraction(self: Self, rhs: anytype) Rebind(&blade_ops.rightContractionMasks(dimensions, blade_masks, @TypeOf(rhs).blades)) {
             const Rhs = @TypeOf(rhs);
             comptime assertCompatibleMultivector(Self, Rhs);
 
-            const Result = RightContractionResultType(T, blade_masks, Rhs.blades, sig);
+            const Result = Rebind(&blade_ops.rightContractionMasks(dimensions, blade_masks, Rhs.blades));
             var result_coeffs = std.mem.zeroes([Result.stored_blade_count]T);
 
             const lhs_coeffs = self.coeffsArray();
@@ -715,11 +722,11 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
         /// The Hestenes dot product is defined as the grade |r - s| part of the
         /// geometric product of a grade-r blade and a grade-s blade. If either
         /// input is a scalar, the result is zero.
-        pub fn dot(self: Self, rhs: anytype) DotProductResultType(T, blade_masks, @TypeOf(rhs).blades, sig) {
+        pub fn dot(self: Self, rhs: anytype) Rebind(&blade_ops.dotProductMasks(dimensions, blade_masks, @TypeOf(rhs).blades)) {
             const Rhs = @TypeOf(rhs);
             comptime assertCompatibleMultivector(Self, Rhs);
 
-            const Result = DotProductResultType(T, blade_masks, Rhs.blades, sig);
+            const Result = Rebind(&blade_ops.dotProductMasks(dimensions, blade_masks, Rhs.blades));
             var result_coeffs = std.mem.zeroes([Result.stored_blade_count]T);
 
             if (comptime Result.stored_blade_count == 0) {
@@ -851,8 +858,8 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
 
         /// Returns the Hodge dual of this multivector relative to the pseudoscalar.
         /// For degenerate metrics (like PGA), this falls back to a Poincaré dual (coefficient swap).
-        pub fn dual(self: Self) DualResultType(T, blade_masks, sig) {
-            const Result = DualResultType(T, blade_masks, sig);
+        pub fn dual(self: Self) Rebind(&blade_ops.dualMasks(dimensions, blade_masks)) {
+            const Result = Rebind(&blade_ops.dualMasks(dimensions, blade_masks));
             var result_coeffs = std.mem.zeroes([Result.stored_blade_count]T);
             const pseudoscalar_mask = blade_ops.bladeCount(dimensions) - 1;
             const self_coeffs = self.coeffsArray();
@@ -921,7 +928,7 @@ pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask, co
 
         /// Returns the regressive product (join) of two multivectors.
         /// A v B = dual(dual(A) ^ dual(B))
-        pub fn join(self: Self, rhs: anytype) JoinResultType(T, blade_masks, @TypeOf(rhs).blades, sig) {
+        pub fn join(self: Self, rhs: anytype) Rebind(&blade_ops.dualMasks(dimensions, &blade_ops.outerProductMasks(dimensions, &blade_ops.dualMasks(dimensions, blade_masks), &blade_ops.dualMasks(dimensions, @TypeOf(rhs).blades)))) {
             const a_dual = self.dual();
             const b_dual = rhs.dual();
             const meet_dual = a_dual.wedge(b_dual);
@@ -1246,8 +1253,12 @@ pub fn BasisWithNamingOptions(
 ) type {
     const dimension = comptime sig.dimension();
     return struct {
+        fn Mv(comptime masks: []const BladeMask) type {
+            return MultivectorWithNaming(T, masks, sig, naming_options);
+        }
+
         /// The corresponding carrier type for the full algebra.
-        pub const Full = FullMultivector(T, sig);
+        pub const Full = Mv(&blade_ops.allBladeMasks(dimension));
 
         /// The corresponding scalar carrier.
         pub const Scalar = Full.ScalarType;
@@ -1261,18 +1272,18 @@ pub fn BasisWithNamingOptions(
         /// Returns the basis vector for the configured named basis index.
         pub fn e(
             comptime named_index: usize,
-        ) BasisBladeType(T, blade_ops.basisVectorMask(dimension, blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true)), sig) {
-            const one_based_index = comptime blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
-            return basisVector(T, one_based_index, sig);
+        ) Mv(&.{blade_ops.basisVectorMask(dimension, blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true))}) {
+            const m = comptime blade_ops.basisVectorMask(dimension, blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true));
+            return Mv(&.{m}).init(.{1});
         }
 
         /// Returns the `ordinal` basis vector from one signature class (`positive`/`negative`/`degenerate`).
         pub fn basisVectorByClass(
             comptime class: SignatureClass,
             comptime ordinal: usize,
-        ) BasisBladeType(T, blade_ops.basisVectorMask(dimension, expectBasisVectorByClass(class, ordinal)), sig) {
-            const one_based_index = comptime expectBasisVectorByClass(class, ordinal);
-            return basisVector(T, one_based_index, sig);
+        ) Mv(&.{blade_ops.basisVectorMask(dimension, expectBasisVectorByClass(class, ordinal))}) {
+            const m = comptime blade_ops.basisVectorMask(dimension, expectBasisVectorByClass(class, ordinal));
+            return Mv(&.{m}).init(.{1});
         }
 
         fn expectBasisVectorByClass(comptime class: SignatureClass, comptime ordinal: usize) usize {
@@ -1324,21 +1335,24 @@ pub fn BasisWithNamingOptions(
         }
 
         /// Returns a compile-time signed blade such as `e12` or `e_10_2`.
-        pub fn signedBlade(comptime name: []const u8) SignedBladeTypeWithOptions(T, name, sig, naming_options) {
-            return signedBladeImpl(T, name, sig, naming_options);
+        pub fn signedBlade(comptime name: []const u8) Mv(&.{blade_parsing.parseSignedBlade(name, dimension, naming_options, true).mask}) {
+            const spec = comptime blade_parsing.parseSignedBlade(name, dimension, naming_options, true);
+            return Mv(&.{spec.mask}).init(.{@intFromEnum(spec.sign)});
         }
 
         /// Returns a compile-time signed blade under explicit naming options.
         pub fn signedBladeWithOptions(
             comptime name: []const u8,
             comptime override_options: blade_parsing.SignedBladeNamingOptions,
-        ) SignedBladeTypeWithOptions(T, name, sig, override_options) {
-            return signedBladeImpl(T, name, sig, override_options);
+        ) Mv(&.{blade_parsing.parseSignedBlade(name, dimension, override_options, true).mask}) {
+            const spec = comptime blade_parsing.parseSignedBlade(name, dimension, override_options, true);
+            return Mv(&.{spec.mask}).init(.{@intFromEnum(spec.sign)});
         }
 
         /// Returns a runtime signed blade from a list of indices.
-        pub fn fromIndices(indices: []const usize) FullMultivector(T, sig) {
-            return fullSignedBladeFromIndicesWithSignature(T, sig, indices);
+        pub fn fromIndices(indices: []const usize) Full {
+            const raw = fullSignedBladeFromIndicesWithSignature(T, sig, indices);
+            return Full.init(raw.coeffsArray());
         }
     };
 }

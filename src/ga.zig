@@ -107,7 +107,7 @@ pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_o
 
         /// Generic multivector type for this algebra.
         pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask) type {
-            return multivector.Multivector(T, blade_masks, metric_signature);
+            return multivector.MultivectorWithNaming(T, blade_masks, metric_signature, naming);
         }
 
         /// Basis helper for this algebra.
@@ -117,76 +117,78 @@ pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_o
 
         /// Full multivector carrier for this algebra.
         pub fn FullMultivector(comptime T: type) type {
-            return multivector.FullMultivector(T, metric_signature);
+            return Self.Multivector(T, &blades.allBladeMasks(dimension));
         }
 
         /// Grade-restricted multivector carrier for this algebra.
         pub fn KVector(comptime T: type, comptime grade: usize) type {
-            return multivector.KVector(T, grade, metric_signature);
+            return Self.Multivector(T, &blades.gradeBladeMasks(dimension, grade));
         }
 
         pub fn EvenMultivector(comptime T: type) type {
-            return multivector.EvenMultivector(T, metric_signature);
+            return Self.Multivector(T, &blades.evenBladeMasks(dimension));
         }
 
         pub fn OddMultivector(comptime T: type) type {
-            return multivector.OddMultivector(T, metric_signature);
+            return Self.Multivector(T, &blades.oddBladeMasks(dimension));
         }
 
         pub fn Scalar(comptime T: type) type {
-            return multivector.Scalar(T, metric_signature);
+            return Self.KVector(T, 0);
         }
 
         pub fn Vector(comptime T: type) type {
-            return multivector.Vector(T, metric_signature);
+            return Self.KVector(T, 1);
         }
 
         pub fn Bivector(comptime T: type) type {
-            return multivector.Bivector(T, metric_signature);
+            return Self.KVector(T, 2);
         }
 
         pub fn Trivector(comptime T: type) type {
-            return multivector.Trivector(T, metric_signature);
+            return Self.KVector(T, 3);
         }
 
         pub fn Pseudoscalar(comptime T: type) type {
-            return multivector.Pseudoscalar(T, metric_signature);
+            return Self.KVector(T, dimension);
         }
 
         pub fn Rotor(comptime T: type) type {
-            return multivector.Rotor(T, metric_signature);
+            return Self.EvenMultivector(T);
         }
 
         /// Constructs a unit basis blade from a mask.
         pub fn basisBlade(
             comptime T: type,
             comptime mask: BladeMask,
-        ) multivector.BasisBladeType(T, mask, metric_signature) {
-            return multivector.basisBlade(T, mask, metric_signature);
+        ) Self.Multivector(T, &.{mask}) {
+            return Self.Multivector(T, &.{mask}).init(.{1});
         }
 
         /// Constructs a basis vector from a one-based index.
         pub fn basisVector(
             comptime T: type,
             comptime one_based_index: usize,
-        ) multivector.BasisBladeType(T, blades.basisVectorMask(metric_signature.dimension(), one_based_index), metric_signature) {
-            return multivector.basisVector(T, one_based_index, metric_signature);
+        ) Self.Multivector(T, &.{blades.basisVectorMask(dimension, one_based_index)}) {
+            return Self.basisBlade(T, blades.basisVectorMask(dimension, one_based_index));
         }
 
         /// Constructs a signed blade from a name string.
         pub fn signedBlade(
             comptime T: type,
             comptime name: []const u8,
-        ) multivector.SignedBladeTypeWithOptions(T, name, metric_signature, naming) {
-            return multivector.signedBladeWithOptions(T, name, metric_signature, naming);
+        ) Self.Multivector(T, &.{blade_parsing.parseSignedBlade(name, dimension, naming, true).mask}) {
+            const spec = comptime blade_parsing.parseSignedBlade(name, dimension, naming, true);
+            return Self.basisBlade(T, spec.mask).scale(@intFromEnum(spec.sign));
         }
 
         /// Constructs a signed blade from internal indices.
         pub fn fullSignedBladeFromIndices(
             comptime T: type,
             indices: []const usize,
-        ) multivector.FullMultivector(T, metric_signature) {
-            return multivector.fullSignedBladeFromIndicesWithSignature(T, metric_signature, indices);
+        ) Self.FullMultivector(T) {
+            const raw = multivector.fullSignedBladeFromIndicesWithSignature(T, metric_signature, indices);
+            return Self.FullMultivector(T).init(raw.coeffsArray());
         }
 
         /// Returns a namespace where all type constructors are bound to `T`.
@@ -204,17 +206,17 @@ pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_o
                 pub const Basis = Self.Basis(T);
 
                 /// Constructs a unit basis blade from a mask.
-                pub fn basisBlade(comptime mask: BladeMask) multivector.BasisBladeType(T, mask, metric_signature) {
+                pub fn basisBlade(comptime mask: BladeMask) Self.Multivector(T, &.{mask}) {
                     return Self.basisBlade(T, mask);
                 }
 
                 /// Constructs a basis vector from a one-based index.
-                pub fn basisVector(comptime index: usize) multivector.BasisBladeType(T, blades.basisVectorMask(metric_signature.dimension(), index), metric_signature) {
+                pub fn basisVector(comptime index: usize) Self.Multivector(T, &.{blades.basisVectorMask(dimension, index)}) {
                     return Self.basisVector(T, index);
                 }
 
                 /// Constructs a signed blade from a name string.
-                pub fn signedBlade(comptime name: []const u8) multivector.SignedBladeTypeWithOptions(T, name, metric_signature, naming) {
+                pub fn signedBlade(comptime name: []const u8) Self.Multivector(T, &.{blade_parsing.parseSignedBlade(name, dimension, naming, true).mask}) {
                     return Self.signedBlade(T, name);
                 }
 
