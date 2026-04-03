@@ -33,11 +33,11 @@ fn coerceScalar(comptime T: type, value: anytype) T {
     };
 }
 
+// NOTE: `Scalar.init(.{v}).cast(Full)` compiles down to the same code as
+// `Full.zero()` + raw `coeffs[0] = v` — LLVM eliminates the intermediate
+// struct and cast loop entirely.
 fn scalarConstant(comptime T: type, comptime sig: blades.MetricSignature, value: T) multivector.FullMultivector(T, sig) {
-    const Full = multivector.FullMultivector(T, sig);
-    var result = Full.zero();
-    result.coeffs[Full.getBladeIndex(BladeMask.init(0))] = value;
-    return result;
+    return multivector.Scalar(T, sig).init(.{value}).cast(multivector.FullMultivector(T, sig));
 }
 
 fn exactResultCast(

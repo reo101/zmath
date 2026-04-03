@@ -1,6 +1,8 @@
 const std = @import("std");
 const multivector = @import("multivector.zig");
 const blades = @import("blades.zig");
+const blade_parsing = @import("blade_parsing.zig");
+const expression = @import("expression.zig");
 const meta = @import("../meta.zig");
 
 const euclidean2 = blades.euclideanSignature(2);
@@ -326,5 +328,31 @@ test "normalizedRotor remains finite for 3D exponentiated bivectors" {
 }
 
 test "From Zero to Geo 3.6 exercises" {
+    // Cl(2,0,0) rotor algebra: i = e12, i² = -1
+    const naming = comptime blade_parsing.SignedBladeNamingOptions.fromSignature(euclidean2);
+    const e = expression.eval;
 
+    const expect = struct {
+        fn case(result: anytype, expected: struct { a: f64, b: f64 }) !void {
+            try std.testing.expectApproxEqRel(result.scalarCoeff(), expected.a, 1e-12);
+            try std.testing.expectApproxEqRel(result.coeff(e12_mask), expected.b, 1e-12);
+        }
+    }.case;
+
+    // 1. 3 + 5i - 2 = 1 + 5i
+    try expect(e(f64, euclidean2, naming, "3 + 5*e12 - 2", .{}), .{ .a = 1, .b = 5 });
+    // 2. i(1 - 2i) = 2 + i
+    try expect(e(f64, euclidean2, naming, "e12 * (1 - 2*e12)", .{}), .{ .a = 2, .b = 1 });
+    // 3. (5 + i)(-2 + 3i) = -13 + 13i
+    try expect(e(f64, euclidean2, naming, "(5 + e12) * (-2 + 3*e12)", .{}), .{ .a = -13, .b = 13 });
+    // 4. (5 + i)(-2) - i = -10 - 3i
+    try expect(e(f64, euclidean2, naming, "(5 + e12) * (-2) - e12", .{}), .{ .a = -10, .b = -3 });
+    // 5. (3 + 4i) / (2i) = 2 - 1.5i
+    try expect(e(f64, euclidean2, naming, "(3 + 4*e12) * (2*e12)^-1", .{}), .{ .a = 2, .b = -1.5 });
+    // 6. 25 / (3 + 4i) = 3 - 4i
+    try expect(e(f64, euclidean2, naming, "25 * (3 + 4*e12)^-1", .{}), .{ .a = 3, .b = -4 });
+    // 7. (13 - 2i) / (-5 - 12i) = -41/169 + 166/169·i
+    try expect(e(f64, euclidean2, naming, "(13 - 2*e12) * (-5 - 12*e12)^-1", .{}), .{ .a = -41.0 / 169.0, .b = 166.0 / 169.0 });
+    // 8. (-7 + 3i) / (1 + 2i) = -1/5 + 17/5·i
+    try expect(e(f64, euclidean2, naming, "(-7 + 3*e12) * (1 + 2*e12)^-1", .{}), .{ .a = -1.0 / 5.0, .b = 17.0 / 5.0 });
 }
