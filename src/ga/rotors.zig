@@ -347,19 +347,20 @@ test "From Zero to Geo 3.6 exercises" {
     }.case;
 
     // 1. 3 + 5i - 2 = 1 + 5i
-    try expect(e(f64, euclidean2, naming_options, "3 + 5*i - 2", .{}), .{ .a = 1, .b = 5 });
+    try expect(e(f64, euclidean2, naming_options, "3 + 5i - 2", .{}), .{ .a = 1, .b = 5 });
     // 2. i(1 - 2i) = 2 + i
-    try expect(e(f64, euclidean2, naming_options, "i * (1 - 2*i)", .{}), .{ .a = 2, .b = 1 });
+    try expect(e(f64, euclidean2, naming_options, "i(1 - 2i)", .{}), .{ .a = 2, .b = 1 });
     // 3. (5 + i)(-2 + 3i) = -13 + 13i
-    try expect(e(f64, euclidean2, naming_options, "(5 + i) * (-2 + 3*i)", .{}), .{ .a = -13, .b = 13 });
+    try expect(e(f64, euclidean2, naming_options, "(5 + i)(-2 + 3i)", .{}), .{ .a = -13, .b = 13 });
     // 4. (5 + i)(-2) - i = -10 - 3i
-    try expect(e(f64, euclidean2, naming_options, "(5 + i) * (-2) - i", .{}), .{ .a = -10, .b = -3 });
+    try expect(e(f64, euclidean2, naming_options, "(5 + i)(-2) - i", .{}), .{ .a = -10, .b = -3 });
     // 5. (3 + 4i) / (2i) = 2 - 1.5i
-    try expect(e(f64, euclidean2, naming_options, "(3 + 4*i) * (2*i)^-1", .{}), .{ .a = 2, .b = -1.5 });
+    try expect(e(f64, euclidean2, naming_options, "(3 + 4i) / (2i)", .{}), .{ .a = 2, .b = -1.5 });
     // 6. 25 / (3 + 4i) = 3 - 4i
-    try expect(e(f64, euclidean2, naming_options, "25 * (3 + 4*i)^-1", .{}), .{ .a = 3, .b = -4 });
+    try expect(e(f64, euclidean2, naming_options, "25 / (3 + 4i)", .{}), .{ .a = 3, .b = -4 });
     // 7. (13 - 2i) / (-5 - 12i) = -41/169 + 166/169·i
-    try expect(e(f64, euclidean2, naming_options, "(13 - 2*i) * (-5 - 12*i)^-1", .{}), .{ .a = -41.0 / 169.0, .b = 166.0 / 169.0 });
+    try expect(e(f64, euclidean2, naming_options, "(13 - 2i) / (-5 - 12i)", .{}), .{ .a = -41.0 / 169.0, .b = 166.0 / 169.0 });
     // 8. (-7 + 3i) / (1 + 2i) = -1/5 + 17/5·i
-    try expect(e(f64, euclidean2, naming_options, "(-7 + 3*i) * (1 + 2*i)^-1", .{}), .{ .a = -1.0 / 5.0, .b = 17.0 / 5.0 });
+    try expect(e(f64, euclidean2, naming_options, "(-7 + 3i) / (1 + 2i)", .{}), .{ .a = -1.0 / 5.0, .b = 17.0 / 5.0 });
+
 }
