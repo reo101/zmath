@@ -1846,9 +1846,9 @@ test "AST shape of simple expressions" {
     };
 
     const Node = ParserTypes(f32, sig).Node;
-
+    const Const = ConstantValue(f32, sig);
     const compileAst = struct {
-        fn f(comptime source: []const u8) struct { nodes: []const Node, root: usize } {
+        fn f(comptime source: []const u8) struct { nodes: []const Node, root: usize, placeholders: []const []const u8 } {
             const Storage = FixedCompilerStorage(f32, sig, source.len * 4 + 8, if (source.len == 0) 1 else source.len);
             const CompilerImpl = Compiler(f32, sig, Storage);
             const compiled = comptime blk: {
@@ -1861,170 +1861,292 @@ test "AST shape of simple expressions" {
             return .{
                 .nodes = &compiled.nodes,
                 .root = compiled.root,
+                .placeholders = compiled.placeholder_names[0..compiled.placeholder_count],
             };
         }
     }.f;
 
-    // Constant literal folds to a single constant node
-    {
-        const ast = compileAst("42");
-        try std.testing.expectEqual(@as(usize, 0), ast.root);
-        try std.testing.expect(ast.nodes[ast.root] == .constant);
-        try std.testing.expectEqual(@as(f32, 42), ast.nodes[ast.root].constant.scalar);
-    }
+    const ExpectedAst = struct {
+        const Tree = union(enum) {
+            const Self = @This();
 
-    // Constant blade
-    {
-        const ast = compileAst("e1");
-        try std.testing.expect(ast.nodes[ast.root] == .constant);
-        try std.testing.expectEqual(@as(f32, 1), ast.nodes[ast.root].constant.blade.coeff);
-        try std.testing.expectEqual(BladeMask.init(0b01), ast.nodes[ast.root].constant.blade.mask);
-    }
+            constant: Const,
+            placeholder: usize,
+            negate: *const Self,
+            scale: struct {
+                scalar: f32,
+                child: *const Self,
+            },
+            add: Binary,
+            gp: Binary,
+            wedge: Binary,
+            join: Binary,
+            dot: Binary,
+            left_contraction: Binary,
+            right_contraction: Binary,
 
-    // Constant arithmetic folds: 2 + 3 → constant(5)
-    {
-        const ast = compileAst("2 + 3");
-        try std.testing.expect(ast.nodes[ast.root] == .constant);
-        try std.testing.expectEqual(@as(f32, 5), ast.nodes[ast.root].constant.scalar);
-    }
+            const Binary = struct {
+                lhs: *const Self,
+                rhs: *const Self,
+            };
+        };
 
-    // Placeholder produces a placeholder node
-    {
-        const ast = compileAst("{x}");
-        try std.testing.expect(ast.nodes[ast.root] == .placeholder);
-        try std.testing.expectEqual(@as(usize, 0), ast.nodes[ast.root].placeholder);
-    }
+        root: *const Tree,
+        placeholders: []const []const u8,
+    };
 
-    // {x} + {y} → add(placeholder(0), placeholder(1))
-    {
-        const ast = compileAst("{x} + {y}");
-        try std.testing.expect(ast.nodes[ast.root] == .add);
-        const add = ast.nodes[ast.root].add;
-        try std.testing.expect(ast.nodes[add.lhs] == .placeholder);
-        try std.testing.expectEqual(@as(usize, 0), ast.nodes[add.lhs].placeholder);
-        try std.testing.expect(ast.nodes[add.rhs] == .placeholder);
-        try std.testing.expectEqual(@as(usize, 1), ast.nodes[add.rhs].placeholder);
-    }
+    const TreeArena = struct {
+        const Self = @This();
 
-    // {x} * {y} → gp(placeholder(0), placeholder(1))
-    {
-        const ast = compileAst("{x} * {y}");
-        try std.testing.expect(ast.nodes[ast.root] == .gp);
-        const gp = ast.nodes[ast.root].gp;
-        try std.testing.expect(ast.nodes[gp.lhs] == .placeholder);
-        try std.testing.expect(ast.nodes[gp.rhs] == .placeholder);
-    }
+        nodes: [128]ExpectedAst.Tree = undefined,
+        len: usize = 0,
 
-    // 3 * {x} → scale(3, placeholder(0))
-    {
-        const ast = compileAst("3 * {x}");
-        try std.testing.expect(ast.nodes[ast.root] == .scale);
-        try std.testing.expectEqual(@as(f32, 3), ast.nodes[ast.root].scale.scalar);
-        try std.testing.expect(ast.nodes[ast.nodes[ast.root].scale.child] == .placeholder);
-    }
+        fn push(self: *Self, node: ExpectedAst.Tree) *const ExpectedAst.Tree {
+            const index = self.len;
+            self.nodes[index] = node;
+            self.len += 1;
+            return &self.nodes[index];
+        }
 
-    // -{x} → negate(placeholder(0))
-    {
-        const ast = compileAst("-{x}");
-        try std.testing.expect(ast.nodes[ast.root] == .negate);
-        try std.testing.expect(ast.nodes[ast.nodes[ast.root].negate] == .placeholder);
-    }
+        fn constant(self: *Self, value: Const) *const ExpectedAst.Tree {
+            return self.push(.{ .constant = value });
+        }
 
-    // {x} ^ {y} → wedge(placeholder(0), placeholder(1))
-    {
-        const ast = compileAst("{x} ^ {y}");
-        try std.testing.expect(ast.nodes[ast.root] == .wedge);
-    }
+        fn placeholder(self: *Self, slot: usize) *const ExpectedAst.Tree {
+            return self.push(.{ .placeholder = slot });
+        }
 
-    // {x} . {y} → dot(placeholder(0), placeholder(1))
-    {
-        const ast = compileAst("{x} . {y}");
-        try std.testing.expect(ast.nodes[ast.root] == .dot);
-    }
+        fn negate(self: *Self, child: *const ExpectedAst.Tree) *const ExpectedAst.Tree {
+            return self.push(.{ .negate = child });
+        }
 
-    // {x} << {y} → left_contraction
-    {
-        const ast = compileAst("{x} << {y}");
-        try std.testing.expect(ast.nodes[ast.root] == .left_contraction);
-    }
+        fn scale(self: *Self, scalar: f32, child: *const ExpectedAst.Tree) *const ExpectedAst.Tree {
+            return self.push(.{ .scale = .{
+                .scalar = scalar,
+                .child = child,
+            } });
+        }
 
-    // {x} >> {y} → right_contraction
-    {
-        const ast = compileAst("{x} >> {y}");
-        try std.testing.expect(ast.nodes[ast.root] == .right_contraction);
-    }
+        fn add(self: *Self, lhs: *const ExpectedAst.Tree, rhs: *const ExpectedAst.Tree) *const ExpectedAst.Tree {
+            return self.push(.{ .add = .{ .lhs = lhs, .rhs = rhs } });
+        }
 
-    // Implicit multiply: 2{x} → scale(2, placeholder(0))
-    {
-        const ast = compileAst("2{x}");
-        try std.testing.expect(ast.nodes[ast.root] == .scale);
-        try std.testing.expectEqual(@as(f32, 2), ast.nodes[ast.root].scale.scalar);
-        try std.testing.expect(ast.nodes[ast.nodes[ast.root].scale.child] == .placeholder);
-    }
+        fn gp(self: *Self, lhs: *const ExpectedAst.Tree, rhs: *const ExpectedAst.Tree) *const ExpectedAst.Tree {
+            return self.push(.{ .gp = .{ .lhs = lhs, .rhs = rhs } });
+        }
 
-    // Division: {x} / (2e1) desugars to gp({x}, inverse(2e1))
-    // inverse(2e1) folds to constant(0.5 * e1), leaving gp(placeholder, constant)
-    {
-        const ast = compileAst("{x} / (2e1)");
-        try std.testing.expect(ast.nodes[ast.root] == .gp);
-        const gp = ast.nodes[ast.root].gp;
-        try std.testing.expect(ast.nodes[gp.lhs] == .placeholder);
-        try std.testing.expect(ast.nodes[gp.rhs] == .constant);
-        try std.testing.expectEqual(@as(f32, 0.5), ast.nodes[gp.rhs].constant.blade.coeff);
-    }
+        fn wedge(self: *Self, lhs: *const ExpectedAst.Tree, rhs: *const ExpectedAst.Tree) *const ExpectedAst.Tree {
+            return self.push(.{ .wedge = .{ .lhs = lhs, .rhs = rhs } });
+        }
 
-    // Precedence: {x} + {y} * {z} → add(placeholder, gp(placeholder, placeholder))
-    {
-        const ast = compileAst("{x} + {y} * {z}");
-        try std.testing.expect(ast.nodes[ast.root] == .add);
-        const add = ast.nodes[ast.root].add;
-        try std.testing.expect(ast.nodes[add.lhs] == .placeholder);
-        try std.testing.expect(ast.nodes[add.rhs] == .gp);
-    }
+        fn dot(self: *Self, lhs: *const ExpectedAst.Tree, rhs: *const ExpectedAst.Tree) *const ExpectedAst.Tree {
+            return self.push(.{ .dot = .{ .lhs = lhs, .rhs = rhs } });
+        }
 
-    // Precedence: implicit mul binds tighter than explicit *
-    // {x}{y} * {z} → gp(gp(placeholder, placeholder), placeholder)
-    {
-        const ast = compileAst("{x}{y} * {z}");
-        try std.testing.expect(ast.nodes[ast.root] == .gp);
-        const outer = ast.nodes[ast.root].gp;
-        try std.testing.expect(ast.nodes[outer.lhs] == .gp);
-        try std.testing.expect(ast.nodes[outer.rhs] == .placeholder);
-    }
+        fn leftContraction(self: *Self, lhs: *const ExpectedAst.Tree, rhs: *const ExpectedAst.Tree) *const ExpectedAst.Tree {
+            return self.push(.{ .left_contraction = .{ .lhs = lhs, .rhs = rhs } });
+        }
 
-    // Double negate folds: --{x} → placeholder(0)
-    {
-        const ast = compileAst("--{x}");
-        try std.testing.expect(ast.nodes[ast.root] == .placeholder);
-    }
+        fn rightContraction(self: *Self, lhs: *const ExpectedAst.Tree, rhs: *const ExpectedAst.Tree) *const ExpectedAst.Tree {
+            return self.push(.{ .right_contraction = .{ .lhs = lhs, .rhs = rhs } });
+        }
 
-    // Scale folding: 2 * (3 * {x}) → scale(6, placeholder)
-    {
-        const ast = compileAst("2 * (3 * {x})");
-        try std.testing.expect(ast.nodes[ast.root] == .scale);
-        try std.testing.expectEqual(@as(f32, 6), ast.nodes[ast.root].scale.scalar);
-        try std.testing.expect(ast.nodes[ast.nodes[ast.root].scale.child] == .placeholder);
-    }
+        fn fromFlat(self: *Self, nodes: []const Node, index: usize) *const ExpectedAst.Tree {
+            return switch (nodes[index]) {
+                .constant => |value| self.constant(value),
+                .placeholder => |slot| self.placeholder(slot),
+                .negate => |child| self.negate(self.fromFlat(nodes, child)),
+                .scale => |scale_node| self.scale(scale_node.scalar, self.fromFlat(nodes, scale_node.child)),
+                .add => |binary| self.add(self.fromFlat(nodes, binary.lhs), self.fromFlat(nodes, binary.rhs)),
+                .gp => |binary| self.gp(self.fromFlat(nodes, binary.lhs), self.fromFlat(nodes, binary.rhs)),
+                .wedge => |binary| self.wedge(self.fromFlat(nodes, binary.lhs), self.fromFlat(nodes, binary.rhs)),
+                .join => |binary| self.push(.{ .join = .{
+                    .lhs = self.fromFlat(nodes, binary.lhs),
+                    .rhs = self.fromFlat(nodes, binary.rhs),
+                } }),
+                .dot => |binary| self.dot(self.fromFlat(nodes, binary.lhs), self.fromFlat(nodes, binary.rhs)),
+                .left_contraction => |binary| self.leftContraction(self.fromFlat(nodes, binary.lhs), self.fromFlat(nodes, binary.rhs)),
+                .right_contraction => |binary| self.rightContraction(self.fromFlat(nodes, binary.lhs), self.fromFlat(nodes, binary.rhs)),
+            };
+        }
 
-    // Zero folding: 0 * {x} → constant(0)
-    {
-        const ast = compileAst("0 * {x}");
-        try std.testing.expect(ast.nodes[ast.root] == .constant);
-        try std.testing.expectEqual(@as(f32, 0), ast.nodes[ast.root].constant.scalar);
-    }
+        fn actual(self: *Self, comptime source: []const u8) ExpectedAst {
+            const ast = compileAst(source);
+            return .{
+                .root = self.fromFlat(ast.nodes, ast.root),
+                .placeholders = ast.placeholders,
+            };
+        }
 
-    // Zero add identity: 0 + {x} → placeholder
-    {
-        const ast = compileAst("0 + {x}");
-        try std.testing.expect(ast.nodes[ast.root] == .placeholder);
-    }
+        fn expected(
+            self: *Self,
+            placeholders: []const []const u8,
+            root: *const ExpectedAst.Tree,
+        ) ExpectedAst {
+            _ = self;
+            return .{
+                .root = root,
+                .placeholders = placeholders,
+            };
+        }
+    };
 
-    // Negate of constant folds: -5 → constant(-5)
-    {
-        const ast = compileAst("-5");
-        try std.testing.expect(ast.nodes[ast.root] == .constant);
-        try std.testing.expectEqual(@as(f32, -5), ast.nodes[ast.root].constant.scalar);
-    }
+    const expectAst = struct {
+        fn f(comptime source: []const u8, buildExpected: fn (*TreeArena) ExpectedAst) !void {
+            var actual_arena: TreeArena = .{};
+            const actual = actual_arena.actual(source);
+
+            var expected_arena: TreeArena = .{};
+            const expected = buildExpected(&expected_arena);
+
+            try std.testing.expectEqualDeep(expected, actual);
+        }
+    }.f;
+
+    try expectAst("42", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{}, arena.constant(.{ .scalar = 42 }));
+        }
+    }.build);
+
+    try expectAst("e1", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{}, arena.constant(.{
+                .blade = .{
+                    .coeff = 1,
+                    .mask = BladeMask.init(0b01),
+                },
+            }));
+        }
+    }.build);
+
+    try expectAst("2 + 3", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{}, arena.constant(.{ .scalar = 5 }));
+        }
+    }.build);
+
+    try expectAst("{x}", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{"x"}, arena.placeholder(0));
+        }
+    }.build);
+
+    try expectAst("{x} + {y}", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{ "x", "y" }, arena.add(arena.placeholder(0), arena.placeholder(1)));
+        }
+    }.build);
+
+    try expectAst("{x} * {y}", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{ "x", "y" }, arena.gp(arena.placeholder(0), arena.placeholder(1)));
+        }
+    }.build);
+
+    try expectAst("3 * {x}", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{"x"}, arena.scale(3, arena.placeholder(0)));
+        }
+    }.build);
+
+    try expectAst("-{x}", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{"x"}, arena.negate(arena.placeholder(0)));
+        }
+    }.build);
+
+    try expectAst("{x} ^ {y}", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{ "x", "y" }, arena.wedge(arena.placeholder(0), arena.placeholder(1)));
+        }
+    }.build);
+
+    try expectAst("{x} . {y}", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{ "x", "y" }, arena.dot(arena.placeholder(0), arena.placeholder(1)));
+        }
+    }.build);
+
+    try expectAst("{x} << {y}", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{ "x", "y" }, arena.leftContraction(arena.placeholder(0), arena.placeholder(1)));
+        }
+    }.build);
+
+    try expectAst("{x} >> {y}", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{ "x", "y" }, arena.rightContraction(arena.placeholder(0), arena.placeholder(1)));
+        }
+    }.build);
+
+    try expectAst("2{x}", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{"x"}, arena.scale(2, arena.placeholder(0)));
+        }
+    }.build);
+
+    try expectAst("{x} / (2e1)", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{"x"}, arena.gp(
+                arena.placeholder(0),
+                arena.constant(.{
+                    .blade = .{
+                        .coeff = 0.5,
+                        .mask = BladeMask.init(0b01),
+                    },
+                }),
+            ));
+        }
+    }.build);
+
+    try expectAst("{x} + {y} * {z}", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{ "x", "y", "z" }, arena.add(
+                arena.placeholder(0),
+                arena.gp(arena.placeholder(1), arena.placeholder(2)),
+            ));
+        }
+    }.build);
+
+    try expectAst("{x}{y} * {z}", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{ "x", "y", "z" }, arena.gp(
+                arena.gp(arena.placeholder(0), arena.placeholder(1)),
+                arena.placeholder(2),
+            ));
+        }
+    }.build);
+
+    try expectAst("--{x}", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{"x"}, arena.placeholder(0));
+        }
+    }.build);
+
+    try expectAst("2 * (3 * {x})", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{"x"}, arena.scale(6, arena.placeholder(0)));
+        }
+    }.build);
+
+    try expectAst("0 * {x}", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{"x"}, arena.constant(.{ .scalar = 0 }));
+        }
+    }.build);
+
+    try expectAst("0 + {x}", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{"x"}, arena.placeholder(0));
+        }
+    }.build);
+
+    try expectAst("-5", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{}, arena.constant(.{ .scalar = -5 }));
+        }
+    }.build);
 }
 
 test "runtime exact typed evaluation rejects non-zero omitted coefficients" {
