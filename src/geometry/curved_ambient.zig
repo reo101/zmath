@@ -27,6 +27,10 @@ pub const Hyper = struct {
             .add(E.e(3).scale(coords[3]));
     }
 
+    pub fn identity() Vector {
+        return fromCoords(.{ 1.0, 0.0, 0.0, 0.0 });
+    }
+
     pub fn toCoords(v: Vector) Coords4 {
         return .{
             @floatCast(v.coeffNamedWithOptions("e0", naming_options)),
@@ -50,6 +54,29 @@ pub const Hyper = struct {
 
     pub fn dot(a: Vector, b: Vector) f32 {
         return a.scalarProduct(b);
+    }
+
+    pub fn w(v: Vector) f32 {
+        return toCoords(v)[0];
+    }
+
+    pub fn x(v: Vector) f32 {
+        return toCoords(v)[1];
+    }
+
+    pub fn y(v: Vector) f32 {
+        return toCoords(v)[2];
+    }
+
+    pub fn z(v: Vector) f32 {
+        return toCoords(v)[3];
+    }
+
+    pub fn isFinite(v: Vector) bool {
+        inline for (toCoords(v)) |component| {
+            if (!std.math.isFinite(component)) return false;
+        }
+        return true;
     }
 };
 
@@ -75,6 +102,10 @@ pub const Round = struct {
             .add(E.e(3).scale(coords[3]));
     }
 
+    pub fn identity() Vector {
+        return fromCoords(.{ 1.0, 0.0, 0.0, 0.0 });
+    }
+
     pub fn toCoords(v: Vector) Coords4 {
         return .{
             @floatCast(v.coeffNamedWithOptions("e0", naming_options)),
@@ -98,6 +129,29 @@ pub const Round = struct {
 
     pub fn dot(a: Vector, b: Vector) f32 {
         return a.scalarProduct(b);
+    }
+
+    pub fn w(v: Vector) f32 {
+        return toCoords(v)[0];
+    }
+
+    pub fn x(v: Vector) f32 {
+        return toCoords(v)[1];
+    }
+
+    pub fn y(v: Vector) f32 {
+        return toCoords(v)[2];
+    }
+
+    pub fn z(v: Vector) f32 {
+        return toCoords(v)[3];
+    }
+
+    pub fn isFinite(v: Vector) bool {
+        inline for (toCoords(v)) |component| {
+            if (!std.math.isFinite(component)) return false;
+        }
+        return true;
     }
 };
 

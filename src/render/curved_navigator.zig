@@ -21,10 +21,11 @@ const NavigatorRect = struct {
 pub fn drawCurvedNavigator(
     canvas: *canvas_api.Canvas,
     mesh: curved_canvas.Mesh,
-    view: curved.View,
+    view: anytype,
     width: usize,
     height: usize,
 ) void {
+    const erased_view = curved.erasedView(view);
     if (width < 54 or height < 26) return;
 
     const panel_width = @min(@as(usize, 26), @max(@as(usize, 18), width / 4));
@@ -40,26 +41,26 @@ pub fn drawCurvedNavigator(
     const top_rect = NavigatorRect{ .x = panel_x, .y = top_y, .width = panel_width, .height = panel_height };
     const bottom_rect = NavigatorRect{ .x = panel_x, .y = bottom_y, .width = panel_width, .height = panel_height };
 
-    const eye_chart = curved.chartCoords(view.metric, view.params, view.camera.position);
-    var look_probe = view.camera;
-    curved.moveForward(&look_probe, view.metric, view.params, @min(view.params.radius * 0.18, 0.18));
-    const look_chart = curved.chartCoords(view.metric, view.params, look_probe.position);
+    const eye_chart = curved.chartCoords(erased_view.metric, erased_view.params, erased_view.camera.position);
+    var look_probe = erased_view.camera;
+    curved.moveForward(&look_probe, erased_view.metric, erased_view.params, @min(erased_view.params.radius * 0.18, 0.18));
+    const look_chart = curved.chartCoords(erased_view.metric, erased_view.params, look_probe.position);
 
-    if (view.metric == .spherical) {
-        const map_camera = nav_geom.sphericalGroundOverviewCamera(view);
-        const stereo_radius = sphericalOverviewFieldRadius(view, .stereographic);
-        const gnomonic_radius = sphericalOverviewFieldRadius(view, .gnomonic);
-        const stereo_extent = sphericalGroundMapExtent(view, map_camera, mesh.vertices, .stereographic, stereo_radius);
-        const gnomonic_extent = sphericalGroundMapExtent(view, map_camera, mesh.vertices, .gnomonic, gnomonic_radius);
+    if (erased_view.metric == .spherical) {
+        const map_camera = nav_geom.sphericalGroundOverviewCamera(erased_view);
+        const stereo_radius = sphericalOverviewFieldRadius(erased_view, .stereographic);
+        const gnomonic_radius = sphericalOverviewFieldRadius(erased_view, .gnomonic);
+        const stereo_extent = sphericalGroundMapExtent(erased_view, map_camera, mesh.vertices, .stereographic, stereo_radius);
+        const gnomonic_extent = sphericalGroundMapExtent(erased_view, map_camera, mesh.vertices, .gnomonic, gnomonic_radius);
 
-        drawSphericalGroundOverviewPanel(canvas, top_rect, stereo_extent, view, mesh, map_camera, .stereographic, stereo_radius);
-        drawSphericalGroundOverviewPanel(canvas, bottom_rect, gnomonic_extent, view, mesh, map_camera, .gnomonic, gnomonic_radius);
+        drawSphericalGroundOverviewPanel(canvas, top_rect, stereo_extent, erased_view, mesh, map_camera, .stereographic, stereo_radius);
+        drawSphericalGroundOverviewPanel(canvas, bottom_rect, gnomonic_extent, erased_view, mesh, map_camera, .gnomonic, gnomonic_radius);
         return;
     }
 
-    const extent = navigatorExtent(mesh.vertices, eye_chart, look_chart, view.metric);
-    drawNavigatorPanel(canvas, top_rect, extent, view, mesh, eye_chart, look_chart, .{ .horizontal = 0, .vertical = 2 });
-    drawNavigatorPanel(canvas, bottom_rect, extent, view, mesh, eye_chart, look_chart, .{ .horizontal = 2, .vertical = 1 });
+    const extent = navigatorExtent(mesh.vertices, eye_chart, look_chart, erased_view.metric);
+    drawNavigatorPanel(canvas, top_rect, extent, erased_view, mesh, eye_chart, look_chart, .{ .horizontal = 0, .vertical = 2 });
+    drawNavigatorPanel(canvas, bottom_rect, extent, erased_view, mesh, eye_chart, look_chart, .{ .horizontal = 2, .vertical = 1 });
 }
 
 fn drawNavigatorBackground(canvas: *canvas_api.Canvas, rect: NavigatorRect) void {
@@ -388,8 +389,7 @@ test "drawCurvedNavigator paints minimap content" {
     defer canvas.deinit();
 
     const params = curved.Params{ .radius = 0.32, .angular_zoom = 0.72, .chart_model = .conformal };
-    const view = try curved.View.init(
-        .hyperbolic,
+    const view = try curved.HyperView.init(
         params,
         .gnomonic,
         .{ .near = 0.08, .far = 1.55 },
@@ -428,8 +428,7 @@ test "drawCurvedNavigator paints spherical overview content" {
     defer canvas.deinit();
 
     const params = curved.Params{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal };
-    const view = try curved.View.init(
-        .spherical,
+    const view = try curved.SphericalView.init(
         params,
         .stereographic,
         .{ .near = 0.08, .far = std.math.inf(f32) },
@@ -468,8 +467,7 @@ test "drawCurvedNavigator is a no-op on tiny canvases" {
     defer canvas.deinit();
 
     const params = curved.Params{ .radius = 0.32, .angular_zoom = 0.72, .chart_model = .conformal };
-    const view = try curved.View.init(
-        .hyperbolic,
+    const view = try curved.HyperView.init(
         params,
         .gnomonic,
         .{ .near = 0.08, .far = 1.55 },

@@ -6,9 +6,10 @@ pub const SphericalMapProjection = enum {
     gnomonic,
 };
 
-pub fn signedSphericalAmbient(view: curved.View, chart: curved.Vec3) ?curved.Vec4 {
-    var ambient = curved.embedPoint(.spherical, view.params, chart) orelse return null;
-    if (view.scene_sign < 0.0) {
+pub fn signedSphericalAmbient(view: anytype, chart: curved.Vec3) ?curved.Vec4 {
+    const erased_view = curved.erasedView(view);
+    var ambient = curved.embedPoint(.spherical, erased_view.params, chart) orelse return null;
+    if (erased_view.scene_sign < 0.0) {
         ambient = curved.ambientScale(.spherical, ambient, -1.0);
     }
     return ambient;
@@ -23,10 +24,11 @@ pub fn defaultSphericalMapCamera() curved.Camera {
     };
 }
 
-pub fn sphericalGroundOverviewCamera(view: curved.View) curved.Camera {
-    const basis = view.walkBasis() orelse return defaultSphericalMapCamera();
+pub fn sphericalGroundOverviewCamera(view: anytype) curved.Camera {
+    const erased_view = curved.erasedView(view);
+    const basis = erased_view.walkBasis() orelse return defaultSphericalMapCamera();
     return .{
-        .position = view.camera.position,
+        .position = erased_view.camera.position,
         .right = basis.right,
         .up = basis.up,
         .forward = basis.forward,
@@ -47,11 +49,12 @@ pub fn sphericalMapPoint(
 }
 
 pub fn sphericalGroundFieldExtent(
-    view: curved.View,
+    view: anytype,
     map_camera: curved.Camera,
     projection_mode: SphericalMapProjection,
     field_radius: f32,
 ) f32 {
+    const erased_view = curved.erasedView(view);
     var extent: f32 = switch (projection_mode) {
         .stereographic => 2.2,
         .gnomonic => 1.2,
@@ -64,7 +67,7 @@ pub fn sphericalGroundFieldExtent(
         const forward = @sin(theta) * field_radius;
         const ambient = curved.ambientFromTangentBasisPoint(
             .spherical,
-            view.params,
+            erased_view.params,
             map_camera.position,
             map_camera.right,
             map_camera.forward,
@@ -80,8 +83,7 @@ pub fn sphericalGroundFieldExtent(
 }
 
 test "signedSphericalAmbient respects scene sign" {
-    var view = try curved.View.init(
-        .spherical,
+    var view = try curved.SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .stereographic,
         .{ .near = 0.08, .far = std.math.inf(f32) },
@@ -100,8 +102,7 @@ test "signedSphericalAmbient respects scene sign" {
 }
 
 test "sphericalGroundFieldExtent covers projected field" {
-    const view = try curved.View.init(
-        .spherical,
+    const view = try curved.SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .stereographic,
         .{ .near = 0.08, .far = std.math.inf(f32) },
