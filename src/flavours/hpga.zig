@@ -17,8 +17,13 @@ const basis_spans = ga.BasisIndexSpans.init(.{
 });
 
 const naming_options = ga.SignedBladeNamingOptions.withBasisSpans(basis_spans);
-const algebra = ga.AlgebraWithNamingOptions(sig, naming_options);
-pub const h = algebra.Instantiate(f32);
+pub const Algebra = ga.AlgebraWithNamingOptions(sig, naming_options);
+
+pub fn Instantiate(comptime T: type) type {
+    return Algebra.Instantiate(T);
+}
+
+pub const h = Instantiate(f32);
 
 pub const Point = struct {
     pub fn initHomogeneous(w: f32, x: f32, y: f32, z: f32) h.Full {

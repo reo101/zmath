@@ -1242,8 +1242,8 @@ fn walkEyeHeight(view: curved.View) f32 {
     };
 }
 
-fn liftedWalkView(view: curved.View, pitch_angle: f32) curved.View {
-    const surface_up = view.walkSurfaceUp(pitch_angle) orelse return view;
+fn liftedWalkView(view: curved.View) curved.View {
+    const surface_up = view.walkSurfaceUp() orelse return view;
     var lifted = view;
     curved.moveAlongDirection(
         &lifted.camera,
@@ -2422,12 +2422,12 @@ fn rasterizeSphericalNativeOverlay(app: *const demo.App, pixels: []rl.Color, dep
     clearOverlayPixels(pixels, depth_buffer);
 
     const render_view = if (app.camera.movement_mode == .walk)
-        liftedWalkView(spherical.view, app.camera.euclid_pitch)
+        liftedWalkView(spherical.view)
     else
         spherical.view;
 
     if (app.camera.movement_mode == .walk and spherical.view.projection != .wrapped) {
-        const ground_basis = curved_ground.worldGroundBasis(.spherical);
+        const ground_basis = curved_ground.worldGroundBasis();
         const ground_far_start = benchStart();
         rasterizeSphericalGroundPatchOverlay(
             spherical.view,
@@ -2502,12 +2502,12 @@ fn drawNativeCurvedScene(app: *const demo.App, viewport: rl.Rectangle, spherical
     switch (scene) {
         .hyperbolic => |hyper| {
             const render_view = if (app.camera.movement_mode == .walk)
-                liftedWalkView(hyper.view, app.camera.euclid_pitch)
+                liftedWalkView(hyper.view)
             else
                 hyper.view;
             drawCurvedSceneBackdrop(render_view, viewport);
             if (app.camera.movement_mode == .walk) {
-                const ground_basis = curved_ground.walkGroundBasis(hyper.view, app.camera.euclid_pitch) orelse curved_ground.worldGroundBasis(hyper.view.metric);
+                const ground_basis = curved_ground.walkGroundBasis(hyper.view, app.camera.euclid_pitch) orelse curved_ground.worldGroundBasis();
                 drawCurvedGroundPatch(
                     hyper.view,
                     render_view,
@@ -2530,7 +2530,7 @@ fn drawNativeCurvedScene(app: *const demo.App, viewport: rl.Rectangle, spherical
         },
         .spherical => |spherical| {
             const render_view = if (app.camera.movement_mode == .walk)
-                liftedWalkView(spherical.view, app.camera.euclid_pitch)
+                liftedWalkView(spherical.view)
             else
                 spherical.view;
             const backdrop_start = benchStart();
@@ -2539,7 +2539,7 @@ fn drawNativeCurvedScene(app: *const demo.App, viewport: rl.Rectangle, spherical
             if (spherical.view.projection == .wrapped) {
                 if (app.camera.movement_mode == .walk) {
                     const ground_start = benchStart();
-                    const ground_basis = curved_ground.worldGroundBasis(.spherical);
+                    const ground_basis = curved_ground.worldGroundBasis();
                     drawSphericalGroundFullscreen(
                         render_view,
                         ground_basis,

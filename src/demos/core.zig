@@ -1341,7 +1341,7 @@ test "spherical walk backward movement evolves smoothly across chart wrap" {
 
     for (0..40) |_| {
         adjustCameraTranslation(&camera, .spherical, 's');
-        try std.testing.expect(camera.spherical.walkSurfaceUp(camera.euclid_pitch) != null);
+        try std.testing.expect(camera.spherical.walkSurfaceUp() != null);
     }
 
     // Camera should have moved far enough across the sphere
@@ -1425,7 +1425,7 @@ test "spherical steep-pitch backward walk preserves local heading and pitch" {
     syncWalkOrientation(&camera);
     for (0..80) |_| {
         adjustCameraTranslation(&camera, .spherical, 's');
-        try std.testing.expect(camera.spherical.walkSurfaceUp(camera.euclid_pitch) != null);
+        try std.testing.expect(camera.spherical.walkSurfaceUp() != null);
     }
 }
 
@@ -1436,11 +1436,11 @@ test "spherical walk surface normal does not change with pitch at fixed position
 
     camera.euclid_pitch = -0.6;
     syncWalkOrientation(&camera);
-    const down_up = camera.spherical.walkSurfaceUp(camera.euclid_pitch).?;
+    const down_up = camera.spherical.walkSurfaceUp().?;
 
     camera.euclid_pitch = 0.2;
     syncWalkOrientation(&camera);
-    const up_up = camera.spherical.walkSurfaceUp(camera.euclid_pitch).?;
+    const up_up = camera.spherical.walkSurfaceUp().?;
 
     const up_dot = down_up[0] * up_up[0] +
         down_up[1] * up_up[1] +
@@ -1519,11 +1519,11 @@ test "spherical walk look controls keep the local camera branch continuous" {
     };
 
     const before = camera.spherical.camera;
-    const before_up = camera.spherical.walkSurfaceUp(camera.euclid_pitch).?;
+    const before_up = camera.spherical.walkSurfaceUp().?;
 
     adjustCameraArrow(&camera, .spherical, 'C');
     const yawed = camera.spherical.camera;
-    const yawed_up = camera.spherical.walkSurfaceUp(camera.euclid_pitch).?;
+    const yawed_up = camera.spherical.walkSurfaceUp().?;
     const yawed_orientation = camera.spherical.walkOrientation().?;
     const yaw_position_dot = before.position[0] * yawed.position[0] +
         before.position[1] * yawed.position[1] +
@@ -1545,11 +1545,11 @@ test "spherical walk look controls keep the local camera branch continuous" {
     camera.spherical.camera = before;
     camera.euclid_rotation = 0.285000;
     camera.euclid_pitch = 0.180000;
-    const before_pitch_up = camera.spherical.walkSurfaceUp(camera.euclid_pitch).?;
+    const before_pitch_up = camera.spherical.walkSurfaceUp().?;
 
     adjustCameraArrow(&camera, .spherical, 'A');
     const pitched = camera.spherical.camera;
-    const pitched_up = camera.spherical.walkSurfaceUp(camera.euclid_pitch).?;
+    const pitched_up = camera.spherical.walkSurfaceUp().?;
     const pitched_orientation = camera.spherical.walkOrientation().?;
     const pitch_position_dot = before.position[0] * pitched.position[0] +
         before.position[1] * pitched.position[1] +
