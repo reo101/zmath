@@ -93,6 +93,222 @@ const Flat3 = curved_ambient.Flat3;
 pub const Vec3 = Flat3.Vector;
 pub const Vec4 = [4]f32;
 
+pub fn AmbientFor(comptime metric: Metric) type {
+    return switch (metric) {
+        .hyperbolic => curved_ambient.Hyper,
+        .elliptic, .spherical => curved_ambient.Round,
+    };
+}
+
+pub fn TypedCamera(comptime metric: Metric) type {
+    const Ambient = AmbientFor(metric);
+    return struct {
+        position: Ambient.Vector,
+        right: Ambient.Vector,
+        up: Ambient.Vector,
+        forward: Ambient.Vector,
+    };
+}
+
+pub fn TypedWalkBasis(comptime metric: Metric) type {
+    const Ambient = AmbientFor(metric);
+    return struct {
+        forward: Ambient.Vector,
+        right: Ambient.Vector,
+        up: Ambient.Vector,
+    };
+}
+
+fn typedCameraFromErased(comptime metric: Metric, camera: Camera) TypedCamera(metric) {
+    const Ambient = AmbientFor(metric);
+    return .{
+        .position = Ambient.fromCoords(camera.position),
+        .right = Ambient.fromCoords(camera.right),
+        .up = Ambient.fromCoords(camera.up),
+        .forward = Ambient.fromCoords(camera.forward),
+    };
+}
+
+fn typedCameraToErased(comptime metric: Metric, camera: TypedCamera(metric)) Camera {
+    const Ambient = AmbientFor(metric);
+    return .{
+        .position = Ambient.toCoords(camera.position),
+        .right = Ambient.toCoords(camera.right),
+        .up = Ambient.toCoords(camera.up),
+        .forward = Ambient.toCoords(camera.forward),
+    };
+}
+
+pub fn TypedView(comptime metric: Metric) type {
+    const Ambient = AmbientFor(metric);
+    const CameraT = TypedCamera(metric);
+    const WalkBasisT = TypedWalkBasis(metric);
+
+    return struct {
+        params: Params,
+        projection: projection.DirectionProjection,
+        clip: DistanceClip,
+        camera: CameraT,
+        scene_sign: f32,
+
+        const Self = @This();
+
+        pub fn init(
+            params: Params,
+            projection_mode: projection.DirectionProjection,
+            clip: DistanceClip,
+            eye_chart: anytype,
+            target_chart: anytype,
+        ) CameraError!Self {
+            const erased_view = try View.init(metric, params, projection_mode, clip, eye_chart, target_chart);
+            return fromErased(erased_view);
+        }
+
+        pub fn fromErased(view: View) Self {
+            std.debug.assert(view.metric == metric);
+            return .{
+                .params = view.params,
+                .projection = view.projection,
+                .clip = view.clip,
+                .camera = typedCameraFromErased(metric, view.camera),
+                .scene_sign = view.scene_sign,
+            };
+        }
+
+        pub fn erased(self: Self) View {
+            return .{
+                .metric = metric,
+                .params = self.params,
+                .projection = self.projection,
+                .clip = self.clip,
+                .camera = typedCameraToErased(metric, self.camera),
+                .scene_sign = self.scene_sign,
+            };
+        }
+
+        fn mutate(self: *Self, f: *const fn (*View) void) void {
+            var erased_view = self.erased();
+            f(&erased_view);
+            self.* = fromErased(erased_view);
+        }
+
+        pub fn turnYaw(self: *Self, angle: f32) void {
+            var erased_view = self.erased();
+            erased_view.turnYaw(angle);
+            self.* = fromErased(erased_view);
+        }
+
+        pub fn turnWalkYaw(self: *Self, angle: f32) void {
+            var erased_view = self.erased();
+            erased_view.turnWalkYaw(angle);
+            self.* = fromErased(erased_view);
+        }
+
+        pub fn turnSurfaceYaw(self: *Self, angle: f32, pitch_angle: f32) void {
+            var erased_view = self.erased();
+            erased_view.turnSurfaceYaw(angle, pitch_angle);
+            self.* = fromErased(erased_view);
+        }
+
+        pub fn syncSurfacePitch(self: *Self, pitch_angle: f32) void {
+            var erased_view = self.erased();
+            erased_view.syncSurfacePitch(pitch_angle);
+            self.* = fromErased(erased_view);
+        }
+
+        pub fn turnPitch(self: *Self, angle: f32) void {
+            var erased_view = self.erased();
+            erased_view.turnPitch(angle);
+            self.* = fromErased(erased_view);
+        }
+
+        pub fn moveAlong(self: *Self, direction: Ambient.Vector, distance: f32) void {
+            var erased_view = self.erased();
+            erased_view.moveAlong(Ambient.toCoords(direction), distance);
+            self.* = fromErased(erased_view);
+        }
+
+        pub fn moveForwardBy(self: *Self, distance: f32) void {
+            var erased_view = self.erased();
+            erased_view.moveForwardBy(distance);
+            self.* = fromErased(erased_view);
+        }
+
+        pub fn moveRightBy(self: *Self, distance: f32) void {
+            var erased_view = self.erased();
+            erased_view.moveRightBy(distance);
+            self.* = fromErased(erased_view);
+        }
+
+        pub fn headingDirection(self: Self, x_heading: f32, z_heading: f32) ?Ambient.Vector {
+            const erased_view = self.erased();
+            return Ambient.fromCoords(erased_view.headingDirection(x_heading, z_heading) orelse return null);
+        }
+
+        pub fn walkOrientation(self: Self) ?WalkOrientation {
+            return self.erased().walkOrientation();
+        }
+
+        pub fn walkBasis(self: Self) ?WalkBasisT {
+            const basis = self.erased().walkBasis() orelse return null;
+            return .{
+                .forward = Ambient.fromCoords(basis.forward),
+                .right = Ambient.fromCoords(basis.right),
+                .up = Ambient.fromCoords(basis.up),
+            };
+        }
+
+        pub fn walkSurfaceUp(self: Self) ?Ambient.Vector {
+            return Ambient.fromCoords(self.erased().walkSurfaceUp() orelse return null);
+        }
+
+        pub fn walkSurfaceBasis(self: Self, pitch_angle: f32) ?WalkBasisT {
+            const basis = self.erased().walkSurfaceBasis(pitch_angle) orelse return null;
+            return .{
+                .forward = Ambient.fromCoords(basis.forward),
+                .right = Ambient.fromCoords(basis.right),
+                .up = Ambient.fromCoords(basis.up),
+            };
+        }
+
+        pub fn syncHeadingPitch(self: *Self, x_heading: f32, z_heading: f32, pitch_angle: f32) void {
+            var erased_view = self.erased();
+            erased_view.syncHeadingPitch(x_heading, z_heading, pitch_angle);
+            self.* = fromErased(erased_view);
+        }
+
+        pub fn wrapSphericalChart(self: *Self) void {
+            var erased_view = self.erased();
+            erased_view.wrapSphericalChart();
+            self.* = fromErased(erased_view);
+        }
+
+        pub fn adjustRadius(self: *Self, radius: f32, look_ahead: f32) CameraError!void {
+            var erased_view = self.erased();
+            try erased_view.adjustRadius(radius, look_ahead);
+            self.* = fromErased(erased_view);
+        }
+
+        pub fn shadeFarDistance(self: Self) f32 {
+            return self.erased().shadeFarDistance();
+        }
+    };
+}
+
+pub const HyperView = TypedView(.hyperbolic);
+pub const EllipticView = TypedView(.elliptic);
+pub const SphericalView = TypedView(.spherical);
+
+pub fn erasedView(view: anytype) View {
+    const T = @TypeOf(view);
+    return if (T == View)
+        view
+    else if (comptime @hasDecl(T, "erased"))
+        view.erased()
+    else
+        @compileError("expected `constant_curvature.View` or typed curved view");
+}
+
 pub const SphericalRenderPass = enum { near, far };
 
 pub const spherical_chart_min_denom: f32 = 0.25;
@@ -126,6 +342,18 @@ pub fn coerceVec3(value: anytype) Vec3 {
     return if (@TypeOf(value) == Vec3) value else Vec3.init(value);
 }
 
+fn isFiniteVec4(v: Vec4) bool {
+    inline for (v) |component| {
+        if (!std.math.isFinite(component)) return false;
+    }
+    return true;
+}
+
+fn ambientIdentity(metric: Metric) Vec4 {
+    _ = metric;
+    return .{ 1.0, 0.0, 0.0, 0.0 };
+}
+
 fn sphericalUsesMultipass(projection_mode: projection.DirectionProjection) bool {
     return switch (projection_mode) {
         .wrapped => false,
@@ -157,6 +385,11 @@ pub const View = struct {
             .camera = try initCamera(metric, params, coerceVec3(eye_chart), coerceVec3(target_chart)),
             .scene_sign = 1.0,
         };
+    }
+
+    pub fn typed(self: View, comptime metric_tag: Metric) TypedView(metric_tag) {
+        std.debug.assert(self.metric == metric_tag);
+        return TypedView(metric_tag).fromErased(self);
     }
 
     pub fn turnYaw(self: *View, angle: f32) void {
@@ -535,6 +768,7 @@ fn chartScale(params: Params) f32 {
 }
 
 fn safeDivDenom(value: f32) f32 {
+    if (!std.math.isFinite(value)) return 1e-6;
     if (@abs(value) > 1e-6) return value;
     return if (value < 0.0) -1e-6 else 1e-6;
 }
@@ -593,16 +827,20 @@ pub fn ambientFromTangentBasisPoint(
     lateral: f32,
     forward_distance: f32,
 ) ?Vec4 {
+    if (!isFiniteVec4(origin) or !isFiniteVec4(right) or !isFiniteVec4(forward)) return origin;
+    if (!std.math.isFinite(lateral) or !std.math.isFinite(forward_distance)) return origin;
+
     const tangent = add4(
         metric,
         scale4(metric, right, lateral),
         scale4(metric, forward, forward_distance),
     );
     const tangent_norm2 = metricDot(metric, tangent, tangent);
-    if (tangent_norm2 <= 1e-6) return origin;
+    if (!std.math.isFinite(tangent_norm2) or tangent_norm2 <= 1e-6) return origin;
 
     const tangent_norm = @sqrt(tangent_norm2);
     const normalized_distance = tangent_norm / params.radius;
+    if (!std.math.isFinite(normalized_distance)) return origin;
     const position = switch (metric) {
         .hyperbolic => add4(
             metric,
@@ -773,14 +1011,18 @@ fn metricDot(metric: Metric, a: Vec4, b: Vec4) f32 {
 }
 
 fn tryNormalizeTangent(metric: Metric, v: Vec4) ?Vec4 {
+    if (!isFiniteVec4(v)) return null;
     const n2 = metricDot(metric, v, v);
-    if (n2 <= 1e-6) return null;
+    if (!std.math.isFinite(n2) or n2 <= 1e-6) return null;
     return scale4(metric, v, 1.0 / @sqrt(n2));
 }
 
 fn projectToTangent(metric: Metric, position: Vec4, candidate: Vec4) Vec4 {
+    if (!isFiniteVec4(position) or !isFiniteVec4(candidate)) return .{ 0.0, 0.0, 0.0, 0.0 };
     const denom = metricDot(metric, position, position);
+    if (!std.math.isFinite(denom) or @abs(denom) <= 1e-6) return .{ 0.0, 0.0, 0.0, 0.0 };
     const along = metricDot(metric, candidate, position) / denom;
+    if (!std.math.isFinite(along)) return .{ 0.0, 0.0, 0.0, 0.0 };
     return sub4(metric, candidate, scale4(metric, position, along));
 }
 
@@ -863,12 +1105,20 @@ pub fn chartCoords(metric: Metric, params: Params, ambient: Vec4) Vec3 {
 }
 
 fn normalizeAmbient(metric: Metric, ambient: Vec4) Vec4 {
+    if (!isFiniteVec4(ambient)) return ambientIdentity(metric);
     const norm2 = metricDot(metric, ambient, ambient);
     const inv = switch (metric) {
-        .hyperbolic => 1.0 / @sqrt(@max(-norm2, 1e-6)),
-        .elliptic, .spherical => 1.0 / @sqrt(@max(norm2, 1e-6)),
+        .hyperbolic => inv: {
+            if (!std.math.isFinite(norm2) or -norm2 <= 1e-6) return ambientIdentity(metric);
+            break :inv 1.0 / @sqrt(-norm2);
+        },
+        .elliptic, .spherical => inv: {
+            if (!std.math.isFinite(norm2) or norm2 <= 1e-6) return ambientIdentity(metric);
+            break :inv 1.0 / @sqrt(norm2);
+        },
     };
-    return scale4(metric, ambient, inv);
+    const normalized = scale4(metric, ambient, inv);
+    return if (isFiniteVec4(normalized)) normalized else ambientIdentity(metric);
 }
 
 fn transportedTangent(metric: Metric, old_direction: Vec4, new_direction: Vec4, tangent: Vec4) Vec4 {
@@ -1438,6 +1688,55 @@ test "ambient helpers and flat interpolation stay consistent" {
     try std.testing.expectApproxEqAbs(0.0, bilerped[2], 1e-6);
 }
 
+test "typed hyperbolic view uses GA ambient vector carriers" {
+    var view = try HyperView.init(
+        .{ .radius = 0.32, .angular_zoom = 0.72, .chart_model = .conformal },
+        .gnomonic,
+        .{ .near = 0.08, .far = 1.55 },
+        .{ 0.0, 0.0, -0.22 },
+        .{ 0.0, 0.0, 0.0 },
+    );
+    view.syncHeadingPitch(0.0, 1.0, 0.35);
+
+    try std.testing.expect(@TypeOf(view.camera.position) == curved_ambient.Hyper.Vector);
+    try std.testing.expect(@TypeOf(view.camera.forward) == curved_ambient.Hyper.Vector);
+    try std.testing.expect(view.walkSurfaceUp() != null);
+}
+
+test "typed spherical view stays in sync with erased view operations" {
+    const params = Params{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal };
+    const clip = DistanceClip{ .near = 0.08, .far = std.math.inf(f32) };
+    var typed = try SphericalView.init(params, .wrapped, clip, .{ 0.0, 0.0, -0.82 }, .{ 0.0, 0.0, 0.0 });
+    var erased = try View.init(.spherical, params, .wrapped, clip, .{ 0.0, 0.0, -0.82 }, .{ 0.0, 0.0, 0.0 });
+    const typed_from_erased = erased.typed(.spherical);
+    inline for (curved_ambient.Round.toCoords(typed_from_erased.camera.position), curved_ambient.Round.toCoords(typed.camera.position)) |lhs, rhs| {
+        try std.testing.expectApproxEqAbs(lhs, rhs, 1e-6);
+    }
+
+    typed.syncHeadingPitch(0.42, 0.9075241, 0.55);
+    erased.syncHeadingPitch(0.42, 0.9075241, 0.55);
+    typed.turnSurfaceYaw(0.2, 0.55);
+    erased.turnSurfaceYaw(0.2, 0.55);
+    const typed_forward = typed.headingDirection(0.42, 0.9075241).?;
+    const erased_forward = erased.headingDirection(0.42, 0.9075241).?;
+    typed.moveAlong(typed_forward, 0.10);
+    erased.moveAlong(erased_forward, 0.10);
+
+    const typed_erased = typed.erased();
+    inline for (typed_erased.camera.position, erased.camera.position) |lhs, rhs| {
+        try std.testing.expectApproxEqAbs(lhs, rhs, 1e-5);
+    }
+    inline for (typed_erased.camera.forward, erased.camera.forward) |lhs, rhs| {
+        try std.testing.expectApproxEqAbs(lhs, rhs, 1e-5);
+    }
+
+    const typed_orientation = typed.walkOrientation().?;
+    const erased_orientation = erased.walkOrientation().?;
+    try std.testing.expectApproxEqAbs(typed_orientation.x_heading, erased_orientation.x_heading, 1e-5);
+    try std.testing.expectApproxEqAbs(typed_orientation.z_heading, erased_orientation.z_heading, 1e-5);
+    try std.testing.expectApproxEqAbs(typed_orientation.pitch, erased_orientation.pitch, 1e-5);
+}
+
 test "adjustRadius preserves a valid camera" {
     var view = try View.init(
         .spherical,
@@ -1590,6 +1889,40 @@ test "surface pitch keeps spherical walk pitch tied to the surface normal" {
         before_up[3] * after_up[3];
     try std.testing.expect(up_dot > 0.999);
     try std.testing.expectApproxEqAbs(@as(f32, 1.05), orientation.pitch, 1e-3);
+}
+
+test "tangent normalization rejects non-finite inputs" {
+    const nan = std.math.nan(f32);
+    try std.testing.expectEqual(@as(?Vec4, null), tryNormalizeTangent(.spherical, .{ nan, 0.0, 0.0, 0.0 }));
+    try std.testing.expectEqual(@as(?Vec4, null), tryNormalizeTangent(.hyperbolic, .{ 1.0, nan, 0.0, 0.0 }));
+}
+
+test "ambient normalization falls back to the model identity on non-finite input" {
+    const nan = std.math.nan(f32);
+    const hyper = normalizeAmbient(.hyperbolic, .{ nan, 0.0, 0.0, 0.0 });
+    const round = normalizeAmbient(.spherical, .{ 0.0, nan, 0.0, 0.0 });
+
+    try std.testing.expectEqualSlices(f32, &.{ 1.0, 0.0, 0.0, 0.0 }, &hyper);
+    try std.testing.expectEqualSlices(f32, &.{ 1.0, 0.0, 0.0, 0.0 }, &round);
+}
+
+test "ambient tangent-basis point builder rejects non-finite travel inputs" {
+    const nan = std.math.nan(f32);
+    const origin: Vec4 = .{ 1.0, 0.0, 0.0, 0.0 };
+    const right: Vec4 = .{ 0.0, 1.0, 0.0, 0.0 };
+    const forward: Vec4 = .{ 0.0, 0.0, 0.0, 1.0 };
+
+    const point = ambientFromTangentBasisPoint(
+        .spherical,
+        .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
+        origin,
+        right,
+        forward,
+        nan,
+        0.25,
+    ).?;
+
+    try std.testing.expectEqualSlices(f32, &origin, &point);
 }
 
 test "spherical walk orientation survives forward transport" {

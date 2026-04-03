@@ -25,22 +25,24 @@ pub const MeshStyle = struct {
 pub fn drawMesh(
     canvas: *canvas_api.Canvas,
     mesh: Mesh,
-    view: curved.View,
+    view: anytype,
     screen: curved.Screen,
     style: MeshStyle,
 ) void {
-    drawFaces(canvas, mesh, view, screen, style);
-    drawEdges(canvas, mesh, view, screen, style);
+    const erased_view = curved.erasedView(view);
+    drawFaces(canvas, mesh, erased_view, screen, style);
+    drawEdges(canvas, mesh, erased_view, screen, style);
 }
 
 pub fn drawFaces(
     canvas: *canvas_api.Canvas,
     mesh: Mesh,
-    view: curved.View,
+    view: anytype,
     screen: curved.Screen,
     style: MeshStyle,
 ) void {
-    const fill_steps = if (view.metric == .spherical and view.projection == .wrapped)
+    const erased_view = curved.erasedView(view);
+    const fill_steps = if (erased_view.metric == .spherical and erased_view.projection == .wrapped)
         style.wrapped_face_fill_steps
     else
         style.face_fill_steps;
@@ -58,7 +60,7 @@ pub fn drawFaces(
             for (0..fill_steps + 1) |vi| {
                 const v = @as(f32, @floatFromInt(vi)) / @as(f32, @floatFromInt(fill_steps));
                 const point = curved.flatBilerpQuad(a, b, c, d, u, v);
-                const sample = view.sampleProjectedPoint(point, screen);
+                const sample = erased_view.sampleProjectedPoint(point, screen);
                 if (sample.status != .visible) continue;
                 if (sample.projected) |p| {
                     canvas.setFill(p[0], p[1], shade, tone, sample.distance);
@@ -71,16 +73,17 @@ pub fn drawFaces(
 pub fn drawEdges(
     canvas: *canvas_api.Canvas,
     mesh: Mesh,
-    view: curved.View,
+    view: anytype,
     screen: curved.Screen,
     style: MeshStyle,
 ) void {
+    const erased_view = curved.erasedView(view);
     for (mesh.edges, 0..) |edge, edge_index| {
         drawEdge(
             canvas,
             mesh.vertices[edge[0]],
             mesh.vertices[edge[1]],
-            view,
+            erased_view,
             screen,
             .{
                 .steps = style.edge_steps,
@@ -105,29 +108,30 @@ pub fn drawEdge(
     canvas: *canvas_api.Canvas,
     a_chart: curved.Vec3,
     b_chart: curved.Vec3,
-    view: curved.View,
+    view: anytype,
     screen: curved.Screen,
     style: EdgeStyle,
 ) void {
+    const erased_view = curved.erasedView(view);
     var prev_point: ?[2]f32 = null;
     var prev_distance: ?f32 = null;
     var prev_status: curved.SampleStatus = .hidden;
-    const shade_far_distance = view.shadeFarDistance();
+    const shade_far_distance = erased_view.shadeFarDistance();
 
     for (0..style.steps + 1) |i| {
         const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(style.steps));
-        const chart = curved.geodesicChartPoint(view.metric, view.params, a_chart, b_chart, t) orelse {
+        const chart = curved.geodesicChartPoint(erased_view.metric, erased_view.params, a_chart, b_chart, t) orelse {
             prev_point = null;
             prev_distance = null;
             prev_status = .hidden;
             continue;
         };
-        const sample = view.sampleProjectedPoint(chart, screen);
+        const sample = erased_view.sampleProjectedPoint(chart, screen);
         if (sample.projected) |p| {
             if (prev_status == .visible and sample.status == .visible) {
                 if (prev_point) |pp| {
                     if (prev_distance) |pd| {
-                        if (!curved.shouldBreakProjectedSegment(view.projection, pp, p, screen.width, screen.height)) {
+                        if (!curved.shouldBreakProjectedSegment(erased_view.projection, pp, p, screen.width, screen.height)) {
                             canvas.drawLine(
                                 pp[0],
                                 pp[1],
@@ -204,8 +208,7 @@ test "drawMesh paints visible curved cells and edges" {
     defer canvas.deinit();
 
     const params = curved.Params{ .radius = 0.32, .angular_zoom = 0.72, .chart_model = .conformal };
-    const view = try curved.View.init(
-        .hyperbolic,
+    const view = try curved.HyperView.init(
         params,
         .gnomonic,
         .{ .near = 0.08, .far = 1.55 },
@@ -245,8 +248,7 @@ test "drawEdge marks clipped near transitions" {
     defer canvas.deinit();
 
     const params = curved.Params{ .radius = 0.32, .angular_zoom = 0.72, .chart_model = .conformal };
-    const view = try curved.View.init(
-        .hyperbolic,
+    const view = try curved.HyperView.init(
         params,
         .gnomonic,
         .{ .near = 0.28, .far = 1.55 },

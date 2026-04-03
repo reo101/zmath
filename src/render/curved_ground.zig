@@ -37,23 +37,25 @@ pub fn sphericalGroundBasisForPass(pass: curved.SphericalRenderPass) GroundBasis
     };
 }
 
-pub fn walkGroundBasis(view: curved.View, pitch_angle: f32) ?GroundBasis {
-    const basis = view.walkSurfaceBasis(pitch_angle) orelse return null;
+pub fn walkGroundBasis(view: anytype, pitch_angle: f32) ?GroundBasis {
+    const erased_view = curved.erasedView(view);
+    const basis = erased_view.walkSurfaceBasis(pitch_angle) orelse return null;
     return .{
-        .origin = view.camera.position,
+        .origin = erased_view.camera.position,
         .right = basis.right,
         .forward = basis.forward,
         .up = basis.up,
     };
 }
 
-pub fn signedGroundBasisForView(view: curved.View, basis: GroundBasis) GroundBasis {
-    if (view.metric != .spherical or view.scene_sign >= 0.0) return basis;
+pub fn signedGroundBasisForView(view: anytype, basis: GroundBasis) GroundBasis {
+    const erased_view = curved.erasedView(view);
+    if (erased_view.metric != .spherical or erased_view.scene_sign >= 0.0) return basis;
     return .{
-        .origin = curved.ambientScale(view.metric, basis.origin, -1.0),
-        .right = curved.ambientScale(view.metric, basis.right, -1.0),
-        .forward = curved.ambientScale(view.metric, basis.forward, -1.0),
-        .up = curved.ambientScale(view.metric, basis.up, -1.0),
+        .origin = curved.ambientScale(erased_view.metric, basis.origin, -1.0),
+        .right = curved.ambientScale(erased_view.metric, basis.right, -1.0),
+        .forward = curved.ambientScale(erased_view.metric, basis.forward, -1.0),
+        .up = curved.ambientScale(erased_view.metric, basis.up, -1.0),
     };
 }
 
@@ -95,26 +97,27 @@ pub fn inverseGroundScreenDirection(
 }
 
 pub fn sphericalGroundHitForScreenPoint(
-    view: curved.View,
+    view: anytype,
     basis_input: GroundBasis,
     screen: curved.Screen,
     point: [2]f32,
 ) ?SphericalGroundHit {
-    if (view.metric != .spherical) return null;
+    const erased_view = curved.erasedView(view);
+    if (erased_view.metric != .spherical) return null;
 
-    const basis = signedGroundBasisForView(view, basis_input);
-    const local_dir = inverseGroundScreenDirection(view.projection, screen, point) orelse return null;
+    const basis = signedGroundBasisForView(erased_view, basis_input);
+    const local_dir = inverseGroundScreenDirection(erased_view.projection, screen, point) orelse return null;
     const direction = curved.ambientAdd(
         .spherical,
         curved.ambientAdd(
             .spherical,
-            curved.ambientScale(.spherical, view.camera.right, curved.vec3x(local_dir)),
-            curved.ambientScale(.spherical, view.camera.up, curved.vec3y(local_dir)),
+            curved.ambientScale(.spherical, erased_view.camera.right, curved.vec3x(local_dir)),
+            curved.ambientScale(.spherical, erased_view.camera.up, curved.vec3y(local_dir)),
         ),
-        curved.ambientScale(.spherical, view.camera.forward, curved.vec3z(local_dir)),
+        curved.ambientScale(.spherical, erased_view.camera.forward, curved.vec3z(local_dir)),
     );
 
-    const a = curved.ambientDot(.spherical, view.camera.position, basis.up);
+    const a = curved.ambientDot(.spherical, erased_view.camera.position, basis.up);
     const b = curved.ambientDot(.spherical, direction, basis.up);
     if (@abs(a) <= 1e-6 and @abs(b) <= 1e-6) return null;
 
@@ -134,16 +137,16 @@ pub fn sphericalGroundHitForScreenPoint(
     const planar_norm = @sqrt(lateral_coord * lateral_coord + forward_coord * forward_coord);
     if (planar_norm <= 1e-6) {
         return .{
-            .distance = theta * view.params.radius,
+            .distance = theta * erased_view.params.radius,
             .lateral = 0.0,
             .forward = 0.0,
         };
     }
 
-    const tangent_radius = std.math.atan2(planar_norm, origin_coord) * view.params.radius;
+    const tangent_radius = std.math.atan2(planar_norm, origin_coord) * erased_view.params.radius;
     const tangent_scale = tangent_radius / planar_norm;
     return .{
-        .distance = theta * view.params.radius,
+        .distance = theta * erased_view.params.radius,
         .lateral = lateral_coord * tangent_scale,
         .forward = forward_coord * tangent_scale,
     };
@@ -175,8 +178,7 @@ test "inverse screen directions point forward at screen center" {
 }
 
 test "signedGroundBasisForView flips spherical negative scene" {
-    var view = try curved.View.init(
-        .spherical,
+    var view = try curved.SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .stereographic,
         .{ .near = 0.08, .far = std.math.inf(f32) },
@@ -195,8 +197,7 @@ test "signedGroundBasisForView flips spherical negative scene" {
 }
 
 test "sphericalGroundHitForScreenPoint returns centered finite hit" {
-    const view = try curved.View.init(
-        .spherical,
+    const view = try curved.SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .stereographic,
         .{ .near = 0.08, .far = std.math.inf(f32) },
