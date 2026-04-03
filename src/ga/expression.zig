@@ -722,7 +722,11 @@ fn parserSkipWhitespace(self: anytype) void {
 }
 
 fn parserIsBladePrefixStart(self: anytype, char: u8) bool {
-    return char == self.naming_options.basis_prefix;
+    if (char == self.naming_options.basis_prefix) return true;
+    for (self.naming_options.blade_aliases) |alias| {
+        if (alias.name.len > 0 and alias.name[0] == char) return true;
+    }
+    return false;
 }
 
 fn parserLexNumber(comptime T: type, comptime sig: blades.MetricSignature, self: anytype) ParserTypes(T, sig).Token {

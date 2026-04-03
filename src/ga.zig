@@ -13,6 +13,7 @@ pub const MetricSignature = blades.MetricSignature;
 pub const SignatureClass = blades.SignatureClass;
 pub const BasisIndexSpan = blades.BasisIndexSpan;
 pub const BasisIndexSpans = blades.BasisIndexSpans;
+pub const BladeAlias = blade_parsing.BladeAlias;
 pub const SignedBladeNamingOptions = blade_parsing.SignedBladeNamingOptions;
 pub const euclideanSignature = blades.euclideanSignature;
 
