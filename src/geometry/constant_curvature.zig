@@ -1,6 +1,6 @@
 const std = @import("std");
-const ga = @import("../ga.zig");
 const projection = @import("../render/projection.zig");
+const curved_ambient = @import("curved_ambient.zig");
 const hpga = @import("../flavours/hpga.zig");
 const epga = @import("../flavours/epga.zig");
 
@@ -88,20 +88,10 @@ pub const CameraError = error{
     DegenerateDirection,
 };
 
-const hyper_ambient_naming = ga.SignedBladeNamingOptions.withBasisSpans(ga.BasisIndexSpans.init(.{
-    .positive = .range(1, 3),
-    .negative = .singleton(0),
-}));
-const round_ambient_naming = ga.SignedBladeNamingOptions.withBasisSpans(ga.BasisIndexSpans.init(.{
-    .positive = .range(0, 3),
-}));
-const Flat3 = ga.Algebra(.euclidean(3)).Instantiate(f32);
+const Flat3 = curved_ambient.Flat3;
 
 pub const Vec3 = Flat3.Vector;
 pub const Vec4 = [4]f32;
-
-const HyperAmbient = ga.AlgebraWithNamingOptions(.{ .p = 3, .q = 1 }, hyper_ambient_naming).Instantiate(f32);
-const RoundAmbient = ga.AlgebraWithNamingOptions(.{ .p = 4 }, round_ambient_naming).Instantiate(f32);
 
 pub const SphericalRenderPass = enum { near, far };
 
@@ -462,40 +452,6 @@ pub const View = struct {
     }
 };
 
-fn hyperAmbientVector(coords: Vec4) HyperAmbient.Vector {
-    const E = HyperAmbient.Basis;
-    return E.e(0).scale(coords[0])
-        .add(E.e(1).scale(coords[1]))
-        .add(E.e(2).scale(coords[2]))
-        .add(E.e(3).scale(coords[3]));
-}
-
-fn roundAmbientVector(coords: Vec4) RoundAmbient.Vector {
-    const E = RoundAmbient.Basis;
-    return E.e(0).scale(coords[0])
-        .add(E.e(1).scale(coords[1]))
-        .add(E.e(2).scale(coords[2]))
-        .add(E.e(3).scale(coords[3]));
-}
-
-fn coordsFromHyperAmbient(v: HyperAmbient.Vector) Vec4 {
-    return .{
-        @floatCast(v.coeffNamedWithOptions("e0", hyper_ambient_naming)),
-        @floatCast(v.coeffNamedWithOptions("e1", hyper_ambient_naming)),
-        @floatCast(v.coeffNamedWithOptions("e2", hyper_ambient_naming)),
-        @floatCast(v.coeffNamedWithOptions("e3", hyper_ambient_naming)),
-    };
-}
-
-fn coordsFromRoundAmbient(v: RoundAmbient.Vector) Vec4 {
-    return .{
-        @floatCast(v.coeffNamedWithOptions("e0", round_ambient_naming)),
-        @floatCast(v.coeffNamedWithOptions("e1", round_ambient_naming)),
-        @floatCast(v.coeffNamedWithOptions("e2", round_ambient_naming)),
-        @floatCast(v.coeffNamedWithOptions("e3", round_ambient_naming)),
-    };
-}
-
 fn coordsFromFlatVector(v: Flat3.Vector) Vec3 {
     return v;
 }
@@ -530,22 +486,40 @@ pub fn flatBilerpQuad(a: anytype, b: anytype, c: anytype, d: anytype, u: f32, v:
 
 fn add4(metric: Metric, a: Vec4, b: Vec4) Vec4 {
     return switch (metric) {
-        .hyperbolic => coordsFromHyperAmbient(hyperAmbientVector(a).add(hyperAmbientVector(b))),
-        .elliptic, .spherical => coordsFromRoundAmbient(roundAmbientVector(a).add(roundAmbientVector(b))),
+        .hyperbolic => curved_ambient.Hyper.toCoords(curved_ambient.Hyper.add(
+            curved_ambient.Hyper.fromCoords(a),
+            curved_ambient.Hyper.fromCoords(b),
+        )),
+        .elliptic, .spherical => curved_ambient.Round.toCoords(curved_ambient.Round.add(
+            curved_ambient.Round.fromCoords(a),
+            curved_ambient.Round.fromCoords(b),
+        )),
     };
 }
 
 fn sub4(metric: Metric, a: Vec4, b: Vec4) Vec4 {
     return switch (metric) {
-        .hyperbolic => coordsFromHyperAmbient(hyperAmbientVector(a).sub(hyperAmbientVector(b))),
-        .elliptic, .spherical => coordsFromRoundAmbient(roundAmbientVector(a).sub(roundAmbientVector(b))),
+        .hyperbolic => curved_ambient.Hyper.toCoords(curved_ambient.Hyper.sub(
+            curved_ambient.Hyper.fromCoords(a),
+            curved_ambient.Hyper.fromCoords(b),
+        )),
+        .elliptic, .spherical => curved_ambient.Round.toCoords(curved_ambient.Round.sub(
+            curved_ambient.Round.fromCoords(a),
+            curved_ambient.Round.fromCoords(b),
+        )),
     };
 }
 
 fn scale4(metric: Metric, v: Vec4, s: f32) Vec4 {
     return switch (metric) {
-        .hyperbolic => coordsFromHyperAmbient(hyperAmbientVector(v).scale(s)),
-        .elliptic, .spherical => coordsFromRoundAmbient(roundAmbientVector(v).scale(s)),
+        .hyperbolic => curved_ambient.Hyper.toCoords(curved_ambient.Hyper.scale(
+            curved_ambient.Hyper.fromCoords(v),
+            s,
+        )),
+        .elliptic, .spherical => curved_ambient.Round.toCoords(curved_ambient.Round.scale(
+            curved_ambient.Round.fromCoords(v),
+            s,
+        )),
     };
 }
 
@@ -787,8 +761,14 @@ fn cameraModelForRender(metric: Metric, projection_mode: projection.DirectionPro
 
 fn metricDot(metric: Metric, a: Vec4, b: Vec4) f32 {
     return switch (metric) {
-        .hyperbolic => hyperAmbientVector(a).scalarProduct(hyperAmbientVector(b)),
-        .elliptic, .spherical => roundAmbientVector(a).scalarProduct(roundAmbientVector(b)),
+        .hyperbolic => curved_ambient.Hyper.dot(
+            curved_ambient.Hyper.fromCoords(a),
+            curved_ambient.Hyper.fromCoords(b),
+        ),
+        .elliptic, .spherical => curved_ambient.Round.dot(
+            curved_ambient.Round.fromCoords(a),
+            curved_ambient.Round.fromCoords(b),
+        ),
     };
 }
 
