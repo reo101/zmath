@@ -279,10 +279,10 @@ fn signedBladeImpl(
 /// Generic multivector carrier whose storage is restricted to `blade_masks`.
 ///
 /// This type is the core of the geometric algebra library. It provides:
-/// - **Storage**: Compact representation of multivectors, using SIMD vectors
-///   when appropriate.
+/// - **Storage**: Compact representation of multivectors as coefficient arrays.
+///   SIMD remains an implementation detail of hot operations.
 /// - **Named Fields**: Layout-compatible access to coefficients using basis-blade
-///   names (e.g. `.named.e12`) for algebras with up to 5 dimensions.
+///   names (e.g. `.named().e12`) for algebras with up to 5 dimensions.
 /// - **GA Operations**: Type-safe implementations of the geometric product (`.gp()`),
 ///   wedge product (`.wedge()`), dot products, contractions, and more.
 /// - **Metric Awareness**: A concrete metric signature is baked in via `sig`,
@@ -295,7 +295,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
     // Zig's memoization should handle this if the function is pure.
     // Let's ensure it stays pure by moving all logic into an anonymous struct.
     @setEvalBranchQuota(5_000_000);
-    return extern union {
+    return extern struct {
         /// The coefficient type (e.g. `f32`, `f64`, `i32`).
         pub const Coefficient = T;
         /// The dimension of the ambient space.
@@ -327,10 +327,10 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             }
         }
 
-        /// Whether this multivector uses SIMD vector storage.
+        /// Whether this multivector can use lane-wise SIMD in hot operations.
         pub const use_simd = canUseLaneWiseSimd(T, stored_blade_count);
-        /// The underlying storage type (either a @Vector or a standard array).
-        pub const Storage = if (use_simd) @Vector(stored_blade_count, T) else [stored_blade_count]T;
+        /// The underlying storage type.
+        pub const Storage = [stored_blade_count]T;
         /// An `extern struct` providing named field access to coefficients.
         /// Only populated for algebras with up to 5 dimensions.
         pub const Named = if (dimensions <= 5) off: {
@@ -365,10 +365,24 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
 
         /// Compact storage of all represented coefficients.
         coeffs: Storage,
-        /// Layout-compatible view providing named field access (e.g. `.named.e12`).
-        named: Named,
 
         pub const Self = @This();
+
+        fn NamedPtrType(comptime Ptr: type) type {
+            const info = @typeInfo(Ptr);
+            if (info != .pointer or info.pointer.size != .one or info.pointer.child != Self) {
+                @compileError("named() expects a multivector pointer receiver");
+            }
+            return if (info.pointer.is_const) *const Named else *Named;
+        }
+
+        /// Layout-compatible view providing named field access (e.g. `.named().e12`).
+        pub inline fn named(self: anytype) NamedPtrType(@TypeOf(self)) {
+            if (comptime dimensions > 5) {
+                @compileError("named coefficient access is only available for algebras with at most 5 dimensions");
+            }
+            return @ptrCast(&self.coeffs);
+        }
 
         /// Returns a multivector type for the same coefficient type and signature
         /// but with a different set of stored blade masks.
@@ -405,7 +419,6 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         pub const BivectorType = Rebind(&blade_ops.gradeBladeMasks(dimensions, 2));
 
         /// Returns the coefficients as a standard array for indexing.
-        /// This is a no-op if Storage is already an array, or a coercion if it's a @Vector.
         pub inline fn coeffsArray(self: Self) [stored_blade_count]T {
             return self.coeffs;
         }
@@ -417,7 +430,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
 
         /// Returns the additive identity for this carrier type.
         pub inline fn zero() Self {
-            return .{ .coeffs = @splat(0) };
+            return .{ .coeffs = std.mem.zeroes(Storage) };
         }
 
         /// Constructs a compile-time signed blade using this carrier's coefficient type.
@@ -527,8 +540,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         pub fn setCoeff(self: *Self, mask: BladeMask, value: T) void {
             const index = Self.getBladeIndex(mask);
             if (index < Self.stored_blade_count) {
-                const array_ptr: *[stored_blade_count]T = @ptrCast(self);
-                array_ptr[index] = value;
+                self.coeffs[index] = value;
             }
         }
 
@@ -1360,16 +1372,16 @@ pub fn BasisWithNamingOptions(
 test "multivector Named struct allows field access" {
     const Vec2 = Vector(f32, .euclidean(2));
     const v = Vec2.init(.{ 1.0, 2.0 });
-    try std.testing.expectEqual(@as(f32, 1.0), v.named.e1);
-    try std.testing.expectEqual(@as(f32, 2.0), v.named.e2);
+    try std.testing.expectEqual(@as(f32, 1.0), v.named().e1);
+    try std.testing.expectEqual(@as(f32, 2.0), v.named().e2);
 
     const Biv2 = Bivector(f32, .euclidean(2));
     const b = Biv2.init(.{3.0});
-    try std.testing.expectEqual(@as(f32, 3.0), b.named.e12);
+    try std.testing.expectEqual(@as(f32, 3.0), b.named().e12);
 
     const Scal2 = Scalar(f32, .euclidean(2));
     const s = Scal2.init(.{4.0});
-    try std.testing.expectEqual(@as(f32, 4.0), s.named.s);
+    try std.testing.expectEqual(@as(f32, 4.0), s.named().s);
 }
 
 test "aliases and signed blades expose more than just plain vectors" {
@@ -1566,20 +1578,12 @@ test "large-dimension full multivector geometric product with scalar identity" {
     try std.testing.expect(right.eql(value));
 }
 
-test "vga helpers use SIMD storage when appropriate" {
+test "vga helpers enable SIMD operations when appropriate" {
     const Vec2 = Vector(f32, .euclidean(2));
     const v = Vec2.init(.{ 1.0, 2.0 });
 
-    // Check that the underlying storage is a @Vector of the correct size and type.
-    switch (@typeInfo(@TypeOf(v.coeffs))) {
-        .vector => |info| {
-            try std.testing.expectEqual(@as(usize, 2), info.len);
-            try std.testing.expectEqual(f32, info.child);
-        },
-        else => {
-            try std.testing.expect(false);
-        },
-    }
+    try std.testing.expect(Vec2.use_simd);
+    try std.testing.expectEqual([2]f32, @TypeOf(v.coeffs));
 }
 
 test "multivector magnitude and wedge helpers" {
