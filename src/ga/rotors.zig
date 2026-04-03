@@ -339,28 +339,31 @@ test "From Zero to Geo 3.6 exercises" {
     };
     const e = expression.eval;
 
-    const expect = struct {
-        fn case(result: anytype, expected: struct { a: f64, b: f64 }) !void {
-            try std.testing.expectApproxEqRel(result.scalarCoeff(), expected.a, 1e-12);
-            try std.testing.expectApproxEqRel(result.coeff(e12_mask), expected.b, 1e-12);
+    const expectSameValue = struct {
+        fn case(comptime actual_expr: []const u8, comptime expected_expr: []const u8) !void {
+            const actual = e(f64, euclidean2, naming_options, actual_expr, .{});
+            const expected = e(f64, euclidean2, naming_options, expected_expr, .{});
+            inline for (@TypeOf(expected).blades) |mask| {
+                try std.testing.expectApproxEqRel(expected.coeff(mask), actual.coeff(mask), 1e-12);
+            }
         }
     }.case;
 
     // 1. 3 + 5i - 2 = 1 + 5i
-    try expect(e(f64, euclidean2, naming_options, "3 + 5i - 2", .{}), .{ .a = 1, .b = 5 });
+    try expectSameValue("3 + 5i - 2", "1 + 5i");
     // 2. i(1 - 2i) = 2 + i
-    try expect(e(f64, euclidean2, naming_options, "i(1 - 2i)", .{}), .{ .a = 2, .b = 1 });
+    try expectSameValue("i(1 - 2i)", "2 + i");
     // 3. (5 + i)(-2 + 3i) = -13 + 13i
-    try expect(e(f64, euclidean2, naming_options, "(5 + i)(-2 + 3i)", .{}), .{ .a = -13, .b = 13 });
+    try expectSameValue("(5 + i)(-2 + 3i)", "-13 + 13i");
     // 4. (5 + i)(-2) - i = -10 - 3i
-    try expect(e(f64, euclidean2, naming_options, "(5 + i)(-2) - i", .{}), .{ .a = -10, .b = -3 });
+    try expectSameValue("(5 + i)(-2) - i", "-10 - 3i");
     // 5. (3 + 4i) / (2i) = 2 - 1.5i
-    try expect(e(f64, euclidean2, naming_options, "(3 + 4i) / (2i)", .{}), .{ .a = 2, .b = -1.5 });
+    try expectSameValue("(3 + 4i) / (2i)", "2 - 1.5i");
     // 6. 25 / (3 + 4i) = 3 - 4i
-    try expect(e(f64, euclidean2, naming_options, "25 / (3 + 4i)", .{}), .{ .a = 3, .b = -4 });
+    try expectSameValue("25 / (3 + 4i)", "3 - 4i");
     // 7. (13 - 2i) / (-5 - 12i) = -41/169 + 166/169·i
-    try expect(e(f64, euclidean2, naming_options, "(13 - 2i) / (-5 - 12i)", .{}), .{ .a = -41.0 / 169.0, .b = 166.0 / 169.0 });
+    try expectSameValue("(13 - 2i) / (-5 - 12i)", "(-41.0 / 169.0) + (166.0 / 169.0)i");
     // 8. (-7 + 3i) / (1 + 2i) = -1/5 + 17/5·i
-    try expect(e(f64, euclidean2, naming_options, "(-7 + 3i) / (1 + 2i)", .{}), .{ .a = -1.0 / 5.0, .b = 17.0 / 5.0 });
+    try expectSameValue("(-7 + 3i) / (1 + 2i)", "(-1.0 / 5.0) + (17.0 / 5.0)i");
 
 }
