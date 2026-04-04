@@ -1203,8 +1203,8 @@ fn nativeCurvedStrokeColor(metric: curved.Metric, face_index: usize, distance: f
 }
 
 fn sampleForCurvedRender(
-    base_view: curved.View,
-    render_view: curved.View,
+    base_view: anytype,
+    render_view: anytype,
     render_pass: CurvedRenderPass,
     chart: curved.Vec3,
     screen: curved.Screen,
@@ -1274,18 +1274,20 @@ fn liftedWalkView(view: anytype) @TypeOf(view) {
 }
 
 fn groundSampleForCurvedRender(
-    surface_view: curved.View,
-    render_view: curved.View,
+    surface_view: anytype,
+    render_view: anytype,
     render_pass: CurvedRenderPass,
     basis: GroundBasis,
     lateral: f32,
     forward_distance: f32,
     screen: curved.Screen,
 ) curved.ProjectedSample {
+    const erased_surface = curved.erasedView(surface_view);
+    const erased_render = curved.erasedView(render_view);
     if (!groundPointAllowed(surface_view, lateral, forward_distance)) return .{};
     const ambient = curved.ambientFromTangentBasisPoint(
-        surface_view.metric,
-        surface_view.params,
+        erased_surface.metric,
+        erased_surface.params,
         basis.origin,
         basis.right,
         basis.forward,
@@ -1294,10 +1296,10 @@ fn groundSampleForCurvedRender(
     ) orelse return .{};
 
     return switch (render_pass) {
-        .direct => sampleAmbientForNativeRender(render_view, ambient, screen),
+        .direct => sampleAmbientForNativeRender(erased_render, ambient, screen),
         .spherical => |pass| nativeSphericalConformalSampleForPass(
-            surface_view.typed(.spherical),
-            render_view.typed(.spherical),
+            erased_surface.typed(.spherical),
+            erased_render.typed(.spherical),
             pass,
             ambient,
             screen,
@@ -1407,8 +1409,8 @@ fn drawGroundTriangle(
 }
 
 fn drawCurvedGroundCell(
-    world_view: curved.View,
-    render_view: curved.View,
+    world_view: anytype,
+    render_view: anytype,
     render_pass: CurvedRenderPass,
     basis: GroundBasis,
     screen: curved.Screen,
@@ -1421,6 +1423,8 @@ fn drawCurvedGroundCell(
     depth: usize,
     far_distance: f32,
 ) void {
+    const erased_world = curved.erasedView(world_view);
+    const erased_render = curved.erasedView(render_view);
     const s00 = groundSampleForCurvedRender(world_view, render_view, render_pass, basis, x0, z0, screen);
     const s10 = groundSampleForCurvedRender(world_view, render_view, render_pass, basis, x1, z0, screen);
     const s11 = groundSampleForCurvedRender(world_view, render_view, render_pass, basis, x1, z1, screen);
@@ -1451,7 +1455,7 @@ fn drawCurvedGroundCell(
         const p01 = s01.projected.?;
         if (!groundCellBroken(render_view, screen, p00, p10, p11, p01)) {
             const avg_distance = (s00.distance + s10.distance + s11.distance + s01.distance) * 0.25;
-            const fill = groundFillColor(render_view.metric, avg_distance, render_view.clip.near, far_distance, checker);
+            const fill = groundFillColor(erased_render.metric, avg_distance, erased_render.clip.near, far_distance, checker);
             const stroke = groundStrokeColor(fill);
             const poly = [_]rl.Vector2{
                 canvasPointToViewport(viewport, p00),
@@ -1460,7 +1464,7 @@ fn drawCurvedGroundCell(
                 canvasPointToViewport(viewport, p01),
             };
             drawPolygonFan(poly[0..], fill);
-            if (render_view.metric != .spherical) {
+            if (erased_render.metric != .spherical) {
                 drawPolygonOutline(poly[0..], 0.8, stroke);
             }
             return;
@@ -1477,12 +1481,12 @@ fn drawCurvedGroundCell(
         return;
     }
 
-    if (world_view.metric == .spherical) return;
+    if (erased_world.metric == .spherical) return;
 
     if (!center_visible) return;
 
     const center_point = center.projected.?;
-    const fill = groundFillColor(render_view.metric, center.distance, render_view.clip.near, far_distance, checker);
+    const fill = groundFillColor(erased_render.metric, center.distance, erased_render.clip.near, far_distance, checker);
     const corners = [_]curved.ProjectedSample{ s00, s10, s11, s01 };
     const next = [_]usize{ 1, 2, 3, 0 };
     for (corners, 0..) |corner, i| {
@@ -1490,9 +1494,9 @@ fn drawCurvedGroundCell(
         if (!sampleVisible(corner) or !sampleVisible(adjacent)) continue;
         const p0 = corner.projected.?;
         const p1 = adjacent.projected.?;
-        if (curved.shouldBreakProjectedSegment(render_view.projection, center_point, p0, screen.width, screen.height) or
-            curved.shouldBreakProjectedSegment(render_view.projection, center_point, p1, screen.width, screen.height) or
-            curved.shouldBreakProjectedSegment(render_view.projection, p0, p1, screen.width, screen.height))
+        if (curved.shouldBreakProjectedSegment(erased_render.projection, center_point, p0, screen.width, screen.height) or
+            curved.shouldBreakProjectedSegment(erased_render.projection, center_point, p1, screen.width, screen.height) or
+            curved.shouldBreakProjectedSegment(erased_render.projection, p0, p1, screen.width, screen.height))
         {
             continue;
         }
@@ -1501,17 +1505,19 @@ fn drawCurvedGroundCell(
 }
 
 fn drawCurvedGroundPatch(
-    world_view: curved.View,
-    render_view: curved.View,
+    world_view: anytype,
+    render_view: anytype,
     render_pass: CurvedRenderPass,
     basis: GroundBasis,
     screen: curved.Screen,
     viewport: rl.Rectangle,
 ) void {
-    if (world_view.metric == .spherical) {
+    const erased_world = curved.erasedView(world_view);
+    const erased_render = curved.erasedView(render_view);
+    if (erased_world.metric == .spherical) {
         drawSphericalGroundPatchPolar(
-            world_view.typed(.spherical),
-            render_view.typed(.spherical),
+            erased_world.typed(.spherical),
+            erased_render.typed(.spherical),
             render_pass,
             sphericalBasisFromErased(basis),
             screen,
@@ -1521,7 +1527,7 @@ fn drawCurvedGroundPatch(
     }
 
     const extents = groundExtents(world_view);
-    const far_distance = render_view.shadeFarDistance();
+    const far_distance = erased_render.shadeFarDistance();
     const subdivide_depth = curvedGroundSubdivideDepth(world_view, render_view);
     const ground_steps = curvedGroundSteps(render_view);
 
@@ -1677,8 +1683,8 @@ fn drawSphericalGroundPatchPolar(
 }
 
 fn drawCurvedSegment(
-    base_view: curved.View,
-    render_view: curved.View,
+    base_view: anytype,
+    render_view: anytype,
     render_pass: CurvedRenderPass,
     screen: curved.Screen,
     viewport: rl.Rectangle,
@@ -1686,9 +1692,11 @@ fn drawCurvedSegment(
     b: curved.Vec3,
     tone: u8,
 ) void {
+    const erased_base = curved.erasedView(base_view);
+    const erased_render = curved.erasedView(render_view);
     var prev_point: ?[2]f32 = null;
     var prev_distance: f32 = 0.0;
-    const far_distance = base_view.shadeFarDistance();
+    const far_distance = erased_base.shadeFarDistance();
 
     for (0..native_curved_edge_steps + 1) |i| {
         const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(native_curved_edge_steps));
@@ -1704,9 +1712,9 @@ fn drawCurvedSegment(
 
         if (prev_point) |prev| {
             const point = sample.projected.?;
-            if (!curved.shouldBreakProjectedSegment(render_view.projection, prev, point, screen.width, screen.height)) {
+            if (!curved.shouldBreakProjectedSegment(erased_render.projection, prev, point, screen.width, screen.height)) {
                 const avg_distance = (prev_distance + sample.distance) * 0.5;
-                const scale = 0.96 - depthRatio(avg_distance, base_view.clip.near, far_distance) * 0.28;
+                const scale = 0.96 - depthRatio(avg_distance, erased_base.clip.near, far_distance) * 0.28;
                 const edge = mixColor(scaledToneColor(tone, scale), white, 0.24);
                 const p0 = canvasPointToViewport(viewport, prev);
                 const p1 = canvasPointToViewport(viewport, point);
@@ -1721,14 +1729,16 @@ fn drawCurvedSegment(
 }
 
 fn drawCurvedFaceGrid(
-    base_view: curved.View,
-    render_view: curved.View,
+    base_view: anytype,
+    render_view: anytype,
     render_pass: CurvedRenderPass,
     screen: curved.Screen,
     viewport: rl.Rectangle,
     quad: [4]curved.Vec3,
     face_index: usize,
 ) void {
+    const erased_base = curved.erasedView(base_view);
+    const erased_render = curved.erasedView(render_view);
     const grid_side = native_curved_fill_steps + 1;
     var samples: [grid_side * grid_side]curved.ProjectedSample = undefined;
 
@@ -1760,19 +1770,19 @@ fn drawCurvedFaceGrid(
             const p10 = s10.projected.?;
             const p11 = s11.projected.?;
             const p01 = s01.projected.?;
-            if (curved.shouldBreakProjectedSegment(render_view.projection, p00, p10, screen.width, screen.height) or
-                curved.shouldBreakProjectedSegment(render_view.projection, p10, p11, screen.width, screen.height) or
-                curved.shouldBreakProjectedSegment(render_view.projection, p11, p01, screen.width, screen.height) or
-                curved.shouldBreakProjectedSegment(render_view.projection, p01, p00, screen.width, screen.height) or
-                curved.shouldBreakProjectedSegment(render_view.projection, p00, p11, screen.width, screen.height) or
-                curved.shouldBreakProjectedSegment(render_view.projection, p10, p01, screen.width, screen.height))
+            if (curved.shouldBreakProjectedSegment(erased_render.projection, p00, p10, screen.width, screen.height) or
+                curved.shouldBreakProjectedSegment(erased_render.projection, p10, p11, screen.width, screen.height) or
+                curved.shouldBreakProjectedSegment(erased_render.projection, p11, p01, screen.width, screen.height) or
+                curved.shouldBreakProjectedSegment(erased_render.projection, p01, p00, screen.width, screen.height) or
+                curved.shouldBreakProjectedSegment(erased_render.projection, p00, p11, screen.width, screen.height) or
+                curved.shouldBreakProjectedSegment(erased_render.projection, p10, p01, screen.width, screen.height))
             {
                 continue;
             }
 
             const avg_distance = (s00.distance + s10.distance + s11.distance + s01.distance) * 0.25;
-            const fill = nativeCurvedFillColor(base_view.metric, face_index, avg_distance, base_view.clip.near, far_distance);
-            const stroke = nativeCurvedStrokeColor(base_view.metric, face_index, avg_distance, base_view.clip.near, far_distance);
+            const fill = nativeCurvedFillColor(erased_base.metric, face_index, avg_distance, erased_base.clip.near, far_distance);
+            const stroke = nativeCurvedStrokeColor(erased_base.metric, face_index, avg_distance, erased_base.clip.near, far_distance);
 
             const v00 = canvasPointToViewport(viewport, p00);
             const v10 = canvasPointToViewport(viewport, p10);
@@ -1789,8 +1799,8 @@ fn drawCurvedFaceGrid(
 }
 
 fn faceOrderDistance(
-    base_view: curved.View,
-    render_view: curved.View,
+    base_view: anytype,
+    render_view: anytype,
     render_pass: CurvedRenderPass,
     screen: curved.Screen,
     quad: [4]curved.Vec3,
@@ -1812,12 +1822,13 @@ fn faceOrderDistance(
     return 0.0;
 }
 
-fn drawCurvedSceneBackdrop(view: curved.View, viewport: rl.Rectangle) void {
-    const top_color = if (view.metric == .spherical)
+fn drawCurvedSceneBackdrop(view: anytype, viewport: rl.Rectangle) void {
+    const erased_view = curved.erasedView(view);
+    const top_color = if (erased_view.metric == .spherical)
         rl.Color{ .r = 18, .g = 34, .b = 54, .a = 255 }
     else
         rl.Color{ .r = 32, .g = 20, .b = 28, .a = 255 };
-    const bottom_color = if (view.metric == .spherical)
+    const bottom_color = if (erased_view.metric == .spherical)
         rl.Color{ .r = 7, .g = 12, .b = 22, .a = 255 }
     else
         rl.Color{ .r = 10, .g = 8, .b = 16, .a = 255 };
@@ -1832,17 +1843,17 @@ fn drawCurvedSceneBackdrop(view: curved.View, viewport: rl.Rectangle) void {
     );
     rl.DrawCircleV(
         .{
-            .x = viewport.x + viewport.width * (if (view.metric == .spherical) @as(f32, 0.76) else @as(f32, 0.24)),
+            .x = viewport.x + viewport.width * (if (erased_view.metric == .spherical) @as(f32, 0.76) else @as(f32, 0.24)),
             .y = viewport.y + viewport.height * 0.18,
         },
         @min(viewport.width, viewport.height) * 0.22,
-        if (view.metric == .spherical) accent_cool else accent_warm,
+        if (erased_view.metric == .spherical) accent_cool else accent_warm,
     );
 }
 
 fn drawCurvedSceneGeometry(
-    base_view: curved.View,
-    render_view: curved.View,
+    base_view: anytype,
+    render_view: anytype,
     render_pass: CurvedRenderPass,
     screen: curved.Screen,
     chart_vertices: []const demo.H.Vector,
@@ -2539,12 +2550,12 @@ fn drawNativeCurvedScene(app: *const demo.App, viewport: rl.Rectangle, spherical
                 liftedWalkView(hyper.view)
             else
                 hyper.view;
-            drawCurvedSceneBackdrop(curved.erasedView(render_view), viewport);
+            drawCurvedSceneBackdrop(render_view, viewport);
             if (app.camera.movement_mode == .walk) {
-                const ground_basis = curved_ground.walkGroundBasis(curved.erasedView(hyper.view), app.camera.euclid_pitch) orelse curved_ground.worldGroundBasis();
+                const ground_basis = curved_ground.walkGroundBasis(hyper.view, app.camera.euclid_pitch) orelse curved_ground.worldGroundBasis();
                 drawCurvedGroundPatch(
-                    curved.erasedView(hyper.view),
-                    curved.erasedView(render_view),
+                    hyper.view,
+                    render_view,
                     .direct,
                     ground_basis,
                     hyper.screen,
@@ -2552,8 +2563,8 @@ fn drawNativeCurvedScene(app: *const demo.App, viewport: rl.Rectangle, spherical
                 );
             }
             drawCurvedSceneGeometry(
-                curved.erasedView(render_view),
-                curved.erasedView(render_view),
+                render_view,
+                render_view,
                 .direct,
                 hyper.screen,
                 hyper.chart_vertices[0..],
@@ -2568,7 +2579,7 @@ fn drawNativeCurvedScene(app: *const demo.App, viewport: rl.Rectangle, spherical
             else
                 spherical.view;
             const backdrop_start = benchStart();
-            drawCurvedSceneBackdrop(curved.erasedView(render_view), viewport);
+            drawCurvedSceneBackdrop(render_view, viewport);
             benchAdd(.spherical_backdrop, backdrop_start);
             if (spherical.view.projection == .wrapped) {
                 if (app.camera.movement_mode == .walk) {
