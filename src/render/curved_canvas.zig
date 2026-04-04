@@ -22,6 +22,16 @@ pub const MeshStyle = struct {
     edge_far_tone: u8 = 243,
 };
 
+fn viewMetric(view: anytype) curved.Metric {
+    return switch (@TypeOf(view)) {
+        curved.HyperView => .hyperbolic,
+        curved.EllipticView => .elliptic,
+        curved.SphericalView => .spherical,
+        curved.View => view.metric,
+        else => @compileError("expected typed or erased curved view"),
+    };
+}
+
 pub fn drawMesh(
     canvas: *canvas_api.Canvas,
     mesh: Mesh,
@@ -29,9 +39,8 @@ pub fn drawMesh(
     screen: curved.Screen,
     style: MeshStyle,
 ) void {
-    const erased_view = curved.erasedView(view);
-    drawFaces(canvas, mesh, erased_view, screen, style);
-    drawEdges(canvas, mesh, erased_view, screen, style);
+    drawFaces(canvas, mesh, view, screen, style);
+    drawEdges(canvas, mesh, view, screen, style);
 }
 
 pub fn drawFaces(
@@ -41,8 +50,7 @@ pub fn drawFaces(
     screen: curved.Screen,
     style: MeshStyle,
 ) void {
-    const erased_view = curved.erasedView(view);
-    const fill_steps = if (erased_view.metric == .spherical and erased_view.projection == .wrapped)
+    const fill_steps = if (viewMetric(view) == .spherical and view.projection == .wrapped)
         style.wrapped_face_fill_steps
     else
         style.face_fill_steps;
@@ -60,7 +68,7 @@ pub fn drawFaces(
             for (0..fill_steps + 1) |vi| {
                 const v = @as(f32, @floatFromInt(vi)) / @as(f32, @floatFromInt(fill_steps));
                 const point = curved.flatBilerpQuad(a, b, c, d, u, v);
-                const sample = erased_view.sampleProjectedPoint(point, screen);
+                const sample = view.sampleProjectedPoint(point, screen);
                 if (sample.status != .visible) continue;
                 if (sample.projected) |p| {
                     canvas.setFill(p[0], p[1], shade, tone, sample.distance);
@@ -77,13 +85,12 @@ pub fn drawEdges(
     screen: curved.Screen,
     style: MeshStyle,
 ) void {
-    const erased_view = curved.erasedView(view);
     for (mesh.edges, 0..) |edge, edge_index| {
         drawEdge(
             canvas,
             mesh.vertices[edge[0]],
             mesh.vertices[edge[1]],
-            erased_view,
+            view,
             screen,
             .{
                 .steps = style.edge_steps,
@@ -112,26 +119,26 @@ pub fn drawEdge(
     screen: curved.Screen,
     style: EdgeStyle,
 ) void {
-    const erased_view = curved.erasedView(view);
     var prev_point: ?[2]f32 = null;
     var prev_distance: ?f32 = null;
     var prev_status: curved.SampleStatus = .hidden;
-    const shade_far_distance = erased_view.shadeFarDistance();
+    const shade_far_distance = view.shadeFarDistance();
+    const metric = viewMetric(view);
 
     for (0..style.steps + 1) |i| {
         const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(style.steps));
-        const chart = curved.geodesicChartPoint(erased_view.metric, erased_view.params, a_chart, b_chart, t) orelse {
+        const chart = curved.geodesicChartPoint(metric, view.params, a_chart, b_chart, t) orelse {
             prev_point = null;
             prev_distance = null;
             prev_status = .hidden;
             continue;
         };
-        const sample = erased_view.sampleProjectedPoint(chart, screen);
+        const sample = view.sampleProjectedPoint(chart, screen);
         if (sample.projected) |p| {
             if (prev_status == .visible and sample.status == .visible) {
                 if (prev_point) |pp| {
                     if (prev_distance) |pd| {
-                        if (!curved.shouldBreakProjectedSegment(erased_view.projection, pp, p, screen.width, screen.height)) {
+                        if (!curved.shouldBreakProjectedSegment(view.projection, pp, p, screen.width, screen.height)) {
                             canvas.drawLine(
                                 pp[0],
                                 pp[1],

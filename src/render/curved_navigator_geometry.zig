@@ -10,11 +10,12 @@ pub const SphericalMapProjection = enum {
     gnomonic,
 };
 
-fn sphericalView(view: anytype) curved.SphericalView {
-    return if (@TypeOf(view) == curved.SphericalView)
-        view
-    else
-        curved.erasedView(view).typed(.spherical);
+pub fn sphericalView(view: anytype) curved.SphericalView {
+    return switch (@TypeOf(view)) {
+        curved.SphericalView => view,
+        curved.View => view.typed(.spherical),
+        else => @compileError("expected `SphericalView` or erased curved `View`"),
+    };
 }
 
 pub fn signedSphericalAmbient(view: anytype, chart: curved.Vec3) ?SphericalAmbient {

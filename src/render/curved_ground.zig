@@ -23,6 +23,18 @@ pub const SphericalGroundHit = struct {
     forward: f32,
 };
 
+fn ambientCoords(v: anytype) curved.Vec4 {
+    return if (@TypeOf(v) == curved.Vec4) v else v.coeffsArray();
+}
+
+fn sphericalView(view: anytype) curved.SphericalView {
+    return switch (@TypeOf(view)) {
+        curved.SphericalView => view,
+        curved.View => view.typed(.spherical),
+        else => @compileError("expected `SphericalView` or erased curved `View`"),
+    };
+}
+
 pub fn worldGroundBasis() GroundBasis {
     return .{
         .origin = .{ 1.0, 0.0, 0.0, 0.0 },
@@ -55,30 +67,42 @@ pub fn sphericalGroundBasisForPass(pass: curved.SphericalRenderPass) SphericalGr
 }
 
 pub fn walkGroundBasis(view: anytype, pitch_angle: f32) ?GroundBasis {
-    const erased_view = curved.erasedView(view);
-    const basis = erased_view.walkSurfaceBasis(pitch_angle) orelse return null;
+    const basis = view.walkSurfaceBasis(pitch_angle) orelse return null;
     return .{
-        .origin = erased_view.camera.position,
-        .right = basis.right,
-        .forward = basis.forward,
-        .up = basis.up,
+        .origin = ambientCoords(view.camera.position),
+        .right = ambientCoords(basis.right),
+        .forward = ambientCoords(basis.forward),
+        .up = ambientCoords(basis.up),
     };
 }
 
 pub fn signedGroundBasisForView(view: anytype, basis: GroundBasis) GroundBasis {
-    const erased_view = curved.erasedView(view);
-    if (erased_view.metric != .spherical or erased_view.scene_sign >= 0.0) return basis;
-    return .{
-        .origin = curved.ambientScale(erased_view.metric, basis.origin, -1.0),
-        .right = curved.ambientScale(erased_view.metric, basis.right, -1.0),
-        .forward = curved.ambientScale(erased_view.metric, basis.forward, -1.0),
-        .up = curved.ambientScale(erased_view.metric, basis.up, -1.0),
-    };
+    switch (@TypeOf(view)) {
+        curved.SphericalView => if (view.scene_sign < 0.0) {
+            return .{
+                .origin = curved.ambientScale(.spherical, basis.origin, -1.0),
+                .right = curved.ambientScale(.spherical, basis.right, -1.0),
+                .forward = curved.ambientScale(.spherical, basis.forward, -1.0),
+                .up = curved.ambientScale(.spherical, basis.up, -1.0),
+            };
+        },
+        curved.View => {
+            if (view.metric != .spherical or view.scene_sign >= 0.0) return basis;
+            return .{
+                .origin = curved.ambientScale(.spherical, basis.origin, -1.0),
+                .right = curved.ambientScale(.spherical, basis.right, -1.0),
+                .forward = curved.ambientScale(.spherical, basis.forward, -1.0),
+                .up = curved.ambientScale(.spherical, basis.up, -1.0),
+            };
+        },
+        else => {},
+    }
+    return basis;
 }
 
 pub fn signedSphericalGroundBasisForView(view: anytype, basis: SphericalGroundBasis) SphericalGroundBasis {
-    const erased_view = curved.erasedView(view);
-    if (erased_view.metric != .spherical or erased_view.scene_sign >= 0.0) return basis;
+    const spherical = sphericalView(view);
+    if (spherical.scene_sign >= 0.0) return basis;
     return .{
         .origin = Round.scale(basis.origin, -1.0),
         .right = Round.scale(basis.right, -1.0),
@@ -130,12 +154,9 @@ pub fn sphericalGroundHitForScreenPoint(
     screen: curved.Screen,
     point: [2]f32,
 ) ?SphericalGroundHit {
-    const erased_view = curved.erasedView(view);
-    if (erased_view.metric != .spherical) return null;
-
-    const spherical = erased_view.typed(.spherical);
+    const spherical = sphericalView(view);
     const basis = signedSphericalGroundBasisForView(spherical, basis_input);
-    const local_dir = inverseGroundScreenDirection(erased_view.projection, screen, point) orelse return null;
+    const local_dir = inverseGroundScreenDirection(spherical.projection, screen, point) orelse return null;
     const direction = Round.add(
         Round.add(
             Round.scale(spherical.camera.right, curved.vec3x(local_dir)),
@@ -163,16 +184,16 @@ pub fn sphericalGroundHitForScreenPoint(
     const planar_norm = @sqrt(lateral_coord * lateral_coord + forward_coord * forward_coord);
     if (planar_norm <= 1e-6) {
         return .{
-            .distance = theta * erased_view.params.radius,
+            .distance = theta * spherical.params.radius,
             .lateral = 0.0,
             .forward = 0.0,
         };
     }
 
-    const tangent_radius = std.math.atan2(planar_norm, origin_coord) * erased_view.params.radius;
+    const tangent_radius = std.math.atan2(planar_norm, origin_coord) * spherical.params.radius;
     const tangent_scale = tangent_radius / planar_norm;
     return .{
-        .distance = theta * erased_view.params.radius,
+        .distance = theta * spherical.params.radius,
         .lateral = lateral_coord * tangent_scale,
         .forward = forward_coord * tangent_scale,
     };
