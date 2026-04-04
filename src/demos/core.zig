@@ -545,8 +545,21 @@ fn debugPrintVec4(name: []const u8, v: curved.Vec4) void {
     std.debug.print("{s}=.{{ {d:.6}, {d:.6}, {d:.6}, {d:.6} }}\n", .{ name, v[0], v[1], v[2], v[3] });
 }
 
+fn curvedMetricOf(view: anytype) curved.Metric {
+    return switch (@TypeOf(view)) {
+        curved.View => view.metric,
+        curved.HyperView => .hyperbolic,
+        curved.EllipticView => .elliptic,
+        curved.SphericalView => .spherical,
+        else => @compileError("expected curved view"),
+    };
+}
+
+fn ambientCoords(v: anytype) curved.Vec4 {
+    return if (@TypeOf(v) == curved.Vec4) v else v.coeffsArray();
+}
+
 fn dumpCurvedViewState(label: []const u8, view: anytype) void {
-    const erased_view = curved.erasedView(view);
     const eye_chart = view.chartCoords(view.camera.position);
     var look_probe = view;
     look_probe.moveForwardBy(@min(look_probe.params.radius * 0.18, 0.18));
@@ -563,29 +576,29 @@ fn dumpCurvedViewState(label: []const u8, view: anytype) void {
     ,
         .{
             label,
-            @tagName(erased_view.metric),
+            @tagName(curvedMetricOf(view)),
             label,
-            @tagName(erased_view.projection),
+            @tagName(view.projection),
             label,
-            @tagName(erased_view.params.chart_model),
+            @tagName(view.params.chart_model),
             label,
-            erased_view.scene_sign,
+            view.scene_sign,
             label,
-            erased_view.clip.near,
-            erased_view.clip.far,
+            view.clip.near,
+            view.clip.far,
             label,
-            erased_view.params.radius,
-            erased_view.params.angular_zoom,
+            view.params.radius,
+            view.params.angular_zoom,
         },
     );
     debugPrintVec3("eye_chart", eye_chart);
     debugPrintVec3("look_chart", look_chart);
-    debugPrintVec4("camera.position", erased_view.camera.position);
-    debugPrintVec4("camera.right", erased_view.camera.right);
-    debugPrintVec4("camera.up", erased_view.camera.up);
-    debugPrintVec4("camera.forward", erased_view.camera.forward);
+    debugPrintVec4("camera.position", ambientCoords(view.camera.position));
+    debugPrintVec4("camera.right", ambientCoords(view.camera.right));
+    debugPrintVec4("camera.up", ambientCoords(view.camera.up));
+    debugPrintVec4("camera.forward", ambientCoords(view.camera.forward));
 
-    if (erased_view.walkOrientation()) |walk| {
+    if (view.walkOrientation()) |walk| {
         std.debug.print(
             "{s}.walk=.{{ .x_heading = {d:.6}, .z_heading = {d:.6}, .pitch = {d:.6} }}\n",
             .{ label, walk.x_heading, walk.z_heading, walk.pitch },
@@ -799,8 +812,7 @@ fn WalkDirectionsFor(comptime ViewType: type) type {
 }
 
 fn curvedWalkDirections(view: anytype, x_heading: f32, z_heading: f32, pitch_angle: f32) WalkDirectionsFor(@TypeOf(view)) {
-    const erased_view = curved.erasedView(view);
-    if (erased_view.metric == .spherical) {
+    if (curvedMetricOf(view) == .spherical) {
         if (view.walkSurfaceBasis(pitch_angle)) |basis| {
             return .{
                 .forward = basis.forward,
@@ -933,13 +945,12 @@ fn chooseSphericalAngleState(current_rotation: f32, current_pitch: f32, candidat
 }
 
 fn syncEuclidFromView(camera: *CameraState, view: anytype) void {
-    const erased_view = curved.erasedView(view);
-    const orientation = erased_view.walkOrientation() orelse return;
+    const orientation = view.walkOrientation() orelse return;
     const candidate = ViewAngleState{
         .rotation = std.math.atan2(orientation.x_heading, orientation.z_heading),
         .pitch = orientation.pitch,
     };
-    const chosen = if (erased_view.metric == .spherical)
+    const chosen = if (curvedMetricOf(view) == .spherical)
         chooseSphericalAngleState(camera.euclid_rotation, camera.euclid_pitch, candidate)
     else
         ViewAngleState{
