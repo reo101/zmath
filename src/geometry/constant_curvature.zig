@@ -24,7 +24,7 @@ pub const CameraModel = curved_projection.CameraModel;
 pub const DistanceClip = curved_projection.DistanceClip;
 pub const Screen = curved_projection.Screen;
 
-pub const Camera = struct {
+const Camera = struct {
     position: Vec4,
     right: Vec4,
     up: Vec4,
@@ -171,25 +171,22 @@ pub fn TypedView(comptime metric: Metric) type {
             };
         }
 
-        pub fn fromErased(view: View) Self {
-            std.debug.assert(view.metric == metric);
+        fn fromErased(view: View) Self {
+            std.debug.assert(viewMetric(view) == metric);
             return .{
-                .params = view.params,
-                .projection = view.projection,
-                .clip = view.clip,
-                .camera = typedCameraFromErased(metric, view.camera),
-                .scene_sign = view.scene_sign,
+                .params = viewParams(view),
+                .projection = viewProjection(view),
+                .clip = viewClip(view),
+                .camera = typedCameraFromErased(metric, viewCamera(view)),
+                .scene_sign = viewSceneSign(view),
             };
         }
 
-        pub fn erased(self: Self) View {
-            return .{
-                .metric = metric,
-                .params = self.params,
-                .projection = self.projection,
-                .clip = self.clip,
-                .camera = typedCameraToErased(metric, self.camera),
-                .scene_sign = self.scene_sign,
+        fn erased(self: Self) View {
+            return switch (metric) {
+                .hyperbolic => .{ .hyperbolic = self },
+                .elliptic => .{ .elliptic = self },
+                .spherical => .{ .spherical = self },
             };
         }
 
@@ -422,14 +419,40 @@ pub const HyperView = TypedView(.hyperbolic);
 pub const EllipticView = TypedView(.elliptic);
 pub const SphericalView = TypedView(.spherical);
 
-fn erasedView(view: anytype) View {
-    const T = @TypeOf(view);
-    return if (T == View)
-        view
-    else if (comptime @hasDecl(T, "erased"))
-        view.erased()
-    else
-        @compileError("expected `constant_curvature.View` or typed curved view");
+fn viewMetric(view: View) Metric {
+    return std.meta.activeTag(view);
+}
+
+fn viewParams(view: View) Params {
+    return switch (view) {
+        inline else => |typed| typed.params,
+    };
+}
+
+fn viewProjection(view: View) projection.DirectionProjection {
+    return switch (view) {
+        inline else => |typed| typed.projection,
+    };
+}
+
+fn viewClip(view: View) DistanceClip {
+    return switch (view) {
+        inline else => |typed| typed.clip,
+    };
+}
+
+fn viewSceneSign(view: View) f32 {
+    return switch (view) {
+        inline else => |typed| typed.scene_sign,
+    };
+}
+
+fn viewCamera(view: View) Camera {
+    return switch (view) {
+        .hyperbolic => |typed| typedCameraToErased(.hyperbolic, typed.camera),
+        .elliptic => |typed| typedCameraToErased(.elliptic, typed.camera),
+        .spherical => |typed| typedCameraToErased(.spherical, typed.camera),
+    };
 }
 
 pub const SphericalRenderPass = enum { near, far };
@@ -956,13 +979,10 @@ fn sphericalUsesMultipass(projection_mode: projection.DirectionProjection) bool 
     };
 }
 
-pub const View = struct {
-    metric: Metric,
-    params: Params,
-    projection: projection.DirectionProjection,
-    clip: DistanceClip,
-    camera: Camera,
-    scene_sign: f32,
+pub const View = union(Metric) {
+    hyperbolic: HyperView,
+    elliptic: EllipticView,
+    spherical: SphericalView,
 
     pub fn init(
         metric: Metric,
@@ -972,316 +992,252 @@ pub const View = struct {
         eye_chart: anytype,
         target_chart: anytype,
     ) CameraError!View {
-        return .{
-            .metric = metric,
-            .params = params,
-            .projection = projection_mode,
-            .clip = clip,
-            .camera = try initCamera(metric, params, coerceVec3(eye_chart), coerceVec3(target_chart)),
-            .scene_sign = 1.0,
+        return switch (metric) {
+            .hyperbolic => .{ .hyperbolic = try HyperView.init(params, projection_mode, clip, eye_chart, target_chart) },
+            .elliptic => .{ .elliptic = try EllipticView.init(params, projection_mode, clip, eye_chart, target_chart) },
+            .spherical => .{ .spherical = try SphericalView.init(params, projection_mode, clip, eye_chart, target_chart) },
         };
     }
 
-    pub fn typed(self: View, comptime metric_tag: Metric) TypedView(metric_tag) {
-        std.debug.assert(self.metric == metric_tag);
-        return TypedView(metric_tag).fromErased(self);
-    }
-
     pub fn turnYaw(self: *View, angle: f32) void {
-        switch (self.metric) {
-            inline else => |metric_tag| {
-                var typed_view = self.typed(metric_tag);
-                typed_view.turnYaw(angle);
-                self.* = typed_view.erased();
-            },
+        switch (self.*) {
+            inline else => |*typed| typed.turnYaw(angle),
         }
     }
 
     pub fn turnWalkYaw(self: *View, angle: f32) void {
-        switch (self.metric) {
-            inline else => |metric_tag| {
-                var typed_view = self.typed(metric_tag);
-                typed_view.turnWalkYaw(angle);
-                self.* = typed_view.erased();
-            },
+        switch (self.*) {
+            inline else => |*typed| typed.turnWalkYaw(angle),
         }
     }
 
     pub fn turnSurfaceYaw(self: *View, angle: f32, pitch_angle: f32) void {
-        switch (self.metric) {
-            inline else => |metric_tag| {
-                var typed_view = self.typed(metric_tag);
-                typed_view.turnSurfaceYaw(angle, pitch_angle);
-                self.* = typed_view.erased();
-            },
+        switch (self.*) {
+            inline else => |*typed| typed.turnSurfaceYaw(angle, pitch_angle),
         }
     }
 
     pub fn syncSurfacePitch(self: *View, pitch_angle: f32) void {
-        switch (self.metric) {
-            inline else => |metric_tag| {
-                var typed_view = self.typed(metric_tag);
-                typed_view.syncSurfacePitch(pitch_angle);
-                self.* = typed_view.erased();
-            },
+        switch (self.*) {
+            inline else => |*typed| typed.syncSurfacePitch(pitch_angle),
         }
     }
 
     pub fn turnPitch(self: *View, angle: f32) void {
-        switch (self.metric) {
-            inline else => |metric_tag| {
-                var typed_view = self.typed(metric_tag);
-                typed_view.turnPitch(angle);
-                self.* = typed_view.erased();
-            },
+        switch (self.*) {
+            inline else => |*typed| typed.turnPitch(angle),
         }
     }
 
     pub fn moveAlong(self: *View, direction: Vec4, distance: f32) void {
-        switch (self.metric) {
-            inline else => |metric_tag| {
-                var typed_view = self.typed(metric_tag);
-                typed_view.moveAlong(AmbientFor(metric_tag).fromCoords(direction), distance);
-                self.* = typed_view.erased();
-            },
+        switch (self.*) {
+            .hyperbolic => |*typed| typed.moveAlong(curved_ambient.Hyper.fromCoords(direction), distance),
+            .elliptic => |*typed| typed.moveAlong(curved_ambient.Round.fromCoords(direction), distance),
+            .spherical => |*typed| typed.moveAlong(curved_ambient.Round.fromCoords(direction), distance),
         }
     }
 
     pub fn moveForwardBy(self: *View, distance: f32) void {
-        switch (self.metric) {
-            inline else => |metric_tag| {
-                var typed_view = self.typed(metric_tag);
-                typed_view.moveForwardBy(distance);
-                self.* = typed_view.erased();
-            },
+        switch (self.*) {
+            inline else => |*typed| typed.moveForwardBy(distance),
         }
     }
 
     pub fn moveRightBy(self: *View, distance: f32) void {
-        switch (self.metric) {
-            inline else => |metric_tag| {
-                var typed_view = self.typed(metric_tag);
-                typed_view.moveRightBy(distance);
-                self.* = typed_view.erased();
-            },
+        switch (self.*) {
+            inline else => |*typed| typed.moveRightBy(distance),
         }
     }
 
     pub fn headingDirection(self: View, x_heading: f32, z_heading: f32) ?Vec4 {
-        return switch (self.metric) {
-            inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
-                self.typed(metric_tag).headingDirection(x_heading, z_heading) orelse return null,
-            ),
+        return switch (self) {
+            .hyperbolic => |typed| curved_ambient.Hyper.toCoords(typed.headingDirection(x_heading, z_heading) orelse return null),
+            .elliptic => |typed| curved_ambient.Round.toCoords(typed.headingDirection(x_heading, z_heading) orelse return null),
+            .spherical => |typed| curved_ambient.Round.toCoords(typed.headingDirection(x_heading, z_heading) orelse return null),
         };
     }
 
     pub fn walkOrientation(self: View) ?WalkOrientation {
-        return switch (self.metric) {
-            .hyperbolic => self.typed(.hyperbolic).walkOrientation(),
-            .elliptic => self.typed(.elliptic).walkOrientation(),
-            .spherical => self.typed(.spherical).walkOrientation(),
+        return switch (self) {
+            inline else => |typed| typed.walkOrientation(),
         };
     }
 
     pub fn walkBasis(self: View) ?WalkBasis {
-        return switch (self.metric) {
-            inline else => |metric_tag| typedWalkBasisToErased(
-                metric_tag,
-                self.typed(metric_tag).walkBasis() orelse return null,
-            ),
+        return switch (self) {
+            .hyperbolic => |typed| typedWalkBasisToErased(.hyperbolic, typed.walkBasis() orelse return null),
+            .elliptic => |typed| typedWalkBasisToErased(.elliptic, typed.walkBasis() orelse return null),
+            .spherical => |typed| typedWalkBasisToErased(.spherical, typed.walkBasis() orelse return null),
         };
     }
 
     pub fn walkSurfaceUp(self: View) ?Vec4 {
-        return switch (self.metric) {
-            inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
-                self.typed(metric_tag).walkSurfaceUp() orelse return null,
-            ),
+        return switch (self) {
+            .hyperbolic => |typed| curved_ambient.Hyper.toCoords(typed.walkSurfaceUp() orelse return null),
+            .elliptic => |typed| curved_ambient.Round.toCoords(typed.walkSurfaceUp() orelse return null),
+            .spherical => |typed| curved_ambient.Round.toCoords(typed.walkSurfaceUp() orelse return null),
         };
     }
 
     pub fn walkSurfaceBasis(self: View, pitch_angle: f32) ?WalkBasis {
-        return switch (self.metric) {
-            inline else => |metric_tag| typedWalkBasisToErased(
-                metric_tag,
-                self.typed(metric_tag).walkSurfaceBasis(pitch_angle) orelse return null,
-            ),
+        return switch (self) {
+            .hyperbolic => |typed| typedWalkBasisToErased(.hyperbolic, typed.walkSurfaceBasis(pitch_angle) orelse return null),
+            .elliptic => |typed| typedWalkBasisToErased(.elliptic, typed.walkSurfaceBasis(pitch_angle) orelse return null),
+            .spherical => |typed| typedWalkBasisToErased(.spherical, typed.walkSurfaceBasis(pitch_angle) orelse return null),
         };
     }
 
     pub fn syncHeadingPitch(self: *View, x_heading: f32, z_heading: f32, pitch_angle: f32) void {
-        switch (self.metric) {
-            inline else => |metric_tag| {
-                var typed_view = self.typed(metric_tag);
-                typed_view.syncHeadingPitch(x_heading, z_heading, pitch_angle);
-                self.* = typed_view.erased();
-            },
+        switch (self.*) {
+            inline else => |*typed| typed.syncHeadingPitch(x_heading, z_heading, pitch_angle),
         }
     }
 
     pub fn wrapSphericalChart(self: *View) void {
-        switch (self.metric) {
-            .spherical => {
-                var typed_view = self.typed(.spherical);
-                typed_view.wrapSphericalChart();
-                self.* = typed_view.erased();
-            },
+        switch (self.*) {
+            .spherical => |*typed| typed.wrapSphericalChart(),
             inline else => {},
         }
     }
 
     pub fn adjustRadius(self: *View, radius: f32, look_ahead: f32) CameraError!void {
-        switch (self.metric) {
-            inline else => |metric_tag| {
-                var typed_view = self.typed(metric_tag);
-                try typed_view.adjustRadius(radius, look_ahead);
-                self.* = typed_view.erased();
-            },
+        switch (self.*) {
+            inline else => |*typed| try typed.adjustRadius(radius, look_ahead),
         }
     }
 
     pub fn shadeFarDistance(self: View) f32 {
-        return switch (self.metric) {
-            inline else => |metric_tag| self.typed(metric_tag).shadeFarDistance(),
+        return switch (self) {
+            inline else => |typed| typed.shadeFarDistance(),
         };
     }
 
     pub fn embedPoint(self: View, chart: anytype) ?Vec4 {
-        return switch (self.metric) {
-            inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
-                self.typed(metric_tag).embedPoint(chart) orelse return null,
-            ),
+        return switch (self) {
+            .hyperbolic => |typed| curved_ambient.Hyper.toCoords(typed.embedPoint(chart) orelse return null),
+            .elliptic => |typed| curved_ambient.Round.toCoords(typed.embedPoint(chart) orelse return null),
+            .spherical => |typed| curved_ambient.Round.toCoords(typed.embedPoint(chart) orelse return null),
         };
     }
 
     pub fn chartCoords(self: View, ambient: Vec4) Vec3 {
-        return switch (self.metric) {
-            inline else => |metric_tag| self.typed(metric_tag).chartCoords(
-                AmbientFor(metric_tag).fromCoords(ambient),
-            ),
+        return switch (self) {
+            .hyperbolic => |typed| typed.chartCoords(curved_ambient.Hyper.fromCoords(ambient)),
+            .elliptic => |typed| typed.chartCoords(curved_ambient.Round.fromCoords(ambient)),
+            .spherical => |typed| typed.chartCoords(curved_ambient.Round.fromCoords(ambient)),
         };
     }
 
     pub fn geodesicChartPoint(self: View, a_chart: anytype, b_chart: anytype, t: f32) ?Vec3 {
-        return switch (self.metric) {
-            inline else => |metric_tag| self.typed(metric_tag).geodesicChartPoint(a_chart, b_chart, t),
+        return switch (self) {
+            inline else => |typed| typed.geodesicChartPoint(a_chart, b_chart, t),
         };
     }
 
     pub fn sceneAmbientPoint(self: View, chart: anytype) ?Vec4 {
-        return switch (self.metric) {
-            inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
-                self.typed(metric_tag).sceneAmbientPoint(chart) orelse return null,
-            ),
+        return switch (self) {
+            .hyperbolic => |typed| curved_ambient.Hyper.toCoords(typed.sceneAmbientPoint(chart) orelse return null),
+            .elliptic => |typed| curved_ambient.Round.toCoords(typed.sceneAmbientPoint(chart) orelse return null),
+            .spherical => |typed| curved_ambient.Round.toCoords(typed.sceneAmbientPoint(chart) orelse return null),
         };
     }
 
     pub fn signedAmbient(self: View, ambient_input: Vec4) Vec4 {
-        return switch (self.metric) {
-            inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
-                self.typed(metric_tag).signedAmbient(
-                    AmbientFor(metric_tag).fromCoords(ambient_input),
-                ),
-            ),
+        return switch (self) {
+            .hyperbolic => |typed| curved_ambient.Hyper.toCoords(typed.signedAmbient(curved_ambient.Hyper.fromCoords(ambient_input))),
+            .elliptic => |typed| curved_ambient.Round.toCoords(typed.signedAmbient(curved_ambient.Round.fromCoords(ambient_input))),
+            .spherical => |typed| curved_ambient.Round.toCoords(typed.signedAmbient(curved_ambient.Round.fromCoords(ambient_input))),
         };
     }
 
     pub fn sampleProjectedPoint(self: View, chart: anytype, screen: Screen) ProjectedSample {
-        return switch (self.metric) {
-            inline else => |metric_tag| self.typed(metric_tag).sampleProjectedPoint(chart, screen),
+        return switch (self) {
+            inline else => |typed| typed.sampleProjectedPoint(chart, screen),
         };
     }
 
     pub fn sampleAmbient(self: View, ambient_input: Vec4) ?Sample {
-        return switch (self.metric) {
-            inline else => |metric_tag| self.typed(metric_tag).sampleAmbient(
-                AmbientFor(metric_tag).fromCoords(ambient_input),
-            ),
+        return switch (self) {
+            .hyperbolic => |typed| typed.sampleAmbient(curved_ambient.Hyper.fromCoords(ambient_input)),
+            .elliptic => |typed| typed.sampleAmbient(curved_ambient.Round.fromCoords(ambient_input)),
+            .spherical => |typed| typed.sampleAmbient(curved_ambient.Round.fromCoords(ambient_input)),
         };
     }
 
     pub fn samplePoint(self: View, chart: anytype) ?Sample {
-        return switch (self.metric) {
-            inline else => |metric_tag| self.typed(metric_tag).samplePoint(chart),
+        return switch (self) {
+            inline else => |typed| typed.samplePoint(chart),
         };
     }
 
     pub fn sampleProjectedAmbient(self: View, ambient_input: Vec4, screen: Screen) ProjectedSample {
-        return switch (self.metric) {
-            inline else => |metric_tag| self.typed(metric_tag).sampleProjectedAmbient(
-                AmbientFor(metric_tag).fromCoords(ambient_input),
-                screen,
-            ),
+        return switch (self) {
+            .hyperbolic => |typed| typed.sampleProjectedAmbient(curved_ambient.Hyper.fromCoords(ambient_input), screen),
+            .elliptic => |typed| typed.sampleProjectedAmbient(curved_ambient.Round.fromCoords(ambient_input), screen),
+            .spherical => |typed| typed.sampleProjectedAmbient(curved_ambient.Round.fromCoords(ambient_input), screen),
         };
     }
 
     pub fn sampleProjectedPointForSphericalPass(self: View, pass: SphericalRenderPass, chart: anytype, screen: Screen) ProjectedSample {
-        std.debug.assert(self.metric == .spherical);
-        return self.typed(.spherical).sampleProjectedPointForSphericalPass(pass, chart, screen);
+        return switch (self) {
+            .spherical => |typed| typed.sampleProjectedPointForSphericalPass(pass, chart, screen),
+            else => unreachable,
+        };
     }
 
     pub fn sampleProjectedAmbientForSphericalPass(self: View, pass: SphericalRenderPass, ambient_input: Vec4, screen: Screen) ProjectedSample {
-        std.debug.assert(self.metric == .spherical);
-        return self.typed(.spherical).sampleProjectedAmbientForSphericalPass(
-            pass,
-            curved_ambient.Round.fromCoords(ambient_input),
-            screen,
-        );
+        return switch (self) {
+            .spherical => |typed| typed.sampleProjectedAmbientForSphericalPass(pass, curved_ambient.Round.fromCoords(ambient_input), screen),
+            else => unreachable,
+        };
     }
 
     pub fn sampleProjectedAmbientForSphericalPassRaw(self: View, pass: SphericalRenderPass, ambient_input: Vec4, screen: Screen) ProjectedSample {
-        std.debug.assert(self.metric == .spherical);
-        return self.typed(.spherical).sampleProjectedAmbientForSphericalPassRaw(
-            pass,
-            curved_ambient.Round.fromCoords(ambient_input),
-            screen,
-        );
+        return switch (self) {
+            .spherical => |typed| typed.sampleProjectedAmbientForSphericalPassRaw(pass, curved_ambient.Round.fromCoords(ambient_input), screen),
+            else => unreachable,
+        };
     }
 
     pub fn sphericalSelectedPassForAmbient(self: View, ambient_input: Vec4) ?SphericalRenderPass {
-        std.debug.assert(self.metric == .spherical);
-        return self.typed(.spherical).sphericalSelectedPassForAmbient(
-            curved_ambient.Round.fromCoords(ambient_input),
-        );
+        return switch (self) {
+            .spherical => |typed| typed.sphericalSelectedPassForAmbient(curved_ambient.Round.fromCoords(ambient_input)),
+            else => unreachable,
+        };
     }
 
     pub fn sphericalRenderPass(self: View, pass: SphericalRenderPass) View {
-        std.debug.assert(self.metric == .spherical);
-        return self.typed(.spherical).sphericalRenderPass(pass).erased();
+        return switch (self) {
+            .spherical => |typed| .{ .spherical = typed.sphericalRenderPass(pass) },
+            else => unreachable,
+        };
     }
 
     pub fn mapSphericalRenderDistance(self: View, pass: SphericalRenderPass, pass_distance: f32) f32 {
-        std.debug.assert(self.metric == .spherical);
-        return self.typed(.spherical).mapSphericalRenderDistance(pass, pass_distance);
+        return switch (self) {
+            .spherical => |typed| typed.mapSphericalRenderDistance(pass, pass_distance),
+            else => unreachable,
+        };
     }
 
     pub fn cameraModelPointForAmbient(self: View, ambient_input: Vec4, model: CameraModel) ?Vec3 {
-        return switch (self.metric) {
-            inline else => |metric_tag| self.typed(metric_tag).cameraModelPointForAmbient(
-                AmbientFor(metric_tag).fromCoords(ambient_input),
-                model,
-            ),
+        return switch (self) {
+            .hyperbolic => |typed| typed.cameraModelPointForAmbient(curved_ambient.Hyper.fromCoords(ambient_input), model),
+            .elliptic => |typed| typed.cameraModelPointForAmbient(curved_ambient.Round.fromCoords(ambient_input), model),
+            .spherical => |typed| typed.cameraModelPointForAmbient(curved_ambient.Round.fromCoords(ambient_input), model),
         };
     }
 
     pub fn cameraModelPoint(self: View, chart: anytype, model: CameraModel) ?Vec3 {
-        return switch (self.metric) {
-            inline else => |metric_tag| self.typed(metric_tag).cameraModelPoint(chart, model),
+        return switch (self) {
+            inline else => |typed| typed.cameraModelPoint(chart, model),
         };
     }
 
     pub fn projectPoint(self: View, chart: Vec3, canvas_width: usize, canvas_height: usize) ?[2]f32 {
-        return switch (self.metric) {
-            inline else => |metric_tag| self.typed(metric_tag).projectPoint(chart, canvas_width, canvas_height),
+        return switch (self) {
+            inline else => |typed| typed.projectPoint(chart, canvas_width, canvas_height),
         };
-    }
-
-    fn signedSphericalAmbient(self: View, ambient_input: Vec4) Vec4 {
-        var ambient = ambient_input;
-        if (self.scene_sign < 0.0) {
-            ambient = scale4(self.metric, ambient, -1.0);
-        }
-        return ambient;
     }
 };
 
@@ -1507,17 +1463,6 @@ fn typedAntipodalSphericalPassCamera(camera: TypedCamera(.spherical)) TypedCamer
     };
 }
 
-fn sampleProjectedAmbientPointSinglePass(view: View, ambient: Vec4, screen: Screen) ProjectedSample {
-    return switch (view.metric) {
-        inline else => |metric_tag| typedSampleProjectedAmbientPointSinglePass(
-            metric_tag,
-            view.typed(metric_tag),
-            AmbientFor(metric_tag).fromCoords(ambient),
-            screen,
-        ),
-    };
-}
-
 fn typedSampleProjectedAmbientPointSinglePass(
     comptime metric: Metric,
     view: TypedView(metric),
@@ -1545,24 +1490,6 @@ fn typedSampleProjectedAmbientPointSinglePass(
     };
 }
 
-fn sampleProjectedAmbientPointForPass(
-    view: View,
-    pass: SphericalRenderPass,
-    ambient: Vec4,
-    screen: Screen,
-) ProjectedSample {
-    return switch (view.metric) {
-        .spherical => typedSampleProjectedAmbientPointForPass(
-            .spherical,
-            view.typed(.spherical),
-            pass,
-            curved_ambient.Round.fromCoords(ambient),
-            screen,
-        ),
-        inline else => .{},
-    };
-}
-
 fn typedSampleProjectedAmbientPointForPass(
     comptime metric: Metric,
     view: TypedView(metric),
@@ -1574,24 +1501,6 @@ fn typedSampleProjectedAmbientPointForPass(
     if (selection.pass != pass) return .{ .distance = selection.near_distance };
 
     return typedSampleProjectedAmbientPointForPassRaw(metric, view, pass, ambient, screen);
-}
-
-fn sampleProjectedAmbientPointForPassRaw(
-    view: View,
-    pass: SphericalRenderPass,
-    ambient: Vec4,
-    screen: Screen,
-) ProjectedSample {
-    return switch (view.metric) {
-        .spherical => typedSampleProjectedAmbientPointForPassRaw(
-            .spherical,
-            view.typed(.spherical),
-            pass,
-            curved_ambient.Round.fromCoords(ambient),
-            screen,
-        ),
-        inline else => .{},
-    };
 }
 
 fn typedSampleProjectedAmbientPointForPassRaw(
@@ -1655,16 +1564,6 @@ fn typedSampleProjectedAmbientPointForPassRaw(
     };
 }
 
-fn sphericalPassSelection(view: View, ambient: Vec4) ?SphericalPassSelection {
-    return switch (view.metric) {
-        inline else => |metric_tag| typedSphericalPassSelection(
-            metric_tag,
-            view.typed(metric_tag),
-            AmbientFor(metric_tag).fromCoords(ambient),
-        ),
-    };
-}
-
 fn typedSphericalPassSelection(
     comptime metric: Metric,
     view: TypedView(metric),
@@ -1674,17 +1573,6 @@ fn typedSphericalPassSelection(
     return .{
         .pass = if (near_sample.z_dir >= 0.0) .near else .far,
         .near_distance = near_sample.distance,
-    };
-}
-
-fn sampleProjectedAmbientPoint(view: View, ambient: Vec4, screen: Screen) ProjectedSample {
-    return switch (view.metric) {
-        inline else => |metric_tag| typedSampleProjectedAmbientPoint(
-            metric_tag,
-            view.typed(metric_tag),
-            AmbientFor(metric_tag).fromCoords(ambient),
-            screen,
-        ),
     };
 }
 
@@ -1932,51 +1820,6 @@ pub fn sampleProjectedModelPoint(
     };
 }
 
-fn reorthonormalize(metric: Metric, camera: *Camera) void {
-    camera.forward = orthonormalCandidate(metric, camera.position, camera.forward, &.{}) orelse camera.forward;
-    camera.right = orthonormalCandidate(metric, camera.position, camera.right, &.{camera.forward}) orelse camera.right;
-    camera.up = orthonormalCandidate(metric, camera.position, camera.up, &.{ camera.forward, camera.right }) orelse camera.up;
-}
-
-fn initCamera(metric: Metric, params: Params, eye_chart_input: anytype, target_chart_input: anytype) CameraError!Camera {
-    return switch (metric) {
-        inline else => |metric_tag| typedCameraToErased(
-            metric_tag,
-            try typedInitCamera(metric_tag, params, coerceVec3(eye_chart_input), coerceVec3(target_chart_input)),
-        ),
-    };
-}
-
-fn rotatePair(metric: Metric, camera: *Camera, first: *Vec4, second: *Vec4, angle: f32) void {
-    const c = @cos(angle);
-    const s = @sin(angle);
-    const old_first = first.*;
-    const old_second = second.*;
-    first.* = add4(metric, scale4(metric, old_first, c), scale4(metric, old_second, s));
-    second.* = sub4(metric, scale4(metric, old_second, c), scale4(metric, old_first, s));
-    reorthonormalize(metric, camera);
-}
-
-fn yaw(camera: *Camera, metric: Metric, angle: f32) void {
-    switch (metric) {
-        inline else => |metric_tag| {
-            var typed_camera = typedCameraFromErased(metric_tag, camera.*);
-            typedYaw(metric_tag, &typed_camera, angle);
-            camera.* = typedCameraToErased(metric_tag, typed_camera);
-        },
-    }
-}
-
-fn pitch(camera: *Camera, metric: Metric, angle: f32) void {
-    switch (metric) {
-        inline else => |metric_tag| {
-            var typed_camera = typedCameraFromErased(metric_tag, camera.*);
-            typedPitch(metric_tag, &typed_camera, angle);
-            camera.* = typedCameraToErased(metric_tag, typed_camera);
-        },
-    }
-}
-
 // Geodesic camera transport in the ambient models:
 // - sphere: `(cos s) * P + (sin s) * V`
 // - hyperboloid: `(cosh s) * P + (sinh s) * V`
@@ -1984,85 +1827,9 @@ fn pitch(camera: *Camera, metric: Metric, angle: f32) void {
 // References:
 // https://arxiv.org/abs/1310.2713
 // https://arxiv.org/pdf/1602.08562
-fn moveAlongDirection(camera: *Camera, metric: Metric, params: Params, direction: Vec4, distance: f32) void {
-    switch (metric) {
-        inline else => |metric_tag| {
-            var typed_camera = typedCameraFromErased(metric_tag, camera.*);
-            typedMoveAlongDirection(
-                metric_tag,
-                &typed_camera,
-                params,
-                AmbientFor(metric_tag).fromCoords(direction),
-                distance,
-            );
-            camera.* = typedCameraToErased(metric_tag, typed_camera);
-        },
-    }
-}
-
-fn moveForward(camera: *Camera, metric: Metric, params: Params, distance: f32) void {
-    moveAlongDirection(camera, metric, params, camera.forward, distance);
-}
-
-fn moveRight(camera: *Camera, metric: Metric, params: Params, distance: f32) void {
-    moveAlongDirection(camera, metric, params, camera.right, distance);
-}
-
-fn headingBasis(metric: Metric, camera: Camera) ?HeadingBasis {
-    const up = worldUpDirection(metric, camera) orelse return null;
-    const east = orthonormalCandidate(metric, camera.position, .{ 0.0, 1.0, 0.0, 0.0 }, &.{up}) orelse
-        orthonormalCandidate(metric, camera.position, .{ 0.0, 0.0, 0.0, 1.0 }, &.{up}) orelse
-        orthonormalCandidate(metric, camera.position, .{ 1.0, 0.0, 0.0, 0.0 }, &.{up}) orelse
-        return null;
-    const north = orthonormalCandidate(metric, camera.position, .{ 0.0, 0.0, 0.0, 1.0 }, &.{ up, east }) orelse
-        orthonormalCandidate(metric, camera.position, .{ 1.0, 0.0, 0.0, 0.0 }, &.{ up, east }) orelse
-        orthonormalCandidate(metric, camera.position, .{ 0.0, 1.0, 0.0, 0.0 }, &.{ up, east }) orelse
-        return null;
-
-    return .{
-        .east = east,
-        .north = north,
-        .up = up,
-    };
-}
-
-fn worldHeadingDirection(metric: Metric, camera: Camera, x_heading: f32, z_heading: f32) ?Vec4 {
-    return switch (metric) {
-        inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
-            typedWorldHeadingDirection(metric_tag, typedCameraFromErased(metric_tag, camera), x_heading, z_heading) orelse return null,
-        ),
-    };
-}
-
 fn worldUpAt(metric: Metric, position: Vec4) ?Vec4 {
     return orthonormalCandidate(metric, position, .{ 0.0, 0.0, 1.0, 0.0 }, &.{}) orelse
         orthonormalCandidate(metric, position, .{ 0.0, 0.0, 0.0, 1.0 }, &.{});
-}
-
-fn worldUpDirection(metric: Metric, camera: Camera) ?Vec4 {
-    return worldUpAt(metric, camera.position);
-}
-
-fn currentWalkOrientation(metric: Metric, camera: Camera) ?WalkOrientation {
-    return switch (metric) {
-        inline else => |metric_tag| typedCurrentWalkOrientation(metric_tag, typedCameraFromErased(metric_tag, camera)),
-    };
-}
-
-pub fn orientFromHeadingPitch(
-    metric: Metric,
-    camera: *Camera,
-    x_heading: f32,
-    z_heading: f32,
-    pitch_angle: f32,
-) void {
-    switch (metric) {
-        inline else => |metric_tag| {
-            var typed_camera = typedCameraFromErased(metric_tag, camera.*);
-            typedOrientFromHeadingPitch(metric_tag, &typed_camera, x_heading, z_heading, pitch_angle);
-            camera.* = typedCameraToErased(metric_tag, typed_camera);
-        },
-    }
 }
 
 fn typedSampleAmbientPoint(
