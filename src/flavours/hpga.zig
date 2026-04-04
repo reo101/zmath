@@ -17,10 +17,35 @@ const basis_spans = ga.BasisIndexSpans.init(.{
 });
 
 const naming_options = ga.SignedBladeNamingOptions.withBasisSpans(basis_spans);
-pub const Algebra = ga.AlgebraWithNamingOptions(sig, naming_options);
+pub fn EuclideanFamily(comptime euclidean_dimensions: usize) type {
+    return struct {
+        const family_metric_signature: MetricSignature = .{
+            .p = euclidean_dimensions,
+            .q = 1,
+            .r = 0,
+        };
+        pub const metric_signature = family_metric_signature;
+        pub const dimension = family_metric_signature.dimension();
+        const family_basis_spans = ga.BasisIndexSpans.init(.{
+            .positive = .range(1, euclidean_dimensions),
+            .negative = .singleton(0),
+        });
+        const family_naming_options = ga.SignedBladeNamingOptions.withBasisSpans(family_basis_spans);
+        pub const naming_options = family_naming_options;
+        const family_algebra = ga.AlgebraWithNamingOptions(family_metric_signature, family_naming_options);
+        pub const Algebra = family_algebra;
+
+        pub fn Instantiate(comptime T: type) type {
+            return family_algebra.Instantiate(T);
+        }
+    };
+}
+
+const default_family = EuclideanFamily(3);
+pub const Algebra = default_family.Algebra;
 
 pub fn Instantiate(comptime T: type) type {
-    return Algebra.Instantiate(T);
+    return default_family.Instantiate(T);
 }
 
 pub const h = Instantiate(f32);
@@ -74,4 +99,14 @@ test "hpga signature has expected basis classes" {
 test "hpga proper point normalizes onto the hyperboloid" {
     const p = Point.proper(0.2, -0.1, 0.3).?;
     try std.testing.expectApproxEqAbs(@as(f32, -1.0), p.gp(p).scalarCoeff(), 1e-5);
+}
+
+test "hpga exposes configurable Euclidean families" {
+    const H2 = EuclideanFamily(2).Instantiate(f32);
+    const e0 = H2.Basis.e(0);
+    const e1 = H2.Basis.e(1);
+
+    try std.testing.expectEqual(@as(usize, 3), EuclideanFamily(2).dimension);
+    try std.testing.expectEqual(@as(f32, -1.0), e0.gp(e0).scalarCoeff());
+    try std.testing.expectEqual(@as(f32, 1.0), e1.gp(e1).scalarCoeff());
 }
