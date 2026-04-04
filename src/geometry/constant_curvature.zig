@@ -2053,36 +2053,6 @@ pub fn orientFromHeadingPitch(
     }
 }
 
-pub fn projectPoint(
-    metric: Metric,
-    projection_mode: projection.DirectionProjection,
-    params: Params,
-    camera: Camera,
-    chart: Vec3,
-    canvas_width: usize,
-    canvas_height: usize,
-) ?[2]f32 {
-    return (View{
-        .metric = metric,
-        .params = params,
-        .projection = projection_mode,
-        .clip = .{},
-        .camera = camera,
-        .scene_sign = 1.0,
-    }).projectPoint(chart, canvas_width, canvas_height);
-}
-
-fn sampleAmbientPoint(metric: Metric, params: Params, camera: Camera, ambient: Vec4) ?Sample {
-    return switch (metric) {
-        inline else => |metric_tag| typedSampleAmbientPoint(
-            metric_tag,
-            params,
-            typedCameraFromErased(metric_tag, camera),
-            AmbientFor(metric_tag).fromCoords(ambient),
-        ),
-    };
-}
-
 fn typedSampleAmbientPoint(
     comptime metric: Metric,
     params: Params,
@@ -2104,28 +2074,6 @@ fn typedSampleAmbientPoint(
         .x_dir = relative.x / spatial_norm,
         .y_dir = relative.y / spatial_norm,
         .z_dir = relative.z / spatial_norm,
-    };
-}
-
-pub fn samplePoint(metric: Metric, params: Params, camera: Camera, chart: anytype) ?Sample {
-    return (View{
-        .metric = metric,
-        .params = params,
-        .projection = .gnomonic,
-        .clip = .{},
-        .camera = camera,
-        .scene_sign = 1.0,
-    }).samplePoint(chart);
-}
-
-fn modelPointForAmbient(metric: Metric, camera: Camera, ambient: Vec4, model: CameraModel) ?Vec3 {
-    return switch (metric) {
-        inline else => |metric_tag| typedModelPointForAmbient(
-            metric_tag,
-            typedCameraFromErased(metric_tag, camera),
-            AmbientFor(metric_tag).fromCoords(ambient),
-            model,
-        ),
     };
 }
 
@@ -2151,27 +2099,6 @@ pub fn modelPointForTypedAmbientWithCamera(
     model: CameraModel,
 ) ?Vec3 {
     return typedModelPointForAmbient(metric, camera, ambient, model);
-}
-
-pub fn modelPointForAmbientWithCamera(metric: Metric, camera: Camera, ambient: Vec4, model: CameraModel) ?Vec3 {
-    return modelPointForAmbient(metric, camera, ambient, model);
-}
-
-pub fn modelPointForCamera(
-    metric: Metric,
-    params: Params,
-    camera: Camera,
-    chart: Vec3,
-    model: CameraModel,
-) ?Vec3 {
-    return (View{
-        .metric = metric,
-        .params = params,
-        .projection = .gnomonic,
-        .clip = .{},
-        .camera = camera,
-        .scene_sign = 1.0,
-    }).cameraModelPoint(chart, model);
 }
 
 fn edgeHasProjectionBreak(view: View, a_chart: Vec3, b_chart: Vec3, screen: Screen, steps: usize) bool {
