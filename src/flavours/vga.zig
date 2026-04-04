@@ -2,10 +2,22 @@ const std = @import("std");
 
 pub const ga = @import("../ga.zig");
 
-pub const Algebra = ga.Algebra(ga.euclideanSignature(2));
+pub fn EuclideanFamily(comptime dimensions: usize) type {
+    return struct {
+        const family_algebra = ga.Algebra(ga.euclideanSignature(dimensions));
+        pub const Algebra = family_algebra;
+
+        pub fn Instantiate(comptime T: type) type {
+            return family_algebra.Instantiate(T);
+        }
+    };
+}
+
+const default_family = EuclideanFamily(2);
+pub const Algebra = default_family.Algebra;
 
 pub fn Instantiate(comptime T: type) type {
-    return Algebra.Instantiate(T);
+    return default_family.Instantiate(T);
 }
 
 pub const h = Instantiate(f64);
@@ -34,4 +46,11 @@ test "vga facade keeps ga parity and rotor aliases" {
 
     try std.testing.expect(nearlyEqual(turned.coeffNamed("e1"), 0.0, 1e-12));
     try std.testing.expect(nearlyEqual(turned.coeffNamed("e2"), e2.coeffNamed("e2"), 1e-12));
+}
+
+test "vga exposes reusable Euclidean families" {
+    const E5 = EuclideanFamily(5).Instantiate(f32);
+    const v = E5.Vector.init(.{ 1, 2, 3, 4, 5 });
+
+    try std.testing.expectEqual(@as(f32, 5.0), v.coeffNamed("e5"));
 }
