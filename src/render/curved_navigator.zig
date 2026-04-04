@@ -113,10 +113,11 @@ fn drawNavigatorMarker(canvas: *canvas_api.Canvas, point: [2]f32, tone: u8) void
     canvas.drawLine(point[0], point[1] - 0.5, point[0], point[1] + 0.5, '#', tone);
 }
 
-fn sphericalOverviewFieldRadius(view: curved.View, projection_mode: SphericalMapProjection) f32 {
+fn sphericalOverviewFieldRadius(view: anytype, projection_mode: SphericalMapProjection) f32 {
+    const erased_view = curved.erasedView(view);
     return switch (projection_mode) {
-        .stereographic => view.params.radius * (@as(f32, std.math.pi) * 0.5) * 0.98,
-        .gnomonic => view.params.radius * 1.10,
+        .stereographic => erased_view.params.radius * (@as(f32, std.math.pi) * 0.5) * 0.98,
+        .gnomonic => erased_view.params.radius * 1.10,
     };
 }
 
@@ -124,7 +125,7 @@ fn drawSphericalMapGeodesic(
     canvas: *canvas_api.Canvas,
     rect: NavigatorRect,
     extent: f32,
-    view: curved.View,
+    view: anytype,
     map_camera: nav_geom.SphericalCamera,
     projection_mode: SphericalMapProjection,
     a_chart: curved.Vec3,
@@ -135,7 +136,7 @@ fn drawSphericalMapGeodesic(
 
     for (0..25) |i| {
         const t = @as(f32, @floatFromInt(i)) / 24.0;
-        const chart = curved.geodesicChartPoint(.spherical, view.params, a_chart, b_chart, t) orelse continue;
+        const chart = curved.geodesicChartPoint(.spherical, curved.erasedView(view).params, a_chart, b_chart, t) orelse continue;
         const ambient = nav_geom.signedSphericalAmbient(view, chart) orelse continue;
         const map_point = nav_geom.sphericalMapPoint(map_camera, ambient, projection_mode) orelse {
             prev_point = null;
@@ -153,7 +154,7 @@ fn drawSphericalGroundBoundary(
     canvas: *canvas_api.Canvas,
     rect: NavigatorRect,
     extent: f32,
-    view: curved.View,
+    view: anytype,
     map_camera: nav_geom.SphericalCamera,
     projection_mode: SphericalMapProjection,
     field_radius: f32,
@@ -168,7 +169,7 @@ fn drawSphericalGroundBoundary(
         const forward = @sin(theta) * field_radius;
         const ambient = curved.ambientFromTangentBasisPoint(
             .spherical,
-            view.params,
+            curved.erasedView(view).params,
             Round.toCoords(map_camera.position),
             Round.toCoords(map_camera.right),
             Round.toCoords(map_camera.forward),
@@ -191,7 +192,7 @@ fn drawSphericalGroundGridLine(
     canvas: *canvas_api.Canvas,
     rect: NavigatorRect,
     extent: f32,
-    view: curved.View,
+    view: anytype,
     map_camera: nav_geom.SphericalCamera,
     projection_mode: SphericalMapProjection,
     fixed_is_lateral: bool,
@@ -208,7 +209,7 @@ fn drawSphericalGroundGridLine(
         const forward = if (fixed_is_lateral) varying else fixed;
         const ambient = curved.ambientFromTangentBasisPoint(
             .spherical,
-            view.params,
+            curved.erasedView(view).params,
             Round.toCoords(map_camera.position),
             Round.toCoords(map_camera.right),
             Round.toCoords(map_camera.forward),
@@ -231,7 +232,7 @@ fn drawSphericalGroundGridLine(
 }
 
 fn sphericalGroundMapExtent(
-    view: curved.View,
+    view: anytype,
     map_camera: nav_geom.SphericalCamera,
     chart_vertices: []const curved.Vec3,
     projection_mode: SphericalMapProjection,
@@ -253,7 +254,7 @@ fn drawSphericalGroundOverviewPanel(
     canvas: *canvas_api.Canvas,
     rect: NavigatorRect,
     extent: f32,
-    view: curved.View,
+    view: anytype,
     mesh: curved_canvas.Mesh,
     map_camera: nav_geom.SphericalCamera,
     projection_mode: SphericalMapProjection,
@@ -290,7 +291,7 @@ fn drawSphericalGroundOverviewPanel(
     const eye_point = projectNavigatorPoint(rect, extent, 0.0, 0.0);
     const heading_ambient = curved.ambientFromTangentBasisPoint(
         .spherical,
-        view.params,
+        curved.erasedView(view).params,
         Round.toCoords(map_camera.position),
         Round.toCoords(map_camera.right),
         Round.toCoords(map_camera.forward),
@@ -329,17 +330,18 @@ fn drawNavigatorGeodesic(
     canvas: *canvas_api.Canvas,
     rect: NavigatorRect,
     extent: f32,
-    view: curved.View,
+    view: anytype,
     axes: NavigatorAxes,
     a_chart: curved.Vec3,
     b_chart: curved.Vec3,
     tone: u8,
 ) void {
+    const erased_view = curved.erasedView(view);
     var prev_point: ?[2]f32 = null;
 
     for (0..19) |i| {
         const t = @as(f32, @floatFromInt(i)) / 18.0;
-        const chart = curved.geodesicChartPoint(view.metric, view.params, a_chart, b_chart, t) orelse continue;
+        const chart = curved.geodesicChartPoint(erased_view.metric, erased_view.params, a_chart, b_chart, t) orelse continue;
         const coords = curved.vec3Coords(chart);
         const point = projectNavigatorPoint(rect, extent, coords[axes.horizontal], coords[axes.vertical]);
         if (prev_point) |prev| {
@@ -353,7 +355,7 @@ fn drawNavigatorPanel(
     canvas: *canvas_api.Canvas,
     rect: NavigatorRect,
     extent: f32,
-    view: curved.View,
+    view: anytype,
     mesh: curved_canvas.Mesh,
     eye_chart: curved.Vec3,
     look_chart: curved.Vec3,

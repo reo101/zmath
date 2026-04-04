@@ -524,6 +524,7 @@ const CurvedRenderPass = union(enum) {
 };
 
 const GroundBasis = curved_ground.GroundBasis;
+const SphericalGroundBasis = curved_ground.SphericalGroundBasis;
 
 const GroundExtents = struct {
     lateral: f32,
@@ -1064,7 +1065,7 @@ fn nativeSphericalConformalSampleForPass(
 
 fn drawSphericalGroundFullscreen(
     view: curved.View,
-    basis: GroundBasis,
+    basis: SphericalGroundBasis,
     screen: curved.Screen,
     viewport: rl.Rectangle,
 ) void {
@@ -1111,7 +1112,7 @@ fn drawSphericalGroundFullscreen(
 
 fn rasterizeSphericalGroundFullscreen(
     view: curved.View,
-    basis: GroundBasis,
+    basis: SphericalGroundBasis,
     screen: curved.Screen,
     pixels: []rl.Color,
     depth_buffer: []f32,
@@ -2536,7 +2537,7 @@ fn drawNativeCurvedScene(app: *const demo.App, viewport: rl.Rectangle, spherical
             if (spherical.view.projection == .wrapped) {
                 if (app.camera.movement_mode == .walk) {
                     const ground_start = benchStart();
-                    const ground_basis = curved_ground.worldGroundBasis();
+                    const ground_basis = curved_ground.worldSphericalGroundBasis();
                     drawSphericalGroundFullscreen(
                         render_view,
                         ground_basis,

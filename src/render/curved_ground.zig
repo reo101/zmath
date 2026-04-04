@@ -1,12 +1,20 @@
 const std = @import("std");
 const curved = @import("../geometry/constant_curvature.zig");
 const projection = @import("projection.zig");
+const Round = curved.AmbientFor(.spherical);
 
 pub const GroundBasis = struct {
     origin: curved.Vec4,
     right: curved.Vec4,
     forward: curved.Vec4,
     up: curved.Vec4,
+};
+
+pub const SphericalGroundBasis = struct {
+    origin: Round.Vector,
+    right: Round.Vector,
+    forward: Round.Vector,
+    up: Round.Vector,
 };
 
 pub const SphericalGroundHit = struct {
@@ -24,12 +32,21 @@ pub fn worldGroundBasis() GroundBasis {
     };
 }
 
-pub fn sphericalGroundBasisForPass(pass: curved.SphericalRenderPass) GroundBasis {
-    const basis = worldGroundBasis();
+pub fn worldSphericalGroundBasis() SphericalGroundBasis {
+    return .{
+        .origin = Round.identity(),
+        .right = Round.fromCoords(.{ 0.0, 1.0, 0.0, 0.0 }),
+        .forward = Round.fromCoords(.{ 0.0, 0.0, 0.0, 1.0 }),
+        .up = Round.fromCoords(.{ 0.0, 0.0, 1.0, 0.0 }),
+    };
+}
+
+pub fn sphericalGroundBasisForPass(pass: curved.SphericalRenderPass) SphericalGroundBasis {
+    const basis = worldSphericalGroundBasis();
     return switch (pass) {
         .near => basis,
         .far => .{
-            .origin = curved.ambientScale(.spherical, basis.origin, -1.0),
+            .origin = Round.scale(basis.origin, -1.0),
             .right = basis.right,
             .forward = basis.forward,
             .up = basis.up,
@@ -56,6 +73,17 @@ pub fn signedGroundBasisForView(view: anytype, basis: GroundBasis) GroundBasis {
         .right = curved.ambientScale(erased_view.metric, basis.right, -1.0),
         .forward = curved.ambientScale(erased_view.metric, basis.forward, -1.0),
         .up = curved.ambientScale(erased_view.metric, basis.up, -1.0),
+    };
+}
+
+pub fn signedSphericalGroundBasisForView(view: anytype, basis: SphericalGroundBasis) SphericalGroundBasis {
+    const erased_view = curved.erasedView(view);
+    if (erased_view.metric != .spherical or erased_view.scene_sign >= 0.0) return basis;
+    return .{
+        .origin = Round.scale(basis.origin, -1.0),
+        .right = Round.scale(basis.right, -1.0),
+        .forward = Round.scale(basis.forward, -1.0),
+        .up = Round.scale(basis.up, -1.0),
     };
 }
 
@@ -98,27 +126,26 @@ pub fn inverseGroundScreenDirection(
 
 pub fn sphericalGroundHitForScreenPoint(
     view: anytype,
-    basis_input: GroundBasis,
+    basis_input: SphericalGroundBasis,
     screen: curved.Screen,
     point: [2]f32,
 ) ?SphericalGroundHit {
     const erased_view = curved.erasedView(view);
     if (erased_view.metric != .spherical) return null;
 
-    const basis = signedGroundBasisForView(erased_view, basis_input);
+    const spherical = erased_view.typed(.spherical);
+    const basis = signedSphericalGroundBasisForView(spherical, basis_input);
     const local_dir = inverseGroundScreenDirection(erased_view.projection, screen, point) orelse return null;
-    const direction = curved.ambientAdd(
-        .spherical,
-        curved.ambientAdd(
-            .spherical,
-            curved.ambientScale(.spherical, erased_view.camera.right, curved.vec3x(local_dir)),
-            curved.ambientScale(.spherical, erased_view.camera.up, curved.vec3y(local_dir)),
+    const direction = Round.add(
+        Round.add(
+            Round.scale(spherical.camera.right, curved.vec3x(local_dir)),
+            Round.scale(spherical.camera.up, curved.vec3y(local_dir)),
         ),
-        curved.ambientScale(.spherical, erased_view.camera.forward, curved.vec3z(local_dir)),
+        Round.scale(spherical.camera.forward, curved.vec3z(local_dir)),
     );
 
-    const a = curved.ambientDot(.spherical, erased_view.camera.position, basis.up);
-    const b = curved.ambientDot(.spherical, direction, basis.up);
+    const a = Round.dot(spherical.camera.position, basis.up);
+    const b = Round.dot(direction, basis.up);
     if (@abs(a) <= 1e-6 and @abs(b) <= 1e-6) return null;
 
     var theta = std.math.atan2(-a, b);
@@ -126,14 +153,13 @@ pub fn sphericalGroundHitForScreenPoint(
     if (theta > @as(f32, std.math.pi)) theta -= @as(f32, std.math.pi);
     if (theta <= 1e-4) return null;
 
-    const ambient = curved.ambientAdd(
-        .spherical,
-        curved.ambientScale(.spherical, view.camera.position, @cos(theta)),
-        curved.ambientScale(.spherical, direction, @sin(theta)),
+    const ambient = Round.add(
+        Round.scale(spherical.camera.position, @cos(theta)),
+        Round.scale(direction, @sin(theta)),
     );
-    const origin_coord = curved.ambientDot(.spherical, ambient, basis.origin);
-    const lateral_coord = curved.ambientDot(.spherical, ambient, basis.right);
-    const forward_coord = curved.ambientDot(.spherical, ambient, basis.forward);
+    const origin_coord = Round.dot(ambient, basis.origin);
+    const lateral_coord = Round.dot(ambient, basis.right);
+    const forward_coord = Round.dot(ambient, basis.forward);
     const planar_norm = @sqrt(lateral_coord * lateral_coord + forward_coord * forward_coord);
     if (planar_norm <= 1e-6) {
         return .{
@@ -196,6 +222,25 @@ test "signedGroundBasisForView flips spherical negative scene" {
     try std.testing.expectApproxEqAbs(-positive.up[2], negative.up[2], 1e-6);
 }
 
+test "signedSphericalGroundBasisForView flips spherical negative scene" {
+    var view = try curved.SphericalView.init(
+        .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
+        .stereographic,
+        .{ .near = 0.08, .far = std.math.inf(f32) },
+        curved.vec3(0.0, 0.0, -0.82),
+        curved.vec3(0.0, 0.0, 0.0),
+    );
+    const basis = worldSphericalGroundBasis();
+    const positive = signedSphericalGroundBasisForView(view, basis);
+    view.scene_sign = -1.0;
+    const negative = signedSphericalGroundBasisForView(view, basis);
+
+    try std.testing.expectApproxEqAbs(-Round.w(positive.origin), Round.w(negative.origin), 1e-6);
+    try std.testing.expectApproxEqAbs(-Round.x(positive.right), Round.x(negative.right), 1e-6);
+    try std.testing.expectApproxEqAbs(-Round.z(positive.forward), Round.z(negative.forward), 1e-6);
+    try std.testing.expectApproxEqAbs(-Round.y(positive.up), Round.y(negative.up), 1e-6);
+}
+
 test "sphericalGroundHitForScreenPoint returns centered finite hit" {
     const view = try curved.SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
@@ -204,7 +249,7 @@ test "sphericalGroundHitForScreenPoint returns centered finite hit" {
         curved.vec3(0.0, 0.0, -0.82),
         curved.vec3(0.0, 0.0, 0.0),
     );
-    const basis = worldGroundBasis();
+    const basis = worldSphericalGroundBasis();
     const screen = curved.Screen{ .width = 160, .height = 90, .zoom = 1.0 };
     const hit = sphericalGroundHitForScreenPoint(view, basis, screen, .{ 80.0, 45.0 }) orelse return error.TestUnexpectedResult;
 
