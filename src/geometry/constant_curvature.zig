@@ -119,6 +119,15 @@ pub fn TypedWalkBasis(comptime metric: Metric) type {
     };
 }
 
+fn TypedHeadingBasis(comptime metric: Metric) type {
+    const Ambient = AmbientFor(metric);
+    return struct {
+        east: Ambient.Vector,
+        north: Ambient.Vector,
+        up: Ambient.Vector,
+    };
+}
+
 fn typedCameraFromErased(comptime metric: Metric, camera: Camera) TypedCamera(metric) {
     const Ambient = AmbientFor(metric);
     return .{
@@ -136,6 +145,15 @@ fn typedCameraToErased(comptime metric: Metric, camera: TypedCamera(metric)) Cam
         .right = Ambient.toCoords(camera.right),
         .up = Ambient.toCoords(camera.up),
         .forward = Ambient.toCoords(camera.forward),
+    };
+}
+
+fn typedWalkBasisToErased(comptime metric: Metric, basis: TypedWalkBasis(metric)) WalkBasis {
+    const Ambient = AmbientFor(metric);
+    return .{
+        .forward = Ambient.toCoords(basis.forward),
+        .right = Ambient.toCoords(basis.right),
+        .up = Ambient.toCoords(basis.up),
     };
 }
 
@@ -186,101 +204,78 @@ pub fn TypedView(comptime metric: Metric) type {
             };
         }
 
-        fn mutate(self: *Self, f: *const fn (*View) void) void {
-            var erased_view = self.erased();
-            f(&erased_view);
-            self.* = fromErased(erased_view);
-        }
-
         pub fn turnYaw(self: *Self, angle: f32) void {
-            var erased_view = self.erased();
-            erased_view.turnYaw(angle);
-            self.* = fromErased(erased_view);
+            typedYaw(metric, &self.camera, angle);
         }
 
         pub fn turnWalkYaw(self: *Self, angle: f32) void {
-            var erased_view = self.erased();
-            erased_view.turnWalkYaw(angle);
-            self.* = fromErased(erased_view);
+            const orientation = self.walkOrientation() orelse {
+                self.turnYaw(angle);
+                return;
+            };
+
+            const c = @cos(angle);
+            const s = @sin(angle);
+            const x_heading = orientation.x_heading * c + orientation.z_heading * s;
+            const z_heading = orientation.z_heading * c - orientation.x_heading * s;
+            self.syncHeadingPitch(x_heading, z_heading, orientation.pitch);
         }
 
         pub fn turnSurfaceYaw(self: *Self, angle: f32, pitch_angle: f32) void {
-            var erased_view = self.erased();
-            erased_view.turnSurfaceYaw(angle, pitch_angle);
-            self.* = fromErased(erased_view);
+            typedTurnSurfaceYaw(metric, &self.camera, angle, pitch_angle);
         }
 
         pub fn syncSurfacePitch(self: *Self, pitch_angle: f32) void {
-            var erased_view = self.erased();
-            erased_view.syncSurfacePitch(pitch_angle);
-            self.* = fromErased(erased_view);
+            typedSyncSurfacePitch(metric, &self.camera, pitch_angle);
         }
 
         pub fn turnPitch(self: *Self, angle: f32) void {
-            var erased_view = self.erased();
-            erased_view.turnPitch(angle);
-            self.* = fromErased(erased_view);
+            typedPitch(metric, &self.camera, angle);
         }
 
         pub fn moveAlong(self: *Self, direction: Ambient.Vector, distance: f32) void {
-            var erased_view = self.erased();
-            erased_view.moveAlong(Ambient.toCoords(direction), distance);
-            self.* = fromErased(erased_view);
+            typedMoveAlongDirection(metric, &self.camera, self.params, direction, distance);
         }
 
         pub fn moveForwardBy(self: *Self, distance: f32) void {
-            var erased_view = self.erased();
-            erased_view.moveForwardBy(distance);
-            self.* = fromErased(erased_view);
+            typedMoveAlongDirection(metric, &self.camera, self.params, self.camera.forward, distance);
         }
 
         pub fn moveRightBy(self: *Self, distance: f32) void {
-            var erased_view = self.erased();
-            erased_view.moveRightBy(distance);
-            self.* = fromErased(erased_view);
+            typedMoveAlongDirection(metric, &self.camera, self.params, self.camera.right, distance);
         }
 
         pub fn headingDirection(self: Self, x_heading: f32, z_heading: f32) ?Ambient.Vector {
-            const erased_view = self.erased();
-            return Ambient.fromCoords(erased_view.headingDirection(x_heading, z_heading) orelse return null);
+            return typedWorldHeadingDirection(metric, self.camera, x_heading, z_heading);
         }
 
         pub fn walkOrientation(self: Self) ?WalkOrientation {
-            return self.erased().walkOrientation();
+            return typedCurrentWalkOrientation(metric, self.camera);
         }
 
         pub fn walkBasis(self: Self) ?WalkBasisT {
-            const basis = self.erased().walkBasis() orelse return null;
-            return .{
-                .forward = Ambient.fromCoords(basis.forward),
-                .right = Ambient.fromCoords(basis.right),
-                .up = Ambient.fromCoords(basis.up),
-            };
+            return typedWalkBasis(metric, self.camera);
         }
 
         pub fn walkSurfaceUp(self: Self) ?Ambient.Vector {
-            return Ambient.fromCoords(self.erased().walkSurfaceUp() orelse return null);
+            return typedWorldUpDirection(metric, self.camera);
         }
 
         pub fn walkSurfaceBasis(self: Self, pitch_angle: f32) ?WalkBasisT {
-            const basis = self.erased().walkSurfaceBasis(pitch_angle) orelse return null;
-            return .{
-                .forward = Ambient.fromCoords(basis.forward),
-                .right = Ambient.fromCoords(basis.right),
-                .up = Ambient.fromCoords(basis.up),
-            };
+            return typedWalkSurfaceBasis(metric, self.camera, pitch_angle);
         }
 
         pub fn syncHeadingPitch(self: *Self, x_heading: f32, z_heading: f32, pitch_angle: f32) void {
-            var erased_view = self.erased();
-            erased_view.syncHeadingPitch(x_heading, z_heading, pitch_angle);
-            self.* = fromErased(erased_view);
+            typedOrientFromHeadingPitch(metric, &self.camera, x_heading, z_heading, pitch_angle);
         }
 
         pub fn wrapSphericalChart(self: *Self) void {
-            var erased_view = self.erased();
-            erased_view.wrapSphericalChart();
-            self.* = fromErased(erased_view);
+            if (metric != .spherical or self.params.chart_model != .conformal) return;
+            if (Ambient.w(self.camera.position) + 1.0 >= spherical_chart_min_denom) return;
+
+            self.camera.position = Ambient.scale(self.camera.position, -1.0);
+            self.camera.forward = Ambient.scale(self.camera.forward, -1.0);
+            typedReorthonormalize(metric, &self.camera);
         }
 
         pub fn adjustRadius(self: *Self, radius: f32, look_ahead: f32) CameraError!void {
@@ -290,7 +285,7 @@ pub fn TypedView(comptime metric: Metric) type {
         }
 
         pub fn shadeFarDistance(self: Self) f32 {
-            return self.erased().shadeFarDistance();
+            return if (metric == .spherical) (@as(f32, std.math.pi) * self.params.radius) else self.clip.far;
         }
     };
 }
@@ -354,6 +349,296 @@ fn ambientIdentity(metric: Metric) Vec4 {
     return .{ 1.0, 0.0, 0.0, 0.0 };
 }
 
+fn typedZero(comptime metric: Metric) AmbientFor(metric).Vector {
+    const Ambient = AmbientFor(metric);
+    return Ambient.scale(Ambient.identity(), 0.0);
+}
+
+fn typedBasisVector(comptime metric: Metric, coords: [4]f32) AmbientFor(metric).Vector {
+    return AmbientFor(metric).fromCoords(coords);
+}
+
+fn typedTryNormalizeTangent(comptime metric: Metric, v: AmbientFor(metric).Vector) ?AmbientFor(metric).Vector {
+    const Ambient = AmbientFor(metric);
+    if (!Ambient.isFinite(v)) return null;
+    const n2 = Ambient.dot(v, v);
+    if (!std.math.isFinite(n2) or n2 <= 1e-6) return null;
+    return Ambient.scale(v, 1.0 / @sqrt(n2));
+}
+
+fn typedProjectToTangent(
+    comptime metric: Metric,
+    position: AmbientFor(metric).Vector,
+    candidate: AmbientFor(metric).Vector,
+) AmbientFor(metric).Vector {
+    const Ambient = AmbientFor(metric);
+    if (!Ambient.isFinite(position) or !Ambient.isFinite(candidate)) return typedZero(metric);
+    const denom = Ambient.dot(position, position);
+    if (!std.math.isFinite(denom) or @abs(denom) <= 1e-6) return typedZero(metric);
+    const along = Ambient.dot(candidate, position) / denom;
+    if (!std.math.isFinite(along)) return typedZero(metric);
+    return Ambient.sub(candidate, Ambient.scale(position, along));
+}
+
+fn typedOrthonormalCandidate(
+    comptime metric: Metric,
+    position: AmbientFor(metric).Vector,
+    candidate: AmbientFor(metric).Vector,
+    refs: []const AmbientFor(metric).Vector,
+) ?AmbientFor(metric).Vector {
+    const Ambient = AmbientFor(metric);
+    var v = typedProjectToTangent(metric, position, candidate);
+    for (refs) |r| {
+        v = Ambient.sub(v, Ambient.scale(r, Ambient.dot(v, r)));
+    }
+    return typedTryNormalizeTangent(metric, v);
+}
+
+fn typedReorthonormalize(comptime metric: Metric, camera: *TypedCamera(metric)) void {
+    camera.forward = typedOrthonormalCandidate(metric, camera.position, camera.forward, &.{}) orelse camera.forward;
+    camera.right = typedOrthonormalCandidate(metric, camera.position, camera.right, &.{camera.forward}) orelse camera.right;
+    camera.up = typedOrthonormalCandidate(metric, camera.position, camera.up, &.{ camera.forward, camera.right }) orelse camera.up;
+}
+
+fn typedRotatePair(
+    comptime metric: Metric,
+    camera: *TypedCamera(metric),
+    first: *AmbientFor(metric).Vector,
+    second: *AmbientFor(metric).Vector,
+    angle: f32,
+) void {
+    const Ambient = AmbientFor(metric);
+    const c = @cos(angle);
+    const s = @sin(angle);
+    const old_first = first.*;
+    const old_second = second.*;
+    first.* = Ambient.add(Ambient.scale(old_first, c), Ambient.scale(old_second, s));
+    second.* = Ambient.sub(Ambient.scale(old_second, c), Ambient.scale(old_first, s));
+    typedReorthonormalize(metric, camera);
+}
+
+fn typedYaw(comptime metric: Metric, camera: *TypedCamera(metric), angle: f32) void {
+    typedRotatePair(metric, camera, &camera.forward, &camera.right, angle);
+}
+
+fn typedPitch(comptime metric: Metric, camera: *TypedCamera(metric), angle: f32) void {
+    typedRotatePair(metric, camera, &camera.forward, &camera.up, angle);
+}
+
+fn typedWorldUpAt(comptime metric: Metric, position: AmbientFor(metric).Vector) ?AmbientFor(metric).Vector {
+    return typedOrthonormalCandidate(metric, position, typedBasisVector(metric, .{ 0.0, 0.0, 1.0, 0.0 }), &.{}) orelse
+        typedOrthonormalCandidate(metric, position, typedBasisVector(metric, .{ 0.0, 0.0, 0.0, 1.0 }), &.{});
+}
+
+fn typedWorldUpDirection(comptime metric: Metric, camera: TypedCamera(metric)) ?AmbientFor(metric).Vector {
+    return typedWorldUpAt(metric, camera.position);
+}
+
+fn typedHeadingBasis(comptime metric: Metric, camera: TypedCamera(metric)) ?TypedHeadingBasis(metric) {
+    const up = typedWorldUpDirection(metric, camera) orelse return null;
+    const east = typedOrthonormalCandidate(metric, camera.position, typedBasisVector(metric, .{ 0.0, 1.0, 0.0, 0.0 }), &.{up}) orelse
+        typedOrthonormalCandidate(metric, camera.position, typedBasisVector(metric, .{ 0.0, 0.0, 0.0, 1.0 }), &.{up}) orelse
+        typedOrthonormalCandidate(metric, camera.position, typedBasisVector(metric, .{ 1.0, 0.0, 0.0, 0.0 }), &.{up}) orelse
+        return null;
+    const north = typedOrthonormalCandidate(metric, camera.position, typedBasisVector(metric, .{ 0.0, 0.0, 0.0, 1.0 }), &.{ up, east }) orelse
+        typedOrthonormalCandidate(metric, camera.position, typedBasisVector(metric, .{ 1.0, 0.0, 0.0, 0.0 }), &.{ up, east }) orelse
+        typedOrthonormalCandidate(metric, camera.position, typedBasisVector(metric, .{ 0.0, 1.0, 0.0, 0.0 }), &.{ up, east }) orelse
+        return null;
+
+    return .{
+        .east = east,
+        .north = north,
+        .up = up,
+    };
+}
+
+fn typedWorldHeadingDirection(
+    comptime metric: Metric,
+    camera: TypedCamera(metric),
+    x_heading: f32,
+    z_heading: f32,
+) ?AmbientFor(metric).Vector {
+    const Ambient = AmbientFor(metric);
+    const basis = typedHeadingBasis(metric, camera) orelse return null;
+    return typedTryNormalizeTangent(metric, Ambient.add(
+        Ambient.scale(basis.east, x_heading),
+        Ambient.scale(basis.north, z_heading),
+    ));
+}
+
+fn typedCurrentWalkOrientation(comptime metric: Metric, camera: TypedCamera(metric)) ?WalkOrientation {
+    const Ambient = AmbientFor(metric);
+    const basis = typedHeadingBasis(metric, camera) orelse return null;
+    const pitch_angle = std.math.asin(std.math.clamp(Ambient.dot(camera.forward, basis.up), -1.0, 1.0));
+
+    const forward_ground = typedOrthonormalCandidate(metric, camera.position, camera.forward, &.{basis.up}) orelse fallback_ground: {
+        const up_sign: f32 = if (pitch_angle >= 0.0) -1.0 else 1.0;
+        break :fallback_ground typedOrthonormalCandidate(metric, camera.position, Ambient.scale(camera.up, up_sign), &.{basis.up}) orelse return null;
+    };
+
+    const x_heading = Ambient.dot(forward_ground, basis.east);
+    const z_heading = Ambient.dot(forward_ground, basis.north);
+    const heading_len = @sqrt(x_heading * x_heading + z_heading * z_heading);
+    if (heading_len <= 1e-6) return null;
+
+    return .{
+        .x_heading = x_heading / heading_len,
+        .z_heading = z_heading / heading_len,
+        .pitch = pitch_angle,
+    };
+}
+
+fn typedWalkBasis(comptime metric: Metric, camera: TypedCamera(metric)) ?TypedWalkBasis(metric) {
+    const orientation = typedCurrentWalkOrientation(metric, camera) orelse return null;
+    const basis = typedHeadingBasis(metric, camera) orelse return null;
+    return .{
+        .forward = typedWorldHeadingDirection(metric, camera, orientation.x_heading, orientation.z_heading) orelse return null,
+        .right = typedWorldHeadingDirection(metric, camera, orientation.z_heading, -orientation.x_heading) orelse return null,
+        .up = basis.up,
+    };
+}
+
+fn typedWalkSurfaceBasis(comptime metric: Metric, camera: TypedCamera(metric), pitch_angle: f32) ?TypedWalkBasis(metric) {
+    const Ambient = AmbientFor(metric);
+    const up = typedWorldUpDirection(metric, camera) orelse return null;
+    const forward = typedOrthonormalCandidate(metric, camera.position, camera.forward, &.{up}) orelse
+        fallback_forward: {
+            const up_sign: f32 = if (pitch_angle >= 0.0) -1.0 else 1.0;
+            break :fallback_forward typedOrthonormalCandidate(metric, camera.position, Ambient.scale(camera.up, up_sign), &.{up});
+        } orelse
+        return null;
+    const right = typedOrthonormalCandidate(metric, camera.position, camera.right, &.{ up, forward }) orelse
+        typedOrthonormalCandidate(metric, camera.position, camera.up, &.{ up, forward }) orelse
+        return null;
+    return .{
+        .forward = forward,
+        .right = right,
+        .up = up,
+    };
+}
+
+fn typedOrientFromHeadingPitch(
+    comptime metric: Metric,
+    camera: *TypedCamera(metric),
+    x_heading: f32,
+    z_heading: f32,
+    pitch_angle: f32,
+) void {
+    const Ambient = AmbientFor(metric);
+    const basis = typedHeadingBasis(metric, camera.*) orelse return;
+    const horizontal_forward = typedWorldHeadingDirection(metric, camera.*, x_heading, z_heading) orelse return;
+    const horizontal_right = typedWorldHeadingDirection(metric, camera.*, z_heading, -x_heading) orelse return;
+
+    camera.forward = Ambient.add(
+        Ambient.scale(horizontal_forward, @cos(pitch_angle)),
+        Ambient.scale(basis.up, @sin(pitch_angle)),
+    );
+    camera.forward = typedTryNormalizeTangent(metric, typedProjectToTangent(metric, camera.position, camera.forward)) orelse return;
+    camera.right = typedOrthonormalCandidate(metric, camera.position, horizontal_right, &.{camera.forward}) orelse return;
+    camera.up = typedOrthonormalCandidate(metric, camera.position, basis.up, &.{ camera.forward, camera.right }) orelse return;
+    typedReorthonormalize(metric, camera);
+}
+
+fn typedTurnSurfaceYaw(
+    comptime metric: Metric,
+    camera: *TypedCamera(metric),
+    angle: f32,
+    pitch_angle: f32,
+) void {
+    const Ambient = AmbientFor(metric);
+    const basis = typedWalkSurfaceBasis(metric, camera.*, pitch_angle) orelse {
+        typedYaw(metric, camera, angle);
+        return;
+    };
+
+    const c = @cos(angle);
+    const s = @sin(angle);
+    const horizontal_forward = Ambient.add(
+        Ambient.scale(basis.forward, c),
+        Ambient.scale(basis.right, s),
+    );
+    const horizontal_right = Ambient.sub(
+        Ambient.scale(basis.right, c),
+        Ambient.scale(basis.forward, s),
+    );
+
+    camera.forward = Ambient.add(
+        Ambient.scale(horizontal_forward, @cos(pitch_angle)),
+        Ambient.scale(basis.up, @sin(pitch_angle)),
+    );
+    camera.forward = typedTryNormalizeTangent(metric, typedProjectToTangent(metric, camera.position, camera.forward)) orelse return;
+    camera.right = typedOrthonormalCandidate(metric, camera.position, horizontal_right, &.{ camera.forward, basis.up }) orelse return;
+    camera.up = typedOrthonormalCandidate(metric, camera.position, basis.up, &.{ camera.forward, camera.right }) orelse return;
+    typedReorthonormalize(metric, camera);
+}
+
+fn typedSyncSurfacePitch(comptime metric: Metric, camera: *TypedCamera(metric), pitch_angle: f32) void {
+    const Ambient = AmbientFor(metric);
+    const basis = typedWalkSurfaceBasis(metric, camera.*, pitch_angle) orelse return;
+
+    camera.forward = Ambient.add(
+        Ambient.scale(basis.forward, @cos(pitch_angle)),
+        Ambient.scale(basis.up, @sin(pitch_angle)),
+    );
+    camera.forward = typedTryNormalizeTangent(metric, typedProjectToTangent(metric, camera.position, camera.forward)) orelse return;
+    camera.right = typedOrthonormalCandidate(metric, camera.position, basis.right, &.{ camera.forward, basis.up }) orelse return;
+    camera.up = typedOrthonormalCandidate(metric, camera.position, basis.up, &.{ camera.forward, camera.right }) orelse return;
+    typedReorthonormalize(metric, camera);
+}
+
+fn typedTransportedTangent(
+    comptime metric: Metric,
+    old_direction: AmbientFor(metric).Vector,
+    new_direction: AmbientFor(metric).Vector,
+    tangent: AmbientFor(metric).Vector,
+) AmbientFor(metric).Vector {
+    const Ambient = AmbientFor(metric);
+    const along = Ambient.dot(tangent, old_direction);
+    return Ambient.add(
+        Ambient.sub(tangent, Ambient.scale(old_direction, along)),
+        Ambient.scale(new_direction, along),
+    );
+}
+
+fn typedMoveAlongDirection(
+    comptime metric: Metric,
+    camera: *TypedCamera(metric),
+    params: Params,
+    direction: AmbientFor(metric).Vector,
+    distance: f32,
+) void {
+    const Ambient = AmbientFor(metric);
+    const old_position = camera.position;
+    const old_direction = typedTryNormalizeTangent(metric, typedProjectToTangent(metric, old_position, direction)) orelse return;
+    const old_forward = camera.forward;
+    const old_right = camera.right;
+    const old_up = camera.up;
+    const normalized_distance = distance / params.radius;
+    var new_position: Ambient.Vector = undefined;
+    var new_direction: Ambient.Vector = undefined;
+
+    switch (metric) {
+        .hyperbolic => {
+            const c = std.math.cosh(normalized_distance);
+            const s = std.math.sinh(normalized_distance);
+            new_position = Ambient.add(Ambient.scale(old_position, c), Ambient.scale(old_direction, s));
+            new_direction = Ambient.add(Ambient.scale(old_position, s), Ambient.scale(old_direction, c));
+        },
+        .elliptic, .spherical => {
+            const c = @cos(normalized_distance);
+            const s = @sin(normalized_distance);
+            new_position = Ambient.add(Ambient.scale(old_position, c), Ambient.scale(old_direction, s));
+            new_direction = Ambient.add(Ambient.scale(old_direction, c), Ambient.scale(old_position, -s));
+        },
+    }
+
+    camera.position = new_position;
+    camera.forward = typedTransportedTangent(metric, old_direction, new_direction, old_forward);
+    camera.right = typedTransportedTangent(metric, old_direction, new_direction, old_right);
+    camera.up = typedTransportedTangent(metric, old_direction, new_direction, old_up);
+    typedReorthonormalize(metric, camera);
+}
+
 fn sphericalUsesMultipass(projection_mode: projection.DirectionProjection) bool {
     return switch (projection_mode) {
         .wrapped => false,
@@ -393,184 +678,146 @@ pub const View = struct {
     }
 
     pub fn turnYaw(self: *View, angle: f32) void {
-        yaw(&self.camera, self.metric, angle);
+        switch (self.metric) {
+            inline else => |metric_tag| {
+                var typed_view = self.typed(metric_tag);
+                typed_view.turnYaw(angle);
+                self.* = typed_view.erased();
+            },
+        }
     }
 
     pub fn turnWalkYaw(self: *View, angle: f32) void {
-        const orientation = self.walkOrientation() orelse {
-            self.turnYaw(angle);
-            return;
-        };
-
-        const c = @cos(angle);
-        const s = @sin(angle);
-        const x_heading = orientation.x_heading * c + orientation.z_heading * s;
-        const z_heading = orientation.z_heading * c - orientation.x_heading * s;
-        self.syncHeadingPitch(x_heading, z_heading, orientation.pitch);
+        switch (self.metric) {
+            inline else => |metric_tag| {
+                var typed_view = self.typed(metric_tag);
+                typed_view.turnWalkYaw(angle);
+                self.* = typed_view.erased();
+            },
+        }
     }
 
     pub fn turnSurfaceYaw(self: *View, angle: f32, pitch_angle: f32) void {
-        const basis = self.walkSurfaceBasis(pitch_angle) orelse {
-            self.turnYaw(angle);
-            return;
-        };
-
-        const c = @cos(angle);
-        const s = @sin(angle);
-        const horizontal_forward = add4(
-            self.metric,
-            scale4(self.metric, basis.forward, c),
-            scale4(self.metric, basis.right, s),
-        );
-        const horizontal_right = sub4(
-            self.metric,
-            scale4(self.metric, basis.right, c),
-            scale4(self.metric, basis.forward, s),
-        );
-
-        self.camera.forward = add4(
-            self.metric,
-            scale4(self.metric, horizontal_forward, @cos(pitch_angle)),
-            scale4(self.metric, basis.up, @sin(pitch_angle)),
-        );
-        self.camera.forward = tryNormalizeTangent(
-            self.metric,
-            projectToTangent(self.metric, self.camera.position, self.camera.forward),
-        ) orelse return;
-        self.camera.right = orthonormalCandidate(
-            self.metric,
-            self.camera.position,
-            horizontal_right,
-            &.{ self.camera.forward, basis.up },
-        ) orelse return;
-        self.camera.up = orthonormalCandidate(
-            self.metric,
-            self.camera.position,
-            basis.up,
-            &.{ self.camera.forward, self.camera.right },
-        ) orelse return;
-        reorthonormalize(self.metric, &self.camera);
+        switch (self.metric) {
+            inline else => |metric_tag| {
+                var typed_view = self.typed(metric_tag);
+                typed_view.turnSurfaceYaw(angle, pitch_angle);
+                self.* = typed_view.erased();
+            },
+        }
     }
 
     pub fn syncSurfacePitch(self: *View, pitch_angle: f32) void {
-        const basis = self.walkSurfaceBasis(pitch_angle) orelse {
-            return;
-        };
-
-        self.camera.forward = add4(
-            self.metric,
-            scale4(self.metric, basis.forward, @cos(pitch_angle)),
-            scale4(self.metric, basis.up, @sin(pitch_angle)),
-        );
-        self.camera.forward = tryNormalizeTangent(
-            self.metric,
-            projectToTangent(self.metric, self.camera.position, self.camera.forward),
-        ) orelse return;
-        self.camera.right = orthonormalCandidate(
-            self.metric,
-            self.camera.position,
-            basis.right,
-            &.{ self.camera.forward, basis.up },
-        ) orelse return;
-        self.camera.up = orthonormalCandidate(
-            self.metric,
-            self.camera.position,
-            basis.up,
-            &.{ self.camera.forward, self.camera.right },
-        ) orelse return;
-        reorthonormalize(self.metric, &self.camera);
+        switch (self.metric) {
+            inline else => |metric_tag| {
+                var typed_view = self.typed(metric_tag);
+                typed_view.syncSurfacePitch(pitch_angle);
+                self.* = typed_view.erased();
+            },
+        }
     }
 
     pub fn turnPitch(self: *View, angle: f32) void {
-        pitch(&self.camera, self.metric, angle);
+        switch (self.metric) {
+            inline else => |metric_tag| {
+                var typed_view = self.typed(metric_tag);
+                typed_view.turnPitch(angle);
+                self.* = typed_view.erased();
+            },
+        }
     }
 
     pub fn moveAlong(self: *View, direction: Vec4, distance: f32) void {
-        moveAlongDirection(&self.camera, self.metric, self.params, direction, distance);
+        switch (self.metric) {
+            inline else => |metric_tag| {
+                var typed_view = self.typed(metric_tag);
+                typed_view.moveAlong(AmbientFor(metric_tag).fromCoords(direction), distance);
+                self.* = typed_view.erased();
+            },
+        }
     }
 
     pub fn moveForwardBy(self: *View, distance: f32) void {
-        moveForward(&self.camera, self.metric, self.params, distance);
+        switch (self.metric) {
+            inline else => |metric_tag| {
+                var typed_view = self.typed(metric_tag);
+                typed_view.moveForwardBy(distance);
+                self.* = typed_view.erased();
+            },
+        }
     }
 
     pub fn moveRightBy(self: *View, distance: f32) void {
-        moveRight(&self.camera, self.metric, self.params, distance);
+        switch (self.metric) {
+            inline else => |metric_tag| {
+                var typed_view = self.typed(metric_tag);
+                typed_view.moveRightBy(distance);
+                self.* = typed_view.erased();
+            },
+        }
     }
 
     pub fn headingDirection(self: View, x_heading: f32, z_heading: f32) ?Vec4 {
-        return worldHeadingDirection(self.metric, self.camera, x_heading, z_heading);
+        return switch (self.metric) {
+            inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
+                self.typed(metric_tag).headingDirection(x_heading, z_heading) orelse return null,
+            ),
+        };
     }
 
     pub fn walkOrientation(self: View) ?WalkOrientation {
-        return currentWalkOrientation(self.metric, self.camera);
+        return switch (self.metric) {
+            .hyperbolic => self.typed(.hyperbolic).walkOrientation(),
+            .elliptic => self.typed(.elliptic).walkOrientation(),
+            .spherical => self.typed(.spherical).walkOrientation(),
+        };
     }
 
     pub fn walkBasis(self: View) ?WalkBasis {
-        const orientation = self.walkOrientation() orelse return null;
-        const basis = headingBasis(self.metric, self.camera) orelse return null;
-        return .{
-            .forward = self.headingDirection(orientation.x_heading, orientation.z_heading) orelse return null,
-            .right = self.headingDirection(orientation.z_heading, -orientation.x_heading) orelse return null,
-            .up = basis.up,
+        return switch (self.metric) {
+            inline else => |metric_tag| typedWalkBasisToErased(
+                metric_tag,
+                self.typed(metric_tag).walkBasis() orelse return null,
+            ),
         };
     }
 
     pub fn walkSurfaceUp(self: View) ?Vec4 {
-        const basis = headingBasis(self.metric, self.camera) orelse return null;
-        return basis.up;
+        return switch (self.metric) {
+            inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
+                self.typed(metric_tag).walkSurfaceUp() orelse return null,
+            ),
+        };
     }
 
     pub fn walkSurfaceBasis(self: View, pitch_angle: f32) ?WalkBasis {
-        const up = self.walkSurfaceUp() orelse return null;
-        const forward = orthonormalCandidate(self.metric, self.camera.position, self.camera.forward, &.{up}) orelse
-            fallback_forward: {
-                const up_sign: f32 = if (pitch_angle >= 0.0) -1.0 else 1.0;
-                break :fallback_forward orthonormalCandidate(self.metric, self.camera.position, scale4(self.metric, self.camera.up, up_sign), &.{up});
-            } orelse
-            return null;
-        const right = orthonormalCandidate(self.metric, self.camera.position, self.camera.right, &.{ up, forward }) orelse
-            orthonormalCandidate(self.metric, self.camera.position, self.camera.up, &.{ up, forward }) orelse
-            return null;
-        return .{
-            .forward = forward,
-            .right = right,
-            .up = up,
+        return switch (self.metric) {
+            inline else => |metric_tag| typedWalkBasisToErased(
+                metric_tag,
+                self.typed(metric_tag).walkSurfaceBasis(pitch_angle) orelse return null,
+            ),
         };
     }
 
     pub fn syncHeadingPitch(self: *View, x_heading: f32, z_heading: f32, pitch_angle: f32) void {
-        orientFromHeadingPitch(self.metric, &self.camera, x_heading, z_heading, pitch_angle);
+        switch (self.metric) {
+            inline else => |metric_tag| {
+                var typed_view = self.typed(metric_tag);
+                typed_view.syncHeadingPitch(x_heading, z_heading, pitch_angle);
+                self.* = typed_view.erased();
+            },
+        }
     }
 
     pub fn wrapSphericalChart(self: *View) void {
-        if (self.metric != .spherical or self.params.chart_model != .conformal) return;
-        if (1.0 + self.camera.position[0] >= spherical_chart_min_denom) return;
-
-        // Spherical stereographic charts have a single bad pole. Move the
-        // camera to the antipodal chart so the active chart is well-conditioned.
-        //
-        // Position and forward are both negated: on S³ the geodesic from P
-        // with tangent V arrives at -P with tangent -V after half a great
-        // circle.  Right and up are NOT negated — they are orthogonal to
-        // forward and parallel-transport around a great circle preserves
-        // vectors perpendicular to the direction of travel.  This keeps
-        // screen-space x/y continuous across the wrap.
-        //
-        // Do NOT switch charts just because `w < 0`. The conformal chart is
-        // still perfectly valid there; only the single pole at `w = -1`
-        // is singular. Wrapping too early creates visible 180-degree camera
-        // branch flips in walk mode.
-        //
-        // scene_sign is not flipped: objects keep their original ambient
-        // coordinates, and the two-pass rendering system handles the change
-        // in which hemisphere they appear in.
-        //
-        // Hyperbolica devlogs #2 and #3 discuss the stereographic charting.
-        // https://www.youtube.com/watch?v=yY9GAyJtuJ0
-        // https://www.youtube.com/watch?v=pXWRYpdYc7Q
-        self.camera.position = scale4(self.metric, self.camera.position, -1.0);
-        self.camera.forward = scale4(self.metric, self.camera.forward, -1.0);
-        reorthonormalize(self.metric, &self.camera);
+        switch (self.metric) {
+            .spherical => {
+                var typed_view = self.typed(.spherical);
+                typed_view.wrapSphericalChart();
+                self.* = typed_view.erased();
+            },
+            inline else => {},
+        }
     }
 
     pub fn adjustRadius(self: *View, radius: f32, look_ahead: f32) CameraError!void {
@@ -592,7 +839,9 @@ pub const View = struct {
     }
 
     pub fn shadeFarDistance(self: View) f32 {
-        return if (self.metric == .spherical) (@as(f32, std.math.pi) * self.params.radius) else self.clip.far;
+        return switch (self.metric) {
+            inline else => |metric_tag| self.typed(metric_tag).shadeFarDistance(),
+        };
     }
 
     fn sceneAmbientPoint(self: View, chart: anytype) ?Vec4 {
