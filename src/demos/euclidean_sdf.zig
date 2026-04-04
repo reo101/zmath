@@ -40,9 +40,9 @@ pub const Scene = struct {
 
     pub fn worldToCubeLocal(self: Scene, point: sdf.Vec3) sdf.Vec3 {
         return sdf.vec3(
-            sdf.dot(point, self.local_row_x),
-            sdf.dot(point, self.local_row_y),
-            sdf.dot(point, self.local_row_z),
+            point.scalarProduct(self.local_row_x),
+            point.scalarProduct(self.local_row_y),
+            point.scalarProduct(self.local_row_z),
         );
     }
 
@@ -80,18 +80,18 @@ pub const Scene = struct {
         const depth_offset = projection.euclideanProjectionDepthOffset(self.projection_mode);
         const x_plane = x_ndc * aspect * depth_offset / self.zoom;
         const y_plane = y_ndc * depth_offset / self.zoom;
-        const plane_point = sdf.add(sdf.add(self.eye, sdf.scale(self.right, x_plane)), sdf.scale(self.up, y_plane));
+        const plane_point = self.eye.add(self.right.scale(x_plane)).add(self.up.scale(y_plane));
 
         return switch (self.projection_mode) {
             .perspective => {
-                const origin = sdf.sub(self.eye, sdf.scale(self.forward, depth_offset));
+                const origin = self.eye.sub(self.forward.scale(depth_offset));
                 return .{
                     .origin = origin,
-                    .direction = sdf.normalized(sdf.sub(plane_point, origin)),
+                    .direction = sdf.normalized(plane_point.sub(origin)),
                 };
             },
             .isometric => .{
-                .origin = sdf.sub(plane_point, sdf.scale(self.forward, demo.far_clip_z + depth_offset)),
+                .origin = plane_point.sub(self.forward.scale(demo.far_clip_z + depth_offset)),
                 .direction = self.forward,
             },
         };
@@ -120,7 +120,7 @@ pub const Scene = struct {
     }
 
     pub fn viewDepth(self: Scene, point: sdf.Vec3) f32 {
-        return sdf.dot(sdf.sub(point, self.eye), self.forward);
+        return point.sub(self.eye).scalarProduct(self.forward);
     }
 };
 
@@ -134,8 +134,8 @@ pub fn sampleScene(scene: *const Scene, point: sdf.Vec3) sdf.Sample {
 }
 
 pub fn raySphereInterval(ray: sdf.Ray, radius: f32) ?RayInterval {
-    const b = sdf.dot(ray.origin, ray.direction);
-    const c = sdf.dot(ray.origin, ray.origin) - radius * radius;
+    const b = ray.origin.scalarProduct(ray.direction);
+    const c = ray.origin.scalarProduct(ray.origin) - radius * radius;
     const disc = b * b - c;
     if (disc < 0.0) return null;
     const root = @sqrt(disc);
@@ -150,9 +150,9 @@ pub fn raySphereInterval(ray: sdf.Ray, radius: f32) ?RayInterval {
 
 pub fn boxLocalNormal(point: sdf.Vec3, half_extent: f32) sdf.Vec3 {
     const abs_point = sdf.abs(point);
-    const delta = sdf.sub(abs_point, sdf.splat(half_extent));
+    const delta = abs_point.sub(sdf.splat(half_extent));
     const outside = sdf.max(delta, sdf.splat(0.0));
-    if (sdf.magnitudeSquared(outside) > 1e-8) {
+    if (outside.scalarProduct(outside) > 1e-8) {
         return sdf.normalized(sdf.vec3(
             signedUnit(sdf.x(point)) * sdf.x(outside),
             signedUnit(sdf.y(point)) * sdf.y(outside),

@@ -113,10 +113,10 @@ fn drawNavigatorMarker(canvas: *canvas_api.Canvas, point: [2]f32, tone: u8) void
 }
 
 fn sphericalOverviewFieldRadius(view: anytype, projection_mode: SphericalMapProjection) f32 {
-    const erased_view = curved.erasedView(view);
+    const spherical = nav_geom.sphericalView(view);
     return switch (projection_mode) {
-        .stereographic => erased_view.params.radius * (@as(f32, std.math.pi) * 0.5) * 0.98,
-        .gnomonic => erased_view.params.radius * 1.10,
+        .stereographic => spherical.params.radius * (@as(f32, std.math.pi) * 0.5) * 0.98,
+        .gnomonic => spherical.params.radius * 1.10,
     };
 }
 
@@ -131,11 +131,12 @@ fn drawSphericalMapGeodesic(
     b_chart: curved.Vec3,
     tone: u8,
 ) void {
+    const spherical = nav_geom.sphericalView(view);
     var prev_point: ?[2]f32 = null;
 
     for (0..25) |i| {
         const t = @as(f32, @floatFromInt(i)) / 24.0;
-        const chart = curved.geodesicChartPoint(.spherical, curved.erasedView(view).params, a_chart, b_chart, t) orelse continue;
+        const chart = curved.geodesicChartPoint(.spherical, spherical.params, a_chart, b_chart, t) orelse continue;
         const ambient = nav_geom.signedSphericalAmbient(view, chart) orelse continue;
         const map_point = nav_geom.sphericalMapPoint(map_camera, ambient, projection_mode) orelse {
             prev_point = null;
@@ -159,7 +160,7 @@ fn drawSphericalGroundBoundary(
     field_radius: f32,
     tone: u8,
 ) void {
-    const spherical = curved.erasedView(view).typed(.spherical);
+    const spherical = nav_geom.sphericalView(view);
     var prev_point: ?[2]f32 = null;
 
     for (0..65) |i| {
@@ -200,7 +201,7 @@ fn drawSphericalGroundGridLine(
     field_radius: f32,
     tone: u8,
 ) void {
-    const spherical = curved.erasedView(view).typed(.spherical);
+    const spherical = nav_geom.sphericalView(view);
     var prev_point: ?[2]f32 = null;
 
     for (0..49) |i| {
@@ -290,9 +291,10 @@ fn drawSphericalGroundOverviewPanel(
     }
 
     const eye_point = projectNavigatorPoint(rect, extent, 0.0, 0.0);
+    const spherical = nav_geom.sphericalView(view);
     const heading_ambient = curved.ambientFromTypedTangentBasisPoint(
         .spherical,
-        curved.erasedView(view).typed(.spherical).params,
+        spherical.params,
         map_camera.position,
         map_camera.right,
         map_camera.forward,

@@ -28,34 +28,10 @@ pub fn z(v: Vec3) f32 {
     return coords(v)[2];
 }
 
-pub fn add(a: Vec3, b: Vec3) Vec3 {
-    return a.add(b);
-}
-
-pub fn sub(a: Vec3, b: Vec3) Vec3 {
-    return a.sub(b);
-}
-
-pub fn scale(v: Vec3, factor: f32) Vec3 {
-    return v.scale(factor);
-}
-
-pub fn dot(a: Vec3, b: Vec3) f32 {
-    return a.scalarProduct(b);
-}
-
-pub fn magnitudeSquared(v: Vec3) f32 {
-    return dot(v, v);
-}
-
-pub fn magnitude(v: Vec3) f32 {
-    return v.magnitude();
-}
-
 pub fn normalized(v: Vec3) Vec3 {
-    const length = magnitude(v);
+    const length = v.magnitude();
     if (length <= 1e-6) return vec3(0.0, 0.0, 1.0);
-    return scale(v, 1.0 / length);
+    return v.scale(1.0 / length);
 }
 
 pub fn abs(v: Vec3) Vec3 {
@@ -93,7 +69,7 @@ pub const Ray = struct {
     direction: Vec3,
 
     pub fn at(self: Ray, distance: f32) Vec3 {
-        return add(self.origin, scale(self.direction, distance));
+        return self.origin.add(self.direction.scale(distance));
     }
 };
 
@@ -119,12 +95,12 @@ pub const MarchOptions = struct {
 };
 
 pub fn sphere(point: Vec3, radius: f32) f32 {
-    return magnitude(point) - radius;
+    return point.magnitude() - radius;
 }
 
 pub fn box(point: Vec3, half_extent: Vec3) f32 {
-    const q = sub(abs(point), half_extent);
-    const outside = magnitude(max(q, splat(0.0)));
+    const q = abs(point).sub(half_extent);
+    const outside = max(q, splat(0.0)).magnitude();
     const inside = @min(maxComponent(q), 0.0);
     return outside + inside;
 }
@@ -135,7 +111,7 @@ pub fn torus(point: Vec3, major_radius: f32, minor_radius: f32) f32 {
 }
 
 pub fn plane(point: Vec3, unit_normal: Vec3, offset: f32) f32 {
-    return dot(point, unit_normal) + offset;
+    return point.scalarProduct(unit_normal) + offset;
 }
 
 pub fn opUnion(a: Sample, b: Sample) Sample {
@@ -170,18 +146,18 @@ pub fn rotate2(v: [2]f32, angle: f32) [2]f32 {
 pub fn estimateNormal(scene_fn: anytype, point: Vec3, epsilon: f32) Vec3 {
     const e = epsilon;
     const center = scene_fn(point).distance;
-    const nx = center - scene_fn(sub(point, vec3(e, 0.0, 0.0))).distance;
-    const ny = center - scene_fn(sub(point, vec3(0.0, e, 0.0))).distance;
-    const nz = center - scene_fn(sub(point, vec3(0.0, 0.0, e))).distance;
+    const nx = center - scene_fn(point.sub(vec3(e, 0.0, 0.0))).distance;
+    const ny = center - scene_fn(point.sub(vec3(0.0, e, 0.0))).distance;
+    const nz = center - scene_fn(point.sub(vec3(0.0, 0.0, e))).distance;
     return normalized(vec3(nx, ny, nz));
 }
 
 pub fn estimateNormalWith(scene_fn: anytype, ctx: anytype, point: Vec3, epsilon: f32) Vec3 {
     const e = epsilon;
     const center = scene_fn(ctx, point).distance;
-    const nx = center - scene_fn(ctx, sub(point, vec3(e, 0.0, 0.0))).distance;
-    const ny = center - scene_fn(ctx, sub(point, vec3(0.0, e, 0.0))).distance;
-    const nz = center - scene_fn(ctx, sub(point, vec3(0.0, 0.0, e))).distance;
+    const nx = center - scene_fn(ctx, point.sub(vec3(e, 0.0, 0.0))).distance;
+    const ny = center - scene_fn(ctx, point.sub(vec3(0.0, e, 0.0))).distance;
+    const nz = center - scene_fn(ctx, point.sub(vec3(0.0, 0.0, e))).distance;
     return normalized(vec3(nx, ny, nz));
 }
 
