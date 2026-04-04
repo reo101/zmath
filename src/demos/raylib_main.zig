@@ -310,7 +310,6 @@ fn applyCapturePreset(app: *demo.App, preset: []const u8) !void {
         app.camera.euclid_eye_y = 0.0;
         app.camera.euclid_eye_z = -59.213104;
         app.camera.spherical = .{
-            .metric = .spherical,
             .params = .{
                 .radius = 1.480000,
                 .angular_zoom = 1.000000,
@@ -319,10 +318,10 @@ fn applyCapturePreset(app: *demo.App, preset: []const u8) !void {
             .projection = .stereographic,
             .clip = .{ .near = 0.080000, .far = std.math.inf(f32) },
             .camera = .{
-                .position = .{ -0.768220, -0.231342, 0.000000, 0.596922 },
-                .right = .{ -0.222363, 0.944205, -0.229501, 0.079760 },
-                .up = .{ 0.047435, 0.231729, 0.959841, 0.150856 },
-                .forward = .{ -0.598448, -0.035495, 0.161355, -0.783942 },
+                .position = Round.fromCoords(.{ -0.768220, -0.231342, 0.000000, 0.596922 }),
+                .right = Round.fromCoords(.{ -0.222363, 0.944205, -0.229501, 0.079760 }),
+                .up = Round.fromCoords(.{ 0.047435, 0.231729, 0.959841, 0.150856 }),
+                .forward = Round.fromCoords(.{ -0.598448, -0.035495, 0.161355, -0.783942 }),
             },
             .scene_sign = 1.0,
         };
@@ -346,7 +345,6 @@ fn applyCapturePreset(app: *demo.App, preset: []const u8) !void {
         app.camera.euclid_eye_y = 0.0;
         app.camera.euclid_eye_z = 35.366875;
         app.camera.spherical = .{
-            .metric = .spherical,
             .params = .{
                 .radius = 1.480000,
                 .angular_zoom = 1.000000,
@@ -355,10 +353,10 @@ fn applyCapturePreset(app: *demo.App, preset: []const u8) !void {
             .projection = .stereographic,
             .clip = .{ .near = 0.080000, .far = std.math.inf(f32) },
             .camera = .{
-                .position = .{ -0.979191, -0.012116, 0.000000, 0.202571 },
-                .right = .{ -0.019152, 0.999278, 0.000000, -0.032809 },
-                .up = .{ 0.093292, 0.016627, 0.886995, 0.451952 },
-                .forward = .{ -0.179197, -0.031937, 0.461779, -0.868118 },
+                .position = Round.fromCoords(.{ -0.979191, -0.012116, 0.000000, 0.202571 }),
+                .right = Round.fromCoords(.{ -0.019152, 0.999278, 0.000000, -0.032809 }),
+                .up = Round.fromCoords(.{ 0.093292, 0.016627, 0.886995, 0.451952 }),
+                .forward = Round.fromCoords(.{ -0.179197, -0.031937, 0.461779, -0.868118 }),
             },
             .scene_sign = 1.0,
         };
@@ -1232,24 +1230,19 @@ fn sampleSphericalLocalPoint(
     };
 }
 
-fn walkEyeHeight(view: curved.View) f32 {
-    return switch (view.metric) {
+fn walkEyeHeight(view: anytype) f32 {
+    const erased_view = curved.erasedView(view);
+    return switch (erased_view.metric) {
         .hyperbolic => view.params.radius * hyperbolic_walk_eye_height_scale,
         .elliptic => 0.14,
         .spherical => view.params.radius * spherical_walk_eye_height_scale,
     };
 }
 
-fn liftedWalkView(view: curved.View) curved.View {
+fn liftedWalkView(view: anytype) @TypeOf(view) {
     const surface_up = view.walkSurfaceUp() orelse return view;
     var lifted = view;
-    curved.moveAlongDirection(
-        &lifted.camera,
-        view.metric,
-        view.params,
-        surface_up,
-        walkEyeHeight(view),
-    );
+    lifted.moveAlong(surface_up, walkEyeHeight(view));
     return lifted;
 }
 
@@ -2428,8 +2421,8 @@ fn rasterizeSphericalNativeOverlay(app: *const demo.App, pixels: []rl.Color, dep
         const ground_basis = curved_ground.worldGroundBasis();
         const ground_far_start = benchStart();
         rasterizeSphericalGroundPatchOverlay(
-            spherical.view,
-            render_view,
+            curved.erasedView(spherical.view),
+            curved.erasedView(render_view),
             .{ .spherical = .far },
             ground_basis,
             spherical.screen,
@@ -2439,8 +2432,8 @@ fn rasterizeSphericalNativeOverlay(app: *const demo.App, pixels: []rl.Color, dep
         benchAdd(.spherical_ground, ground_far_start);
         const ground_near_start = benchStart();
         rasterizeSphericalGroundPatchOverlay(
-            spherical.view,
-            render_view,
+            curved.erasedView(spherical.view),
+            curved.erasedView(render_view),
             .{ .spherical = .near },
             ground_basis,
             spherical.screen,
@@ -2453,8 +2446,8 @@ fn rasterizeSphericalNativeOverlay(app: *const demo.App, pixels: []rl.Color, dep
     if (spherical.view.projection != .wrapped) {
         const far_start = benchStart();
         drawSphericalLocalGeometry(
-            render_view,
-            render_view.sphericalRenderPass(.far),
+            curved.erasedView(render_view),
+            curved.erasedView(render_view.sphericalRenderPass(.far)),
             .{ .spherical = .far },
             spherical.screen,
             spherical.local_vertices[0..],
@@ -2466,8 +2459,8 @@ fn rasterizeSphericalNativeOverlay(app: *const demo.App, pixels: []rl.Color, dep
 
         const near_start = benchStart();
         drawSphericalLocalGeometry(
-            render_view,
-            render_view.sphericalRenderPass(.near),
+            curved.erasedView(render_view),
+            curved.erasedView(render_view.sphericalRenderPass(.near)),
             .{ .spherical = .near },
             spherical.screen,
             spherical.local_vertices[0..],
@@ -2479,8 +2472,8 @@ fn rasterizeSphericalNativeOverlay(app: *const demo.App, pixels: []rl.Color, dep
     } else {
         const geom_start = benchStart();
         drawSphericalLocalGeometry(
-            render_view,
-            render_view,
+            curved.erasedView(render_view),
+            curved.erasedView(render_view),
             .direct,
             spherical.screen,
             spherical.local_vertices[0..],
@@ -2503,12 +2496,12 @@ fn drawNativeCurvedScene(app: *const demo.App, viewport: rl.Rectangle, spherical
                 liftedWalkView(hyper.view)
             else
                 hyper.view;
-            drawCurvedSceneBackdrop(render_view, viewport);
+            drawCurvedSceneBackdrop(curved.erasedView(render_view), viewport);
             if (app.camera.movement_mode == .walk) {
-                const ground_basis = curved_ground.walkGroundBasis(hyper.view, app.camera.euclid_pitch) orelse curved_ground.worldGroundBasis();
+                const ground_basis = curved_ground.walkGroundBasis(curved.erasedView(hyper.view), app.camera.euclid_pitch) orelse curved_ground.worldGroundBasis();
                 drawCurvedGroundPatch(
-                    hyper.view,
-                    render_view,
+                    curved.erasedView(hyper.view),
+                    curved.erasedView(render_view),
                     .direct,
                     ground_basis,
                     hyper.screen,
@@ -2516,8 +2509,8 @@ fn drawNativeCurvedScene(app: *const demo.App, viewport: rl.Rectangle, spherical
                 );
             }
             drawCurvedSceneGeometry(
-                render_view,
-                render_view,
+                curved.erasedView(render_view),
+                curved.erasedView(render_view),
                 .direct,
                 hyper.screen,
                 hyper.chart_vertices[0..],
@@ -2532,14 +2525,14 @@ fn drawNativeCurvedScene(app: *const demo.App, viewport: rl.Rectangle, spherical
             else
                 spherical.view;
             const backdrop_start = benchStart();
-            drawCurvedSceneBackdrop(render_view, viewport);
+            drawCurvedSceneBackdrop(curved.erasedView(render_view), viewport);
             benchAdd(.spherical_backdrop, backdrop_start);
             if (spherical.view.projection == .wrapped) {
                 if (app.camera.movement_mode == .walk) {
                     const ground_start = benchStart();
                     const ground_basis = curved_ground.worldSphericalGroundBasis();
                     drawSphericalGroundFullscreen(
-                        render_view,
+                        curved.erasedView(render_view),
                         ground_basis,
                         spherical.screen,
                         viewport,
@@ -2549,7 +2542,7 @@ fn drawNativeCurvedScene(app: *const demo.App, viewport: rl.Rectangle, spherical
             }
             if (spherical_overlay) |texture| drawCanvasTexture(texture, viewport);
             const navigator_start = benchStart();
-            drawNativeSphericalNavigator(spherical.view, spherical.local_vertices[0..], demo.cube_edges[0..], viewport);
+            drawNativeSphericalNavigator(curved.erasedView(spherical.view), spherical.local_vertices[0..], demo.cube_edges[0..], viewport);
             benchAdd(.navigator, navigator_start);
         },
     }

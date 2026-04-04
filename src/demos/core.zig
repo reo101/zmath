@@ -5,6 +5,8 @@ const curved_canvas_renderer = zmath.render.curved_canvas;
 const curved_navigator_renderer = zmath.render.curved_navigator;
 const projection = zmath.render.projection;
 const curved = zmath.geometry.constant_curvature;
+const HyperAmbient = curved.AmbientFor(.hyperbolic);
+const RoundAmbient = curved.AmbientFor(.spherical);
 
 const Euclid3 = zmath.ga.Algebra(zmath.ga.euclideanSignature(3));
 const h = Euclid3.Instantiate(f32);
@@ -166,22 +168,20 @@ pub const CameraState = struct {
     euclid_eye_y: f32 = 0.0,
     euclid_eye_z: f32 = -10.5,
     movement_mode: MovementMode,
-    hyper: curved.View,
-    spherical: curved.View,
+    hyper: curved.HyperView,
+    spherical: curved.SphericalView,
 
     fn init() !CameraState {
         return .{
             .movement_mode = .walk,
-            .hyper = try curved.View.init(
-                .hyperbolic,
+            .hyper = try curved.HyperView.init(
                 default_hyperbolic_params,
                 .gnomonic,
                 .{ .near = hyperbolic_near_distance, .far = hyperbolic_far_distance },
                 curved.vec3(0.0, 0.0, -default_hyperbolic_params.radius * 0.78),
                 curved.vec3(0.0, 0.0, 0.0),
             ),
-            .spherical = try curved.View.init(
-                .spherical,
+            .spherical = try curved.SphericalView.init(
                 default_spherical_params,
                 .stereographic,
                 .{ .near = spherical_near_distance, .far = spherical_far_distance },
@@ -488,13 +488,13 @@ pub const EuclideanScene = struct {
 };
 
 pub const HyperbolicScene = struct {
-    view: curved.View,
+    view: curved.HyperView,
     screen: curved.Screen,
     chart_vertices: [10]h.Vector,
 };
 
 pub const SphericalScene = struct {
-    view: curved.View,
+    view: curved.SphericalView,
     screen: curved.Screen,
     local_vertices: [unit_cube_vertices.len]h.Vector,
     chart_vertices: [unit_cube_vertices.len]h.Vector,
@@ -545,11 +545,12 @@ fn debugPrintVec4(name: []const u8, v: curved.Vec4) void {
     std.debug.print("{s}=.{{ {d:.6}, {d:.6}, {d:.6}, {d:.6} }}\n", .{ name, v[0], v[1], v[2], v[3] });
 }
 
-fn dumpCurvedViewState(label: []const u8, view: curved.View) void {
-    const eye_chart = curved.chartCoords(view.metric, view.params, view.camera.position);
-    var look_probe = view.camera;
-    curved.moveForward(&look_probe, view.metric, view.params, @min(view.params.radius * 0.18, 0.18));
-    const look_chart = curved.chartCoords(view.metric, view.params, look_probe.position);
+fn dumpCurvedViewState(label: []const u8, view: anytype) void {
+    const erased_view = curved.erasedView(view);
+    const eye_chart = curved.chartCoords(erased_view.metric, erased_view.params, erased_view.camera.position);
+    var look_probe = erased_view.camera;
+    curved.moveForward(&look_probe, erased_view.metric, erased_view.params, @min(erased_view.params.radius * 0.18, 0.18));
+    const look_chart = curved.chartCoords(erased_view.metric, erased_view.params, look_probe.position);
 
     std.debug.print(
         \\{s}.metric={s}
@@ -562,29 +563,29 @@ fn dumpCurvedViewState(label: []const u8, view: curved.View) void {
     ,
         .{
             label,
-            @tagName(view.metric),
+            @tagName(erased_view.metric),
             label,
-            @tagName(view.projection),
+            @tagName(erased_view.projection),
             label,
-            @tagName(view.params.chart_model),
+            @tagName(erased_view.params.chart_model),
             label,
-            view.scene_sign,
+            erased_view.scene_sign,
             label,
-            view.clip.near,
-            view.clip.far,
+            erased_view.clip.near,
+            erased_view.clip.far,
             label,
-            view.params.radius,
-            view.params.angular_zoom,
+            erased_view.params.radius,
+            erased_view.params.angular_zoom,
         },
     );
     debugPrintVec3("eye_chart", eye_chart);
     debugPrintVec3("look_chart", look_chart);
-    debugPrintVec4("camera.position", view.camera.position);
-    debugPrintVec4("camera.right", view.camera.right);
-    debugPrintVec4("camera.up", view.camera.up);
-    debugPrintVec4("camera.forward", view.camera.forward);
+    debugPrintVec4("camera.position", erased_view.camera.position);
+    debugPrintVec4("camera.right", erased_view.camera.right);
+    debugPrintVec4("camera.up", erased_view.camera.up);
+    debugPrintVec4("camera.forward", erased_view.camera.forward);
 
-    if (view.walkOrientation()) |walk| {
+    if (erased_view.walkOrientation()) |walk| {
         std.debug.print(
             "{s}.walk=.{{ .x_heading = {d:.6}, .z_heading = {d:.6}, .pitch = {d:.6} }}\n",
             .{ label, walk.x_heading, walk.z_heading, walk.pitch },
@@ -786,12 +787,20 @@ fn currentCurvedProjectionLabel(mode: DemoMode, camera: CameraState) []const u8 
 }
 
 const WalkDirections = struct {
-    forward: curved.Vec4,
-    right: curved.Vec4,
+    forward: HyperAmbient.Vector,
+    right: HyperAmbient.Vector,
 };
 
-fn curvedWalkDirections(view: curved.View, x_heading: f32, z_heading: f32, pitch_angle: f32) WalkDirections {
-    if (view.metric == .spherical) {
+fn WalkDirectionsFor(comptime ViewType: type) type {
+    return struct {
+        forward: @FieldType(@FieldType(ViewType, "camera"), "forward"),
+        right: @FieldType(@FieldType(ViewType, "camera"), "right"),
+    };
+}
+
+fn curvedWalkDirections(view: anytype, x_heading: f32, z_heading: f32, pitch_angle: f32) WalkDirectionsFor(@TypeOf(view)) {
+    const erased_view = curved.erasedView(view);
+    if (erased_view.metric == .spherical) {
         if (view.walkSurfaceBasis(pitch_angle)) |basis| {
             return .{
                 .forward = basis.forward,
@@ -923,13 +932,14 @@ fn chooseSphericalAngleState(current_rotation: f32, current_pitch: f32, candidat
     return if (direct_error <= antipodal_error) direct else antipodal;
 }
 
-fn syncEuclidFromView(camera: *CameraState, view: curved.View) void {
-    const orientation = view.walkOrientation() orelse return;
+fn syncEuclidFromView(camera: *CameraState, view: anytype) void {
+    const erased_view = curved.erasedView(view);
+    const orientation = erased_view.walkOrientation() orelse return;
     const candidate = ViewAngleState{
         .rotation = std.math.atan2(orientation.x_heading, orientation.z_heading),
         .pitch = orientation.pitch,
     };
-    const chosen = if (view.metric == .spherical)
+    const chosen = if (erased_view.metric == .spherical)
         chooseSphericalAngleState(camera.euclid_rotation, camera.euclid_pitch, candidate)
     else
         ViewAngleState{
@@ -1147,7 +1157,7 @@ fn adjustCurvature(camera: *CameraState, mode: DemoMode, more_curved: bool) Curv
     switch (mode) {
         .hyperbolic => {
             const previous_radius = camera.hyper.params.radius;
-            const eye_chart = curved.chartCoords(.hyperbolic, camera.hyper.params, camera.hyper.camera.position);
+            const eye_chart = curved.chartCoords(.hyperbolic, camera.hyper.params, curved.erasedView(camera.hyper).camera.position);
             const lower = hyperbolicRadiusFloor(eye_chart);
             const upper = @max(lower, hyperbolic_radius_max);
             const unclamped_radius = previous_radius * scale;
@@ -1209,7 +1219,7 @@ fn drawCurvedEdges(
     canvas: *canvas_api.Canvas,
     chart_vertices: []const h.Vector,
     edges: []const [2]usize,
-    view: curved.View,
+    view: anytype,
     screen: curved.Screen,
 ) void {
     for (edges) |edge| {
@@ -1346,8 +1356,7 @@ test "spherical walk backward movement evolves smoothly across chart wrap" {
 
     // Camera should have moved far enough across the sphere
     const final_pos = camera.spherical.camera.position;
-    const pos_dot = initial_pos[0] * final_pos[0] + initial_pos[1] * final_pos[1] +
-        initial_pos[2] * final_pos[2] + initial_pos[3] * final_pos[3];
+    const pos_dot = RoundAmbient.dot(initial_pos, final_pos);
     try std.testing.expect(@abs(pos_dot) < 0.99);
 }
 
@@ -1360,7 +1369,6 @@ test "spherical backward walk step keeps position continuous in locked walk mode
     camera.euclid_eye_y = 0.0;
     camera.euclid_eye_z = 179.205610;
     camera.spherical = .{
-        .metric = .spherical,
         .params = .{
             .radius = 1.480000,
             .angular_zoom = 1.000000,
@@ -1369,10 +1377,10 @@ test "spherical backward walk step keeps position continuous in locked walk mode
         .projection = .stereographic,
         .clip = .{ .near = 0.080000, .far = std.math.inf(f32) },
         .camera = .{
-            .position = .{ 0.027459, -0.064229, 0.013690, 0.997459 },
-            .right = .{ 0.075515, -0.994948, -0.000000, -0.066146 },
-            .up = .{ -0.011556, 0.000014, 0.999843, -0.013404 },
-            .forward = .{ 0.996700, 0.077152, 0.011215, -0.022624 },
+            .position = RoundAmbient.fromCoords(.{ 0.027459, -0.064229, 0.013690, 0.997459 }),
+            .right = RoundAmbient.fromCoords(.{ 0.075515, -0.994948, -0.000000, -0.066146 }),
+            .up = RoundAmbient.fromCoords(.{ -0.011556, 0.000014, 0.999843, -0.013404 }),
+            .forward = RoundAmbient.fromCoords(.{ 0.996700, 0.077152, 0.011215, -0.022624 }),
         },
         .scene_sign = 1.0,
     };
@@ -1381,10 +1389,7 @@ test "spherical backward walk step keeps position continuous in locked walk mode
     adjustCameraTranslation(&camera, .spherical, 's');
     const after_position = camera.spherical.camera.position;
 
-    const position_dot = before_position[0] * after_position[0] +
-        before_position[1] * after_position[1] +
-        before_position[2] * after_position[2] +
-        before_position[3] * after_position[3];
+    const position_dot = RoundAmbient.dot(before_position, after_position);
 
     try std.testing.expect(position_dot > 0.95);
     try std.testing.expectEqual(@as(f32, 1.0), camera.spherical.scene_sign);
@@ -1401,14 +1406,8 @@ test "spherical locked walk backward-forward steps stay reversible" {
         adjustCameraTranslation(&camera, .spherical, 'w');
 
         const after = camera.spherical.camera;
-        const position_dot = before.position[0] * after.position[0] +
-            before.position[1] * after.position[1] +
-            before.position[2] * after.position[2] +
-            before.position[3] * after.position[3];
-        const forward_dot = before.forward[0] * after.forward[0] +
-            before.forward[1] * after.forward[1] +
-            before.forward[2] * after.forward[2] +
-            before.forward[3] * after.forward[3];
+        const position_dot = RoundAmbient.dot(before.position, after.position);
+        const forward_dot = RoundAmbient.dot(before.forward, after.forward);
 
         try std.testing.expect(position_dot > 0.999);
         try std.testing.expect(forward_dot > 0.999);
@@ -1442,10 +1441,7 @@ test "spherical walk surface normal does not change with pitch at fixed position
     syncWalkOrientation(&camera);
     const up_up = camera.spherical.walkSurfaceUp().?;
 
-    const up_dot = down_up[0] * up_up[0] +
-        down_up[1] * up_up[1] +
-        down_up[2] * up_up[2] +
-        down_up[3] * up_up[3];
+    const up_dot = RoundAmbient.dot(down_up, up_up);
     try std.testing.expect(up_dot > 0.999);
 }
 
@@ -1458,7 +1454,6 @@ test "spherical backward walk does not oscillate between two positions" {
     camera.euclid_eye_y = 0.0;
     camera.euclid_eye_z = -176.578800;
     camera.spherical = .{
-        .metric = .spherical,
         .params = .{
             .radius = 0.740000,
             .angular_zoom = 1.000000,
@@ -1467,19 +1462,19 @@ test "spherical backward walk does not oscillate between two positions" {
         .projection = .stereographic,
         .clip = .{ .near = 0.080000, .far = std.math.inf(f32) },
         .camera = .{
-            .position = .{ 0.372664, -0.325853, 0.000000, -0.868872 },
-            .right = .{ 0.719299, -0.490129, -0.000000, 0.492324 },
-            .up = .{ -0.011725, -0.016168, 0.999800, 0.001035 },
-            .forward = .{ -0.586168, -0.808289, -0.019999, 0.051722 },
+            .position = RoundAmbient.fromCoords(.{ 0.372664, -0.325853, 0.000000, -0.868872 }),
+            .right = RoundAmbient.fromCoords(.{ 0.719299, -0.490129, -0.000000, 0.492324 }),
+            .up = RoundAmbient.fromCoords(.{ -0.011725, -0.016168, 0.999800, 0.001035 }),
+            .forward = RoundAmbient.fromCoords(.{ -0.586168, -0.808289, -0.019999, 0.051722 }),
         },
         .scene_sign = 1.0,
     };
 
     var prev2_position: ?curved.Vec4 = null;
-    var prev_position = camera.spherical.camera.position;
+    var prev_position = RoundAmbient.toCoords(camera.spherical.camera.position);
     for (0..40) |_| {
         adjustCameraTranslation(&camera, .spherical, 's');
-        const position = camera.spherical.camera.position;
+        const position = RoundAmbient.toCoords(camera.spherical.camera.position);
         if (prev2_position) |prev2| {
             const two_step_dot = prev2[0] * position[0] +
                 prev2[1] * position[1] +
@@ -1501,7 +1496,6 @@ test "spherical walk look controls keep the local camera branch continuous" {
     camera.euclid_eye_y = 0.0;
     camera.euclid_eye_z = -41.803680;
     camera.spherical = .{
-        .metric = .spherical,
         .params = .{
             .radius = 1.480000,
             .angular_zoom = 1.000000,
@@ -1510,10 +1504,10 @@ test "spherical walk look controls keep the local camera branch continuous" {
         .projection = .stereographic,
         .clip = .{ .near = 0.080000, .far = std.math.inf(f32) },
         .camera = .{
-            .position = .{ -0.956042, -0.096576, 0.000000, -0.276854 },
-            .right = .{ 0.006139, 0.937401, 0.000000, -0.348198 },
-            .up = .{ -0.052483, 0.059903, 0.983843, 0.160342 },
-            .forward = .{ 0.288416, -0.329187, 0.179031, -0.881135 },
+            .position = RoundAmbient.fromCoords(.{ -0.956042, -0.096576, 0.000000, -0.276854 }),
+            .right = RoundAmbient.fromCoords(.{ 0.006139, 0.937401, 0.000000, -0.348198 }),
+            .up = RoundAmbient.fromCoords(.{ -0.052483, 0.059903, 0.983843, 0.160342 }),
+            .forward = RoundAmbient.fromCoords(.{ 0.288416, -0.329187, 0.179031, -0.881135 }),
         },
         .scene_sign = 1.0,
     };
@@ -1525,18 +1519,9 @@ test "spherical walk look controls keep the local camera branch continuous" {
     const yawed = camera.spherical.camera;
     const yawed_up = camera.spherical.walkSurfaceUp().?;
     const yawed_orientation = camera.spherical.walkOrientation().?;
-    const yaw_position_dot = before.position[0] * yawed.position[0] +
-        before.position[1] * yawed.position[1] +
-        before.position[2] * yawed.position[2] +
-        before.position[3] * yawed.position[3];
-    const yaw_forward_dot = before.forward[0] * yawed.forward[0] +
-        before.forward[1] * yawed.forward[1] +
-        before.forward[2] * yawed.forward[2] +
-        before.forward[3] * yawed.forward[3];
-    const yaw_up_dot = before_up[0] * yawed_up[0] +
-        before_up[1] * yawed_up[1] +
-        before_up[2] * yawed_up[2] +
-        before_up[3] * yawed_up[3];
+    const yaw_position_dot = RoundAmbient.dot(before.position, yawed.position);
+    const yaw_forward_dot = RoundAmbient.dot(before.forward, yawed.forward);
+    const yaw_up_dot = RoundAmbient.dot(before_up, yawed_up);
     try std.testing.expect(yaw_position_dot > 0.999);
     try std.testing.expect(yaw_forward_dot > 0.99);
     try std.testing.expect(yaw_up_dot > 0.999);
@@ -1551,18 +1536,9 @@ test "spherical walk look controls keep the local camera branch continuous" {
     const pitched = camera.spherical.camera;
     const pitched_up = camera.spherical.walkSurfaceUp().?;
     const pitched_orientation = camera.spherical.walkOrientation().?;
-    const pitch_position_dot = before.position[0] * pitched.position[0] +
-        before.position[1] * pitched.position[1] +
-        before.position[2] * pitched.position[2] +
-        before.position[3] * pitched.position[3];
-    const pitch_forward_dot = before.forward[0] * pitched.forward[0] +
-        before.forward[1] * pitched.forward[1] +
-        before.forward[2] * pitched.forward[2] +
-        before.forward[3] * pitched.forward[3];
-    const pitch_up_dot = before_pitch_up[0] * pitched_up[0] +
-        before_pitch_up[1] * pitched_up[1] +
-        before_pitch_up[2] * pitched_up[2] +
-        before_pitch_up[3] * pitched_up[3];
+    const pitch_position_dot = RoundAmbient.dot(before.position, pitched.position);
+    const pitch_forward_dot = RoundAmbient.dot(before.forward, pitched.forward);
+    const pitch_up_dot = RoundAmbient.dot(before_pitch_up, pitched_up);
     try std.testing.expect(pitch_position_dot > 0.999);
     try std.testing.expect(pitch_forward_dot > 0.99);
     try std.testing.expect(pitch_up_dot > 0.999);
