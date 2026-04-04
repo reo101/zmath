@@ -3,5 +3,6 @@ pub const curved_canvas = @import("render/curved_canvas.zig");
 pub const curved_ground = @import("render/curved_ground.zig");
 pub const curved_navigator = @import("render/curved_navigator.zig");
 pub const curved_navigator_geometry = @import("render/curved_navigator_geometry.zig");
+pub const curved_projection = @import("render/curved_projection.zig");
 pub const projection = @import("render/projection.zig");
 pub const sdf = @import("render/sdf.zig");

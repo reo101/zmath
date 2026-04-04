@@ -1,5 +1,6 @@
 const std = @import("std");
 const projection = @import("../render/projection.zig");
+const curved_projection = @import("../render/curved_projection.zig");
 const curved_ambient = @import("curved_ambient.zig");
 const hpga = @import("../flavours/hpga.zig");
 const epga = @import("../flavours/epga.zig");
@@ -11,11 +12,6 @@ pub const ChartModel = enum {
     conformal,
 };
 
-pub const CameraModel = enum {
-    linear,
-    conformal,
-};
-
 pub const Params = struct {
     // Constant-curvature radius `R`.
     // Hyperbolic curvature is `-1 / R^2`; elliptic/spherical curvature is `+1 / R^2`.
@@ -24,16 +20,9 @@ pub const Params = struct {
     chart_model: ChartModel = .projective,
 };
 
-pub const DistanceClip = struct {
-    near: f32 = 0.0,
-    far: f32 = std.math.inf(f32),
-};
-
-pub const Screen = struct {
-    width: usize,
-    height: usize,
-    zoom: f32,
-};
+pub const CameraModel = curved_projection.CameraModel;
+pub const DistanceClip = curved_projection.DistanceClip;
+pub const Screen = curved_projection.Screen;
 
 pub const Camera = struct {
     position: Vec4,
@@ -60,14 +49,8 @@ const HeadingBasis = struct {
     up: Vec4,
 };
 
-pub const Sample = struct {
-    distance: f32,
-    x_dir: f32,
-    y_dir: f32,
-    z_dir: f32,
-};
-
-pub const SampleStatus = enum { hidden, visible, clipped_near, clipped_far };
+pub const Sample = curved_projection.Sample;
+pub const SampleStatus = curved_projection.SampleStatus;
 
 const RelativeCoords = struct {
     w: f32,
@@ -76,12 +59,7 @@ const RelativeCoords = struct {
     z: f32,
 };
 
-pub const ProjectedSample = struct {
-    distance: f32 = 0.0,
-    render_depth: f32 = 0.0,
-    projected: ?[2]f32 = null,
-    status: SampleStatus = .hidden,
-};
+pub const ProjectedSample = curved_projection.ProjectedSample;
 
 pub const CameraError = error{
     InvalidChartPoint,
@@ -92,6 +70,12 @@ const Flat3 = curved_ambient.Flat3;
 
 pub const Vec3 = Flat3.Vector;
 pub const Vec4 = [4]f32;
+pub const projectSample = curved_projection.projectSample;
+pub const shouldBreakProjectedSegment = curved_projection.shouldBreakProjectedSegment;
+
+const projectConformalModelPoint = curved_projection.projectConformalModelPoint;
+const sampleStatus = curved_projection.sampleStatus;
+const shouldBreakProjectionSegment = curved_projection.shouldBreakProjectionSegment;
 
 pub fn AmbientFor(comptime metric: Metric) type {
     return switch (metric) {
@@ -1815,21 +1799,6 @@ pub fn sampleProjectedModelPoint(
     };
 }
 
-fn projectConformalModelPoint(
-    model_point: Vec3,
-    canvas_width: usize,
-    canvas_height: usize,
-    zoom: f32,
-) ?[2]f32 {
-    const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
-    const x = (vec3x(model_point) * zoom / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) * 0.5);
-    const y = (1.0 - vec3y(model_point) * zoom) * (@as(f32, @floatFromInt(canvas_height)) * 0.5);
-    const limit = @as(f32, @floatFromInt(@max(canvas_width, canvas_height))) * 4.0;
-    if (x < -limit or x > @as(f32, @floatFromInt(canvas_width)) + limit) return null;
-    if (y < -limit or y > @as(f32, @floatFromInt(canvas_height)) + limit) return null;
-    return .{ x, y };
-}
-
 fn reorthonormalize(metric: Metric, camera: *Camera) void {
     camera.forward = orthonormalCandidate(metric, camera.position, camera.forward, &.{}) orelse camera.forward;
     camera.right = orthonormalCandidate(metric, camera.position, camera.right, &.{camera.forward}) orelse camera.right;
@@ -2060,63 +2029,6 @@ pub fn modelPointForCamera(
 ) ?Vec3 {
     const ambient = embedPoint(metric, params, chart) orelse return null;
     return modelPointForAmbient(metric, camera, ambient, model);
-}
-
-pub fn projectSample(
-    projection_mode: projection.DirectionProjection,
-    point_sample: Sample,
-    canvas_width: usize,
-    canvas_height: usize,
-    zoom: f32,
-) ?[2]f32 {
-    return projection.projectDirectionWith(
-        projection_mode,
-        point_sample.x_dir,
-        point_sample.y_dir,
-        point_sample.z_dir,
-        canvas_width,
-        canvas_height,
-        zoom,
-    );
-}
-
-fn sampleStatus(distance: f32, clip: DistanceClip, projected: ?[2]f32) SampleStatus {
-    if (projected == null) return .hidden;
-    if (distance < clip.near) return .clipped_near;
-    if (distance > clip.far) return .clipped_far;
-    return .visible;
-}
-
-fn crossesProjectionWrap(a: [2]f32, b: [2]f32, width: usize) bool {
-    return @abs(a[0] - b[0]) > @as(f32, @floatFromInt(width)) * 0.45;
-}
-
-fn crossesProjectedJump(a: [2]f32, b: [2]f32, width: usize, height: usize) bool {
-    const threshold = @as(f32, @floatFromInt(@max(width, height))) * 0.14;
-    return @abs(a[0] - b[0]) > threshold or @abs(a[1] - b[1]) > threshold;
-}
-
-fn shouldBreakProjectionSegment(
-    projection_mode: projection.DirectionProjection,
-    a: [2]f32,
-    b: [2]f32,
-    width: usize,
-    height: usize,
-) bool {
-    return switch (projection_mode) {
-        .wrapped => crossesProjectionWrap(a, b, width) or crossesProjectedJump(a, b, width, height),
-        .gnomonic, .stereographic, .orthographic => crossesProjectedJump(a, b, width, height),
-    };
-}
-
-pub fn shouldBreakProjectedSegment(
-    projection_mode: projection.DirectionProjection,
-    a: [2]f32,
-    b: [2]f32,
-    width: usize,
-    height: usize,
-) bool {
-    return shouldBreakProjectionSegment(projection_mode, a, b, width, height);
 }
 
 fn edgeHasProjectionBreak(view: View, a_chart: Vec3, b_chart: Vec3, screen: Screen, steps: usize) bool {

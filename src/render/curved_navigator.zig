@@ -3,6 +3,7 @@ const canvas_api = @import("canvas.zig");
 const curved = @import("../geometry/constant_curvature.zig");
 const curved_canvas = @import("curved_canvas.zig");
 const nav_geom = @import("curved_navigator_geometry.zig");
+const Round = curved.AmbientFor(.spherical);
 
 const NavigatorAxes = struct {
     horizontal: usize,
@@ -124,7 +125,7 @@ fn drawSphericalMapGeodesic(
     rect: NavigatorRect,
     extent: f32,
     view: curved.View,
-    map_camera: curved.Camera,
+    map_camera: nav_geom.SphericalCamera,
     projection_mode: SphericalMapProjection,
     a_chart: curved.Vec3,
     b_chart: curved.Vec3,
@@ -153,7 +154,7 @@ fn drawSphericalGroundBoundary(
     rect: NavigatorRect,
     extent: f32,
     view: curved.View,
-    map_camera: curved.Camera,
+    map_camera: nav_geom.SphericalCamera,
     projection_mode: SphericalMapProjection,
     field_radius: f32,
     tone: u8,
@@ -168,13 +169,13 @@ fn drawSphericalGroundBoundary(
         const ambient = curved.ambientFromTangentBasisPoint(
             .spherical,
             view.params,
-            map_camera.position,
-            map_camera.right,
-            map_camera.forward,
+            Round.toCoords(map_camera.position),
+            Round.toCoords(map_camera.right),
+            Round.toCoords(map_camera.forward),
             lateral,
             forward,
         ) orelse continue;
-        const map_point = nav_geom.sphericalMapPoint(map_camera, ambient, projection_mode) orelse {
+        const map_point = nav_geom.sphericalMapPoint(map_camera, Round.fromCoords(ambient), projection_mode) orelse {
             prev_point = null;
             continue;
         };
@@ -191,7 +192,7 @@ fn drawSphericalGroundGridLine(
     rect: NavigatorRect,
     extent: f32,
     view: curved.View,
-    map_camera: curved.Camera,
+    map_camera: nav_geom.SphericalCamera,
     projection_mode: SphericalMapProjection,
     fixed_is_lateral: bool,
     fixed: f32,
@@ -208,16 +209,16 @@ fn drawSphericalGroundGridLine(
         const ambient = curved.ambientFromTangentBasisPoint(
             .spherical,
             view.params,
-            map_camera.position,
-            map_camera.right,
-            map_camera.forward,
+            Round.toCoords(map_camera.position),
+            Round.toCoords(map_camera.right),
+            Round.toCoords(map_camera.forward),
             lateral,
             forward,
         ) orelse {
             prev_point = null;
             continue;
         };
-        const map_point = nav_geom.sphericalMapPoint(map_camera, ambient, projection_mode) orelse {
+        const map_point = nav_geom.sphericalMapPoint(map_camera, Round.fromCoords(ambient), projection_mode) orelse {
             prev_point = null;
             continue;
         };
@@ -231,7 +232,7 @@ fn drawSphericalGroundGridLine(
 
 fn sphericalGroundMapExtent(
     view: curved.View,
-    map_camera: curved.Camera,
+    map_camera: nav_geom.SphericalCamera,
     chart_vertices: []const curved.Vec3,
     projection_mode: SphericalMapProjection,
     field_radius: f32,
@@ -254,7 +255,7 @@ fn drawSphericalGroundOverviewPanel(
     extent: f32,
     view: curved.View,
     mesh: curved_canvas.Mesh,
-    map_camera: curved.Camera,
+    map_camera: nav_geom.SphericalCamera,
     projection_mode: SphericalMapProjection,
     field_radius: f32,
 ) void {
@@ -290,13 +291,13 @@ fn drawSphericalGroundOverviewPanel(
     const heading_ambient = curved.ambientFromTangentBasisPoint(
         .spherical,
         view.params,
-        map_camera.position,
-        map_camera.right,
-        map_camera.forward,
+        Round.toCoords(map_camera.position),
+        Round.toCoords(map_camera.right),
+        Round.toCoords(map_camera.forward),
         0.0,
         field_radius * 0.18,
     ) orelse return;
-    const look_map = nav_geom.sphericalMapPoint(map_camera, heading_ambient, projection_mode) orelse return;
+    const look_map = nav_geom.sphericalMapPoint(map_camera, Round.fromCoords(heading_ambient), projection_mode) orelse return;
     const look_point = projectNavigatorPoint(rect, extent, look_map[0], look_map[1]);
     canvas.drawLine(eye_point[0], eye_point[1], look_point[0], look_point[1], '#', 253);
     drawNavigatorMarker(canvas, look_point, 253);
