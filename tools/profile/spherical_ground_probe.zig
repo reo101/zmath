@@ -3,6 +3,8 @@ const zmath = @import("zmath");
 const demo = @import("demo_core");
 
 const curved = zmath.geometry.constant_curvature;
+const Round = curved.AmbientFor(.spherical);
+const SphericalView = curved.SphericalView;
 
 const screen_width: usize = 160;
 const screen_height: usize = 90;
@@ -11,9 +13,9 @@ const spherical_ground_angular_steps: usize = 24;
 const spherical_ground_subdivide_depth: usize = 1;
 
 const GroundBasis = struct {
-    origin: curved.Vec4,
-    right: curved.Vec4,
-    forward: curved.Vec4,
+    origin: Round.Vector,
+    right: Round.Vector,
+    forward: Round.Vector,
 };
 
 const GroundExtents = struct {
@@ -42,7 +44,6 @@ fn configureReferenceState(app: *demo.App) void {
     app.camera.euclid_eye_y = 0.0;
     app.camera.euclid_eye_z = -41.803680;
     app.camera.spherical = .{
-        .metric = .spherical,
         .params = .{
             .radius = 1.480000,
             .angular_zoom = 1.000000,
@@ -51,41 +52,31 @@ fn configureReferenceState(app: *demo.App) void {
         .projection = .stereographic,
         .clip = .{ .near = 0.080000, .far = std.math.inf(f32) },
         .camera = .{
-            .position = .{ -0.956042, -0.096576, 0.000000, -0.276854 },
-            .right = .{ 0.006139, 0.937401, 0.000000, -0.348198 },
-            .up = .{ -0.052483, 0.059903, 0.983843, 0.160342 },
-            .forward = .{ 0.288416, -0.329187, 0.179031, -0.881135 },
+            .position = Round.fromCoords(.{ -0.956042, -0.096576, 0.000000, -0.276854 }),
+            .right = Round.fromCoords(.{ 0.006139, 0.937401, 0.000000, -0.348198 }),
+            .up = Round.fromCoords(.{ -0.052483, 0.059903, 0.983843, 0.160342 }),
+            .forward = Round.fromCoords(.{ 0.288416, -0.329187, 0.179031, -0.881135 }),
         },
         .scene_sign = 1.0,
     };
 }
 
-fn walkEyeHeight(view: curved.View) f32 {
-    return switch (view.metric) {
-        .hyperbolic => view.params.radius * 0.28,
-        .elliptic => 0.14,
-        .spherical => view.params.radius * 0.035,
-    };
+fn walkEyeHeight(view: SphericalView) f32 {
+    return view.params.radius * 0.035;
 }
 
-fn liftedWalkView(view: curved.View, pitch_angle: f32) curved.View {
-    const surface_up = view.walkSurfaceUp(pitch_angle) orelse return view;
+fn liftedWalkView(view: SphericalView, _: f32) SphericalView {
+    const surface_up = view.walkSurfaceUp() orelse return view;
     var lifted = view;
-    curved.moveAlongDirection(
-        &lifted.camera,
-        view.metric,
-        view.params,
-        surface_up,
-        walkEyeHeight(view),
-    );
+    lifted.moveAlong(surface_up, walkEyeHeight(view));
     return lifted;
 }
 
 fn worldGroundBasis() GroundBasis {
     return .{
-        .origin = .{ 1.0, 0.0, 0.0, 0.0 },
-        .right = .{ 0.0, 1.0, 0.0, 0.0 },
-        .forward = .{ 0.0, 0.0, 0.0, 1.0 },
+        .origin = Round.fromCoords(.{ 1.0, 0.0, 0.0, 0.0 }),
+        .right = Round.fromCoords(.{ 0.0, 1.0, 0.0, 0.0 }),
+        .forward = Round.fromCoords(.{ 0.0, 0.0, 0.0, 1.0 }),
     };
 }
 
@@ -94,14 +85,14 @@ fn sphericalGroundBasisForPass(pass: curved.SphericalRenderPass) GroundBasis {
     return switch (pass) {
         .near => basis,
         .far => .{
-            .origin = .{ -basis.origin[0], -basis.origin[1], -basis.origin[2], -basis.origin[3] },
+            .origin = Round.scale(basis.origin, -1.0),
             .right = basis.right,
             .forward = basis.forward,
         },
     };
 }
 
-fn groundExtents(view: curved.View) GroundExtents {
+fn groundExtents(view: SphericalView) GroundExtents {
     return .{
         .lateral = sphericalGroundTangentRadius(view.params),
         .backward = sphericalGroundTangentRadius(view.params),
@@ -113,7 +104,7 @@ fn sphericalGroundTangentRadius(params: curved.Params) f32 {
     return params.radius * (@as(f32, std.math.pi) * 0.5) * 0.98;
 }
 
-fn groundPointAllowed(view: curved.View, lateral: f32, forward_distance: f32) bool {
+fn groundPointAllowed(view: SphericalView, lateral: f32, forward_distance: f32) bool {
     const max_radius = sphericalGroundTangentRadius(view.params);
     return lateral * lateral + forward_distance * forward_distance <= max_radius * max_radius;
 }
@@ -123,7 +114,7 @@ fn sampleVisible(sample: curved.ProjectedSample) bool {
 }
 
 fn groundCellBroken(
-    render_view: curved.View,
+    render_view: SphericalView,
     p00: [2]f32,
     p10: [2]f32,
     p11: [2]f32,
@@ -138,16 +129,16 @@ fn groundCellBroken(
 }
 
 fn sampleGround(
-    world_view: curved.View,
-    render_view: curved.View,
+    world_view: SphericalView,
+    render_view: SphericalView,
     pass: curved.SphericalRenderPass,
     basis: GroundBasis,
     lateral: f32,
     forward_distance: f32,
 ) curved.ProjectedSample {
     if (!groundPointAllowed(world_view, lateral, forward_distance)) return .{};
-    const ambient = curved.ambientFromTangentBasisPoint(
-        world_view.metric,
+    const ambient = curved.ambientFromTypedTangentBasisPoint(
+        .spherical,
         world_view.params,
         basis.origin,
         basis.right,
@@ -164,8 +155,8 @@ fn sampleGround(
 }
 
 fn recursivePieceCount(
-    world_view: curved.View,
-    render_view: curved.View,
+    world_view: SphericalView,
+    render_view: SphericalView,
     pass: curved.SphericalRenderPass,
     basis: GroundBasis,
     r0: f32,
@@ -244,8 +235,8 @@ fn polarPoint(radius: f32, theta: f32) struct { lateral: f32, forward: f32 } {
 }
 
 fn analyzePass(
-    world_view: curved.View,
-    render_view: curved.View,
+    world_view: SphericalView,
+    render_view: SphericalView,
     pass: curved.SphericalRenderPass,
     writer: anytype,
 ) !void {
@@ -322,9 +313,9 @@ pub fn main(init: std.process.Init) !void {
     try stdout.print(
         "eye_chart=({d:.6},{d:.6},{d:.6})\n",
         .{
-            curved.chartCoords(world_view.metric, world_view.params, world_view.camera.position)[0],
-            curved.chartCoords(world_view.metric, world_view.params, world_view.camera.position)[1],
-            curved.chartCoords(world_view.metric, world_view.params, world_view.camera.position)[2],
+            curved.vec3x(world_view.chartCoords(world_view.camera.position)),
+            curved.vec3y(world_view.chartCoords(world_view.camera.position)),
+            curved.vec3z(world_view.chartCoords(world_view.camera.position)),
         },
     );
     try analyzePass(world_view, render_view, .near, stdout);

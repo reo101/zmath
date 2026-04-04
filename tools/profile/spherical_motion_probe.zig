@@ -3,6 +3,8 @@ const zmath = @import("zmath");
 const demo = @import("demo_core");
 
 const curved = zmath.geometry.constant_curvature;
+const Round = curved.AmbientFor(.spherical);
+const SphericalView = curved.SphericalView;
 
 const screen_width: usize = 160;
 const screen_height: usize = 90;
@@ -22,27 +24,17 @@ const MotionSample = struct {
 };
 
 fn vec3FromVector(v: demo.H.Vector) curved.Vec3 {
-    return .{
-        v.coeffNamed("e1"),
-        v.coeffNamed("e2"),
-        v.coeffNamed("e3"),
-    };
+    return curved.vec3(v.coeffNamed("e1"), v.coeffNamed("e2"), v.coeffNamed("e3"));
 }
 
-fn dot4(a: curved.Vec4, b: curved.Vec4) f32 {
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+fn dot4(a: Round.Vector, b: Round.Vector) f32 {
+    return Round.dot(a, b);
 }
 
-fn liftedWalkView(view: curved.View, pitch_angle: f32) curved.View {
-    const surface_up = view.walkSurfaceUp(pitch_angle) orelse return view;
+fn liftedWalkView(view: SphericalView, _: f32) SphericalView {
+    const surface_up = view.walkSurfaceUp() orelse return view;
     var lifted = view;
-    curved.moveAlongDirection(
-        &lifted.camera,
-        view.metric,
-        view.params,
-        surface_up,
-        view.params.radius * spherical_walk_eye_height_scale,
-    );
+    lifted.moveAlong(surface_up, view.params.radius * spherical_walk_eye_height_scale);
     return lifted;
 }
 
@@ -50,13 +42,13 @@ fn localCubeScale(radius: f32) f32 {
     return radius * spherical_local_cube_radius_fraction;
 }
 
-fn worldGroundAmbient(view: curved.View, lateral: f32, forward_distance: f32) curved.Vec4 {
-    return curved.ambientFromTangentBasisPoint(
-        view.metric,
+fn worldGroundAmbient(view: SphericalView, lateral: f32, forward_distance: f32) Round.Vector {
+    return curved.ambientFromTypedTangentBasisPoint(
+        .spherical,
         view.params,
-        .{ 1.0, 0.0, 0.0, 0.0 },
-        .{ 0.0, 1.0, 0.0, 0.0 },
-        .{ 0.0, 0.0, 0.0, 1.0 },
+        Round.fromCoords(.{ 1.0, 0.0, 0.0, 0.0 }),
+        Round.fromCoords(.{ 0.0, 1.0, 0.0, 0.0 }),
+        Round.fromCoords(.{ 0.0, 0.0, 0.0, 1.0 }),
         lateral,
         forward_distance,
     ) orelse unreachable;
@@ -76,7 +68,7 @@ fn fmtProjected(projected: ?[2]f32) [32]u8 {
     return buf;
 }
 
-fn sampleAmbient(view: curved.View, ambient: curved.Vec4) MotionSample {
+fn sampleAmbient(view: SphericalView, ambient: Round.Vector) MotionSample {
     const screen = curved.Screen{
         .width = screen_width,
         .height = screen_height,
@@ -91,7 +83,7 @@ fn sampleAmbient(view: curved.View, ambient: curved.Vec4) MotionSample {
     };
 }
 
-fn sampleMainRender(view: curved.View, ambient: curved.Vec4) MotionSample {
+fn sampleMainRender(view: SphericalView, ambient: Round.Vector) MotionSample {
     const screen = curved.Screen{
         .width = screen_width,
         .height = screen_height,
@@ -106,27 +98,32 @@ fn sampleMainRender(view: curved.View, ambient: curved.Vec4) MotionSample {
     };
 }
 
-fn projectConformalFlat(view: curved.View, ambient: curved.Vec4) ?[2]f32 {
+fn projectConformalFlat(view: SphericalView, ambient: Round.Vector) ?[2]f32 {
     const selected = view.sphericalSelectedPassForAmbient(ambient) orelse return null;
-    const far_camera = curved.Camera{
-        .position = .{ -view.camera.position[0], -view.camera.position[1], -view.camera.position[2], -view.camera.position[3] },
+    const far_camera = curved.TypedCamera(.spherical){
+        .position = Round.scale(view.camera.position, -1.0),
         .right = view.camera.right,
         .up = view.camera.up,
-        .forward = .{ -view.camera.forward[0], -view.camera.forward[1], -view.camera.forward[2], -view.camera.forward[3] },
+        .forward = Round.scale(view.camera.forward, -1.0),
     };
     const camera = switch (selected) {
-        .near => view.camera,
+        .near => curved.TypedCamera(.spherical){
+            .position = view.camera.position,
+            .right = view.camera.right,
+            .up = view.camera.up,
+            .forward = view.camera.forward,
+        },
         .far => far_camera,
     };
-    const model = curved.modelPointForAmbientWithCamera(.spherical, camera, ambient, .conformal) orelse return null;
+    const model = curved.modelPointForTypedAmbientWithCamera(.spherical, camera, ambient, .conformal) orelse return null;
     const aspect = @as(f32, @floatFromInt(screen_width)) / @as(f32, @floatFromInt(screen_height * 2));
     return .{
-        (model[0] / aspect + 1.0) * (@as(f32, @floatFromInt(screen_width)) * 0.5),
-        (1.0 - model[1]) * (@as(f32, @floatFromInt(screen_height)) * 0.5),
+        (curved.vec3x(model) / aspect + 1.0) * (@as(f32, @floatFromInt(screen_width)) * 0.5),
+        (1.0 - curved.vec3y(model)) * (@as(f32, @floatFromInt(screen_height)) * 0.5),
     };
 }
 
-fn projectConformalFlatGroundHeight(view: curved.View, local: curved.Vec3) ?[2]f32 {
+fn projectConformalFlatGroundHeight(view: SphericalView, local: curved.Vec3) ?[2]f32 {
     const ambient = curved.sphericalAmbientFromGroundHeightPoint(view.params, local);
     return projectConformalFlat(view, ambient);
 }
@@ -139,7 +136,7 @@ const FaceStats = struct {
     visible: usize,
 };
 
-fn faceStats(view: curved.View, points: []const curved.Vec3) ?FaceStats {
+fn faceStats(view: SphericalView, points: []const curved.Vec3) ?FaceStats {
     var result: ?FaceStats = null;
     for (points) |local| {
         const ambient = demo.sphericalDemoAmbientPoint(view.params, local);
@@ -166,7 +163,7 @@ fn faceStats(view: curved.View, points: []const curved.Vec3) ?FaceStats {
     return result;
 }
 
-fn faceStatsConformalFlat(view: curved.View, points: []const curved.Vec3) ?FaceStats {
+fn faceStatsConformalFlat(view: SphericalView, points: []const curved.Vec3) ?FaceStats {
     var result: ?FaceStats = null;
     for (points) |local| {
         const ambient = demo.sphericalDemoAmbientPoint(view.params, local);
@@ -191,7 +188,7 @@ fn faceStatsConformalFlat(view: curved.View, points: []const curved.Vec3) ?FaceS
     return result;
 }
 
-fn faceStatsConformalFlatGroundHeight(view: curved.View, points: []const curved.Vec3) ?FaceStats {
+fn faceStatsConformalFlatGroundHeight(view: SphericalView, points: []const curved.Vec3) ?FaceStats {
     var result: ?FaceStats = null;
     for (points) |local| {
         const projected = projectConformalFlatGroundHeight(view, local) orelse continue;
@@ -215,24 +212,24 @@ fn faceStatsConformalFlatGroundHeight(view: curved.View, points: []const curved.
     return result;
 }
 
-fn printFaceStats(writer: anytype, label: []const u8, view: curved.View, scale: f32) !void {
+fn printFaceStats(writer: anytype, label: []const u8, view: SphericalView, scale: f32) !void {
     const top = [_]curved.Vec3{
-        .{ scale, scale * 2.0, scale },
-        .{ scale, scale * 2.0, -scale },
-        .{ -scale, scale * 2.0, scale },
-        .{ -scale, scale * 2.0, -scale },
+        curved.vec3(scale, scale * 2.0, scale),
+        curved.vec3(scale, scale * 2.0, -scale),
+        curved.vec3(-scale, scale * 2.0, scale),
+        curved.vec3(-scale, scale * 2.0, -scale),
     };
     const front = [_]curved.Vec3{
-        .{ scale, scale, scale },
-        .{ scale, scale * 2.0, scale },
-        .{ -scale, scale, scale },
-        .{ -scale, scale * 2.0, scale },
+        curved.vec3(scale, scale, scale),
+        curved.vec3(scale, scale * 2.0, scale),
+        curved.vec3(-scale, scale, scale),
+        curved.vec3(-scale, scale * 2.0, scale),
     };
     const right = [_]curved.Vec3{
-        .{ -scale, scale, scale },
-        .{ -scale, scale * 2.0, scale },
-        .{ -scale, scale, -scale },
-        .{ -scale, scale * 2.0, -scale },
+        curved.vec3(-scale, scale, scale),
+        curved.vec3(-scale, scale * 2.0, scale),
+        curved.vec3(-scale, scale, -scale),
+        curved.vec3(-scale, scale * 2.0, -scale),
     };
 
     try writer.print("\n== {s} ==\n", .{label});
@@ -261,24 +258,24 @@ fn printFaceStats(writer: anytype, label: []const u8, view: curved.View, scale: 
     }
 }
 
-fn printAltFaceStats(writer: anytype, label: []const u8, view: curved.View, scale: f32) !void {
+fn printAltFaceStats(writer: anytype, label: []const u8, view: SphericalView, scale: f32) !void {
     const top = [_]curved.Vec3{
-        .{ scale, scale * 2.0, scale },
-        .{ scale, scale * 2.0, -scale },
-        .{ -scale, scale * 2.0, scale },
-        .{ -scale, scale * 2.0, -scale },
+        curved.vec3(scale, scale * 2.0, scale),
+        curved.vec3(scale, scale * 2.0, -scale),
+        curved.vec3(-scale, scale * 2.0, scale),
+        curved.vec3(-scale, scale * 2.0, -scale),
     };
     const front = [_]curved.Vec3{
-        .{ scale, scale, scale },
-        .{ scale, scale * 2.0, scale },
-        .{ -scale, scale, scale },
-        .{ -scale, scale * 2.0, scale },
+        curved.vec3(scale, scale, scale),
+        curved.vec3(scale, scale * 2.0, scale),
+        curved.vec3(-scale, scale, scale),
+        curved.vec3(-scale, scale * 2.0, scale),
     };
     const right = [_]curved.Vec3{
-        .{ -scale, scale, scale },
-        .{ -scale, scale * 2.0, scale },
-        .{ -scale, scale, -scale },
-        .{ -scale, scale * 2.0, -scale },
+        curved.vec3(-scale, scale, scale),
+        curved.vec3(-scale, scale * 2.0, scale),
+        curved.vec3(-scale, scale, -scale),
+        curved.vec3(-scale, scale * 2.0, -scale),
     };
 
     try writer.print("\n== {s} ==\n", .{label});
@@ -307,24 +304,24 @@ fn printAltFaceStats(writer: anytype, label: []const u8, view: curved.View, scal
     }
 }
 
-fn printGroundHeightFaceStats(writer: anytype, label: []const u8, view: curved.View, scale: f32) !void {
+fn printGroundHeightFaceStats(writer: anytype, label: []const u8, view: SphericalView, scale: f32) !void {
     const top = [_]curved.Vec3{
-        .{ scale, scale * 2.0, scale },
-        .{ scale, scale * 2.0, -scale },
-        .{ -scale, scale * 2.0, scale },
-        .{ -scale, scale * 2.0, -scale },
+        curved.vec3(scale, scale * 2.0, scale),
+        curved.vec3(scale, scale * 2.0, -scale),
+        curved.vec3(-scale, scale * 2.0, scale),
+        curved.vec3(-scale, scale * 2.0, -scale),
     };
     const front = [_]curved.Vec3{
-        .{ scale, scale, scale },
-        .{ scale, scale * 2.0, scale },
-        .{ -scale, scale, scale },
-        .{ -scale, scale * 2.0, scale },
+        curved.vec3(scale, scale, scale),
+        curved.vec3(scale, scale * 2.0, scale),
+        curved.vec3(-scale, scale, scale),
+        curved.vec3(-scale, scale * 2.0, scale),
     };
     const right = [_]curved.Vec3{
-        .{ -scale, scale, scale },
-        .{ -scale, scale * 2.0, scale },
-        .{ -scale, scale, -scale },
-        .{ -scale, scale * 2.0, -scale },
+        curved.vec3(-scale, scale, scale),
+        curved.vec3(-scale, scale * 2.0, scale),
+        curved.vec3(-scale, scale, -scale),
+        curved.vec3(-scale, scale * 2.0, -scale),
     };
 
     try writer.print("\n== {s} ==\n", .{label});
@@ -413,7 +410,6 @@ fn configureReferenceState(app: *demo.App) void {
     app.camera.euclid_eye_y = 0.0;
     app.camera.euclid_eye_z = 8.896189;
     app.camera.spherical = .{
-        .metric = .spherical,
         .params = .{
             .radius = 1.480000,
             .angular_zoom = 1.000000,
@@ -422,16 +418,16 @@ fn configureReferenceState(app: *demo.App) void {
         .projection = .stereographic,
         .clip = .{ .near = 0.080000, .far = std.math.inf(f32) },
         .camera = .{
-            .position = .{ 0.570661, -0.095725, 0.000000, 0.815585 },
-            .right = .{ -0.296451, 0.902192, -0.000000, 0.313315 },
-            .up = .{ -0.682494, -0.374823, 0.453595, 0.433545 },
-            .forward = .{ -0.347367, -0.190773, -0.891208, 0.220660 },
+            .position = Round.fromCoords(.{ 0.570661, -0.095725, 0.000000, 0.815585 }),
+            .right = Round.fromCoords(.{ -0.296451, 0.902192, -0.000000, 0.313315 }),
+            .up = Round.fromCoords(.{ -0.682494, -0.374823, 0.453595, 0.433545 }),
+            .forward = Round.fromCoords(.{ -0.347367, -0.190773, -0.891208, 0.220660 }),
         },
         .scene_sign = 1.0,
     };
 }
 
-fn renderView(app: demo.App) curved.View {
+fn renderView(app: demo.App) SphericalView {
     return if (app.camera.movement_mode == .walk)
         liftedWalkView(app.camera.spherical, app.camera.euclid_pitch)
     else
@@ -441,8 +437,8 @@ fn renderView(app: demo.App) curved.View {
 fn printProbeSet(
     writer: anytype,
     title: []const u8,
-    before_view: curved.View,
-    after_view: curved.View,
+    before_view: SphericalView,
+    after_view: SphericalView,
     cube_points: []const ProbePoint,
     ground_points: []const ProbePoint,
 ) !void {
@@ -465,8 +461,8 @@ fn printProbeSet(
         );
     }
     for (ground_points) |point| {
-        const before_ambient = worldGroundAmbient(before_view, point.local[0], point.local[2]);
-        const after_ambient = worldGroundAmbient(after_view, point.local[0], point.local[2]);
+        const before_ambient = worldGroundAmbient(before_view, curved.vec3x(point.local), curved.vec3z(point.local));
+        const after_ambient = worldGroundAmbient(after_view, curved.vec3x(point.local), curved.vec3z(point.local));
         try printPointMotion(
             writer,
             point.name,
@@ -488,27 +484,27 @@ pub fn main(init: std.process.Init) !void {
 
     const scale = localCubeScale(app.camera.spherical.params.radius);
     const cube_points = [_]ProbePoint{
-        .{ .name = "cube_center", .local = .{ 0.0, scale, 0.0 } },
-        .{ .name = "cube_top", .local = .{ 0.0, scale * 2.0, 0.0 } },
-        .{ .name = "cube_front", .local = .{ 0.0, scale, scale } },
-        .{ .name = "cube_back", .local = .{ 0.0, scale, -scale } },
-        .{ .name = "cube_left", .local = .{ scale, scale, 0.0 } },
-        .{ .name = "cube_right", .local = .{ -scale, scale, 0.0 } },
+        .{ .name = "cube_center", .local = curved.vec3(0.0, scale, 0.0) },
+        .{ .name = "cube_top", .local = curved.vec3(0.0, scale * 2.0, 0.0) },
+        .{ .name = "cube_front", .local = curved.vec3(0.0, scale, scale) },
+        .{ .name = "cube_back", .local = curved.vec3(0.0, scale, -scale) },
+        .{ .name = "cube_left", .local = curved.vec3(scale, scale, 0.0) },
+        .{ .name = "cube_right", .local = curved.vec3(-scale, scale, 0.0) },
     };
     const ground_points = [_]ProbePoint{
-        .{ .name = "ground_origin", .local = .{ 0.0, 0.0, 0.0 } },
-        .{ .name = "ground_forward", .local = .{ 0.0, 0.0, scale * 6.0 } },
-        .{ .name = "ground_backward", .local = .{ 0.0, 0.0, -scale * 6.0 } },
-        .{ .name = "ground_right", .local = .{ scale * 6.0, 0.0, 0.0 } },
+        .{ .name = "ground_origin", .local = curved.vec3(0.0, 0.0, 0.0) },
+        .{ .name = "ground_forward", .local = curved.vec3(0.0, 0.0, scale * 6.0) },
+        .{ .name = "ground_backward", .local = curved.vec3(0.0, 0.0, -scale * 6.0) },
+        .{ .name = "ground_right", .local = curved.vec3(scale * 6.0, 0.0, 0.0) },
     };
 
     try stdout.writeAll("# spherical motion probe\n");
     try stdout.print(
         "start eye_chart=({d:.6},{d:.6},{d:.6}) pitch={d:.6} rot={d:.6}\n",
         .{
-            curved.chartCoords(app.camera.spherical.metric, app.camera.spherical.params, app.camera.spherical.camera.position)[0],
-            curved.chartCoords(app.camera.spherical.metric, app.camera.spherical.params, app.camera.spherical.camera.position)[1],
-            curved.chartCoords(app.camera.spherical.metric, app.camera.spherical.params, app.camera.spherical.camera.position)[2],
+            curved.vec3x(app.camera.spherical.chartCoords(app.camera.spherical.camera.position)),
+            curved.vec3y(app.camera.spherical.chartCoords(app.camera.spherical.camera.position)),
+            curved.vec3z(app.camera.spherical.chartCoords(app.camera.spherical.camera.position)),
             app.camera.euclid_pitch,
             app.camera.euclid_rotation,
         },
