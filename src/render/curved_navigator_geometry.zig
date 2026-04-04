@@ -13,8 +13,7 @@ pub const SphericalMapProjection = enum {
 pub fn sphericalView(view: anytype) curved.SphericalView {
     return switch (@TypeOf(view)) {
         curved.SphericalView => view,
-        curved.View => view.typed(.spherical),
-        else => @compileError("expected `SphericalView` or erased curved `View`"),
+        else => @compileError("expected `SphericalView`"),
     };
 }
 

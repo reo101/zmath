@@ -547,11 +547,10 @@ fn debugPrintVec4(name: []const u8, v: [4]f32) void {
 
 fn curvedMetricOf(view: anytype) curved.Metric {
     return switch (@TypeOf(view)) {
-        curved.View => view.metric,
         curved.HyperView => .hyperbolic,
         curved.EllipticView => .elliptic,
         curved.SphericalView => .spherical,
-        else => @compileError("expected curved view"),
+        else => @compileError("expected typed curved view"),
     };
 }
 
@@ -1279,7 +1278,7 @@ fn sphericalCubeChartVertices(local_vertices: [unit_cube_vertices.len]h.Vector, 
     var chart_vertices: [unit_cube_vertices.len]h.Vector = undefined;
     for (local_vertices, 0..) |vertex, i| {
         const ambient = sphericalDemoAmbientPoint(params, vec3FromVector(vertex));
-        chart_vertices[i] = vectorFromVec3(curved.chartCoords(.spherical, params, RoundAmbient.toCoords(ambient)));
+        chart_vertices[i] = vectorFromVec3(curved.chartCoordsTyped(.spherical, params, ambient));
     }
     return chart_vertices;
 }

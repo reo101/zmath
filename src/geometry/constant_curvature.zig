@@ -69,7 +69,7 @@ pub const CameraError = error{
 const Flat3 = curved_ambient.Flat3;
 
 pub const Vec3 = Flat3.Vector;
-pub const Vec4 = [4]f32;
+const Vec4 = [4]f32;
 pub const projectSample = curved_projection.projectSample;
 pub const shouldBreakProjectedSegment = curved_projection.shouldBreakProjectedSegment;
 
@@ -422,7 +422,7 @@ pub const HyperView = TypedView(.hyperbolic);
 pub const EllipticView = TypedView(.elliptic);
 pub const SphericalView = TypedView(.spherical);
 
-pub fn erasedView(view: anytype) View {
+fn erasedView(view: anytype) View {
     const T = @TypeOf(view);
     return if (T == View)
         view
@@ -545,6 +545,14 @@ fn typedChartCoords(
             );
         },
     };
+}
+
+pub fn chartCoordsTyped(
+    comptime metric: Metric,
+    params: Params,
+    ambient: AmbientFor(metric).Vector,
+) Vec3 {
+    return typedChartCoords(metric, params, ambient);
 }
 
 fn typedZero(comptime metric: Metric) AmbientFor(metric).Vector {
@@ -1281,19 +1289,19 @@ fn coordsFromFlatVector(v: Flat3.Vector) Vec3 {
     return v;
 }
 
-pub fn ambientAdd(metric: Metric, a: Vec4, b: Vec4) Vec4 {
+fn ambientAdd(metric: Metric, a: Vec4, b: Vec4) Vec4 {
     return add4(metric, a, b);
 }
 
-pub fn ambientSub(metric: Metric, a: Vec4, b: Vec4) Vec4 {
+fn ambientSub(metric: Metric, a: Vec4, b: Vec4) Vec4 {
     return sub4(metric, a, b);
 }
 
-pub fn ambientScale(metric: Metric, v: Vec4, s: f32) Vec4 {
+fn ambientScale(metric: Metric, v: Vec4, s: f32) Vec4 {
     return scale4(metric, v, s);
 }
 
-pub fn ambientDot(metric: Metric, a: Vec4, b: Vec4) f32 {
+fn ambientDot(metric: Metric, a: Vec4, b: Vec4) f32 {
     return metricDot(metric, a, b);
 }
 
@@ -1752,7 +1760,7 @@ fn orthonormalCandidate(metric: Metric, position: Vec4, candidate: Vec4, refs: [
 // https://arxiv.org/abs/1310.2713
 // and Gunn, "Geometry in the Hyperbolic Plane and Beyond"
 // https://arxiv.org/pdf/1602.08562
-pub fn embedPoint(metric: Metric, params: Params, chart_input: anytype) ?Vec4 {
+fn embedPoint(metric: Metric, params: Params, chart_input: anytype) ?Vec4 {
     return switch (metric) {
         inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
             typedEmbedPoint(metric_tag, params, chart_input) orelse return null,
@@ -1760,7 +1768,7 @@ pub fn embedPoint(metric: Metric, params: Params, chart_input: anytype) ?Vec4 {
     };
 }
 
-pub fn chartCoords(metric: Metric, params: Params, ambient: Vec4) Vec3 {
+fn chartCoords(metric: Metric, params: Params, ambient: Vec4) Vec3 {
     return switch (metric) {
         inline else => |metric_tag| typedChartCoords(
             metric_tag,
@@ -1930,7 +1938,7 @@ fn reorthonormalize(metric: Metric, camera: *Camera) void {
     camera.up = orthonormalCandidate(metric, camera.position, camera.up, &.{ camera.forward, camera.right }) orelse camera.up;
 }
 
-pub fn initCamera(metric: Metric, params: Params, eye_chart_input: anytype, target_chart_input: anytype) CameraError!Camera {
+fn initCamera(metric: Metric, params: Params, eye_chart_input: anytype, target_chart_input: anytype) CameraError!Camera {
     return switch (metric) {
         inline else => |metric_tag| typedCameraToErased(
             metric_tag,
@@ -1949,7 +1957,7 @@ fn rotatePair(metric: Metric, camera: *Camera, first: *Vec4, second: *Vec4, angl
     reorthonormalize(metric, camera);
 }
 
-pub fn yaw(camera: *Camera, metric: Metric, angle: f32) void {
+fn yaw(camera: *Camera, metric: Metric, angle: f32) void {
     switch (metric) {
         inline else => |metric_tag| {
             var typed_camera = typedCameraFromErased(metric_tag, camera.*);
@@ -1959,7 +1967,7 @@ pub fn yaw(camera: *Camera, metric: Metric, angle: f32) void {
     }
 }
 
-pub fn pitch(camera: *Camera, metric: Metric, angle: f32) void {
+fn pitch(camera: *Camera, metric: Metric, angle: f32) void {
     switch (metric) {
         inline else => |metric_tag| {
             var typed_camera = typedCameraFromErased(metric_tag, camera.*);
@@ -1976,7 +1984,7 @@ pub fn pitch(camera: *Camera, metric: Metric, angle: f32) void {
 // References:
 // https://arxiv.org/abs/1310.2713
 // https://arxiv.org/pdf/1602.08562
-pub fn moveAlongDirection(camera: *Camera, metric: Metric, params: Params, direction: Vec4, distance: f32) void {
+fn moveAlongDirection(camera: *Camera, metric: Metric, params: Params, direction: Vec4, distance: f32) void {
     switch (metric) {
         inline else => |metric_tag| {
             var typed_camera = typedCameraFromErased(metric_tag, camera.*);
@@ -1992,11 +2000,11 @@ pub fn moveAlongDirection(camera: *Camera, metric: Metric, params: Params, direc
     }
 }
 
-pub fn moveForward(camera: *Camera, metric: Metric, params: Params, distance: f32) void {
+fn moveForward(camera: *Camera, metric: Metric, params: Params, distance: f32) void {
     moveAlongDirection(camera, metric, params, camera.forward, distance);
 }
 
-pub fn moveRight(camera: *Camera, metric: Metric, params: Params, distance: f32) void {
+fn moveRight(camera: *Camera, metric: Metric, params: Params, distance: f32) void {
     moveAlongDirection(camera, metric, params, camera.right, distance);
 }
 
@@ -2018,7 +2026,7 @@ fn headingBasis(metric: Metric, camera: Camera) ?HeadingBasis {
     };
 }
 
-pub fn worldHeadingDirection(metric: Metric, camera: Camera, x_heading: f32, z_heading: f32) ?Vec4 {
+fn worldHeadingDirection(metric: Metric, camera: Camera, x_heading: f32, z_heading: f32) ?Vec4 {
     return switch (metric) {
         inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
             typedWorldHeadingDirection(metric_tag, typedCameraFromErased(metric_tag, camera), x_heading, z_heading) orelse return null,
