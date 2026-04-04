@@ -306,10 +306,14 @@ pub fn TypedView(comptime metric: Metric) type {
 
         pub fn sceneAmbientPoint(self: Self, chart: anytype) ?Ambient.Vector {
             const ambient = typedEmbedPoint(metric, self.params, chart) orelse return null;
+            return self.signedAmbient(ambient);
+        }
+
+        pub fn signedAmbient(self: Self, ambient_input: Ambient.Vector) Ambient.Vector {
             return if (metric == .spherical and self.scene_sign < 0.0)
-                Ambient.scale(ambient, -1.0)
+                Ambient.scale(ambient_input, -1.0)
             else
-                ambient;
+                ambient_input;
         }
 
         pub fn sampleProjectedPoint(self: Self, chart: anytype, screen: Screen) ProjectedSample {
@@ -317,12 +321,17 @@ pub fn TypedView(comptime metric: Metric) type {
             return typedSampleProjectedAmbientPoint(metric, self, ambient, screen);
         }
 
+        pub fn sampleAmbient(self: Self, ambient_input: Ambient.Vector) ?Sample {
+            return typedSampleAmbientPoint(metric, self.params, self.camera, self.signedAmbient(ambient_input));
+        }
+
+        pub fn samplePoint(self: Self, chart: anytype) ?Sample {
+            const ambient = self.sceneAmbientPoint(chart) orelse return null;
+            return typedSampleAmbientPoint(metric, self.params, self.camera, ambient);
+        }
+
         pub fn sampleProjectedAmbient(self: Self, ambient_input: Ambient.Vector, screen: Screen) ProjectedSample {
-            var ambient = ambient_input;
-            if (metric == .spherical and self.scene_sign < 0.0) {
-                ambient = Ambient.scale(ambient, -1.0);
-            }
-            return typedSampleProjectedAmbientPoint(metric, self, ambient, screen);
+            return typedSampleProjectedAmbientPoint(metric, self, self.signedAmbient(ambient_input), screen);
         }
 
         pub fn sampleProjectedPointForSphericalPass(self: Self, pass: SphericalRenderPass, chart: anytype, screen: Screen) ProjectedSample {
@@ -339,11 +348,7 @@ pub fn TypedView(comptime metric: Metric) type {
             std.debug.assert(metric == .spherical);
             std.debug.assert(sphericalUsesMultipass(self.projection));
 
-            var ambient = ambient_input;
-            if (self.scene_sign < 0.0) {
-                ambient = Ambient.scale(ambient, -1.0);
-            }
-            return typedSampleProjectedAmbientPointForPass(metric, self, pass, ambient, screen);
+            return typedSampleProjectedAmbientPointForPass(metric, self, pass, self.signedAmbient(ambient_input), screen);
         }
 
         pub fn sampleProjectedAmbientForSphericalPassRaw(
@@ -355,22 +360,14 @@ pub fn TypedView(comptime metric: Metric) type {
             std.debug.assert(metric == .spherical);
             std.debug.assert(sphericalUsesMultipass(self.projection));
 
-            var ambient = ambient_input;
-            if (self.scene_sign < 0.0) {
-                ambient = Ambient.scale(ambient, -1.0);
-            }
-            return typedSampleProjectedAmbientPointForPassRaw(metric, self, pass, ambient, screen);
+            return typedSampleProjectedAmbientPointForPassRaw(metric, self, pass, self.signedAmbient(ambient_input), screen);
         }
 
         pub fn sphericalSelectedPassForAmbient(self: Self, ambient_input: Ambient.Vector) ?SphericalRenderPass {
             std.debug.assert(metric == .spherical);
             std.debug.assert(sphericalUsesMultipass(self.projection));
 
-            var ambient = ambient_input;
-            if (self.scene_sign < 0.0) {
-                ambient = Ambient.scale(ambient, -1.0);
-            }
-            return (typedSphericalPassSelection(metric, self, ambient) orelse return null).pass;
+            return (typedSphericalPassSelection(metric, self, self.signedAmbient(ambient_input)) orelse return null).pass;
         }
 
         pub fn sphericalRenderPass(self: Self, pass: SphericalRenderPass) Self {
@@ -397,9 +394,26 @@ pub fn TypedView(comptime metric: Metric) type {
             };
         }
 
+        pub fn cameraModelPointForAmbient(self: Self, ambient_input: Ambient.Vector, model: CameraModel) ?Vec3 {
+            return typedModelPointForAmbient(metric, self.camera, self.signedAmbient(ambient_input), model);
+        }
+
         pub fn cameraModelPoint(self: Self, chart: anytype, model: CameraModel) ?Vec3 {
             const ambient = self.sceneAmbientPoint(chart) orelse return null;
-            return typedModelPointForAmbient(metric, self.camera, ambient, model);
+            return self.cameraModelPointForAmbient(ambient, model);
+        }
+
+        pub fn projectPoint(self: Self, chart: Vec3, canvas_width: usize, canvas_height: usize) ?[2]f32 {
+            const sample = self.samplePoint(chart) orelse return null;
+            return projection.projectDirectionWith(
+                self.projection,
+                sample.x_dir,
+                sample.y_dir,
+                sample.z_dir,
+                canvas_width,
+                canvas_height,
+                self.params.angular_zoom,
+            );
         }
     };
 }
@@ -1154,9 +1168,33 @@ pub const View = struct {
         };
     }
 
+    pub fn signedAmbient(self: View, ambient_input: Vec4) Vec4 {
+        return switch (self.metric) {
+            inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
+                self.typed(metric_tag).signedAmbient(
+                    AmbientFor(metric_tag).fromCoords(ambient_input),
+                ),
+            ),
+        };
+    }
+
     pub fn sampleProjectedPoint(self: View, chart: anytype, screen: Screen) ProjectedSample {
         return switch (self.metric) {
             inline else => |metric_tag| self.typed(metric_tag).sampleProjectedPoint(chart, screen),
+        };
+    }
+
+    pub fn sampleAmbient(self: View, ambient_input: Vec4) ?Sample {
+        return switch (self.metric) {
+            inline else => |metric_tag| self.typed(metric_tag).sampleAmbient(
+                AmbientFor(metric_tag).fromCoords(ambient_input),
+            ),
+        };
+    }
+
+    pub fn samplePoint(self: View, chart: anytype) ?Sample {
+        return switch (self.metric) {
+            inline else => |metric_tag| self.typed(metric_tag).samplePoint(chart),
         };
     }
 
@@ -1209,9 +1247,24 @@ pub const View = struct {
         return self.typed(.spherical).mapSphericalRenderDistance(pass, pass_distance);
     }
 
+    pub fn cameraModelPointForAmbient(self: View, ambient_input: Vec4, model: CameraModel) ?Vec3 {
+        return switch (self.metric) {
+            inline else => |metric_tag| self.typed(metric_tag).cameraModelPointForAmbient(
+                AmbientFor(metric_tag).fromCoords(ambient_input),
+                model,
+            ),
+        };
+    }
+
     pub fn cameraModelPoint(self: View, chart: anytype, model: CameraModel) ?Vec3 {
         return switch (self.metric) {
             inline else => |metric_tag| self.typed(metric_tag).cameraModelPoint(chart, model),
+        };
+    }
+
+    pub fn projectPoint(self: View, chart: Vec3, canvas_width: usize, canvas_height: usize) ?[2]f32 {
+        return switch (self.metric) {
+            inline else => |metric_tag| self.typed(metric_tag).projectPoint(chart, canvas_width, canvas_height),
         };
     }
 
@@ -2009,13 +2062,14 @@ pub fn projectPoint(
     canvas_width: usize,
     canvas_height: usize,
 ) ?[2]f32 {
-    const ambient = embedPoint(metric, params, chart) orelse return null;
-    const ray = geodesicDirection(metric, camera.position, ambient) orelse return null;
-
-    const x = metricDot(metric, ray, camera.right);
-    const y = metricDot(metric, ray, camera.up);
-    const z = metricDot(metric, ray, camera.forward);
-    return projection.projectDirectionWith(projection_mode, x, y, z, canvas_width, canvas_height, params.angular_zoom);
+    return (View{
+        .metric = metric,
+        .params = params,
+        .projection = projection_mode,
+        .clip = .{},
+        .camera = camera,
+        .scene_sign = 1.0,
+    }).projectPoint(chart, canvas_width, canvas_height);
 }
 
 fn sampleAmbientPoint(metric: Metric, params: Params, camera: Camera, ambient: Vec4) ?Sample {
@@ -2054,8 +2108,14 @@ fn typedSampleAmbientPoint(
 }
 
 pub fn samplePoint(metric: Metric, params: Params, camera: Camera, chart: anytype) ?Sample {
-    const ambient = embedPoint(metric, params, chart) orelse return null;
-    return sampleAmbientPoint(metric, params, camera, ambient);
+    return (View{
+        .metric = metric,
+        .params = params,
+        .projection = .gnomonic,
+        .clip = .{},
+        .camera = camera,
+        .scene_sign = 1.0,
+    }).samplePoint(chart);
 }
 
 fn modelPointForAmbient(metric: Metric, camera: Camera, ambient: Vec4, model: CameraModel) ?Vec3 {
@@ -2104,8 +2164,14 @@ pub fn modelPointForCamera(
     chart: Vec3,
     model: CameraModel,
 ) ?Vec3 {
-    const ambient = embedPoint(metric, params, chart) orelse return null;
-    return modelPointForAmbient(metric, camera, ambient, model);
+    return (View{
+        .metric = metric,
+        .params = params,
+        .projection = .gnomonic,
+        .clip = .{},
+        .camera = camera,
+        .scene_sign = 1.0,
+    }).cameraModelPoint(chart, model);
 }
 
 fn edgeHasProjectionBreak(view: View, a_chart: Vec3, b_chart: Vec3, screen: Screen, steps: usize) bool {
@@ -2113,7 +2179,7 @@ fn edgeHasProjectionBreak(view: View, a_chart: Vec3, b_chart: Vec3, screen: Scre
 
     for (0..steps + 1) |i| {
         const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(steps));
-        const point = geodesicChartPoint(view.metric, view.params, a_chart, b_chart, t) orelse continue;
+        const point = view.geodesicChartPoint(a_chart, b_chart, t) orelse continue;
         const sample = view.sampleProjectedPoint(point, screen);
         if (sample.status != .visible or sample.projected == null) {
             prev_point = null;
@@ -2592,7 +2658,7 @@ test "spherical stereographic view renders the far hemisphere via antipodal pass
             scale4(.spherical, view.camera.right, 0.18),
         ),
     );
-    const far_chart = chartCoords(.spherical, view.params, far_ambient);
+    const far_chart = view.chartCoords(far_ambient);
 
     const near_sample = view.sphericalRenderPass(.near).sampleProjectedPoint(far_chart, screen);
     try std.testing.expect(near_sample.status != .visible);
@@ -2622,7 +2688,7 @@ test "spherical stereographic near pass uses the conformal camera model" {
         ),
     );
 
-    const model_point = modelPointForAmbientWithCamera(.spherical, view.camera, ambient, .conformal).?;
+    const model_point = view.sphericalRenderPass(.near).cameraModelPointForAmbient(ambient, .conformal).?;
     const expected = projectConformalModelPoint(model_point, screen.width, screen.height, screen.zoom).?;
     const sample = view.sampleProjectedAmbientForSphericalPass(.near, ambient, screen);
 
@@ -2651,8 +2717,7 @@ test "spherical stereographic far pass uses the antipodal conformal camera model
         ),
     );
 
-    const far_camera = antipodalSphericalPassCamera(view.camera);
-    const model_point = modelPointForAmbientWithCamera(.spherical, far_camera, ambient, .conformal).?;
+    const model_point = view.sphericalRenderPass(.far).cameraModelPointForAmbient(ambient, .conformal).?;
     const expected = projectConformalModelPoint(model_point, screen.width, screen.height, screen.zoom).?;
     const sample = view.sampleProjectedAmbientForSphericalPass(.far, ambient, screen);
 
@@ -2681,7 +2746,7 @@ test "spherical full-sphere stereographic sampling does not expose a pass far cl
             scale4(.spherical, view.camera.right, 0.12),
         ),
     );
-    const far_chart = chartCoords(.spherical, view.params, far_ambient);
+    const far_chart = view.chartCoords(far_ambient);
     const sample = view.sampleProjectedPoint(far_chart, screen);
 
     try std.testing.expectEqual(SampleStatus.visible, sample.status);
@@ -3043,7 +3108,7 @@ test "spherical direct ambient sampling respects scene sign after chart wrap" {
     const screen = Screen{ .width = 160, .height = 90, .zoom = 1.0 };
     const local = vec3(0.26, 0.18, 0.31);
     const ambient = sphericalAmbientFromLocalPoint(view.params, local);
-    const chart = chartCoords(.spherical, view.params, ambient);
+    const chart = view.chartCoords(ambient);
 
     var pos_before_wrap = view.camera.position;
     while (1.0 + view.camera.position[0] >= spherical_chart_min_denom) {

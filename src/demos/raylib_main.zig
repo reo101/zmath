@@ -545,6 +545,23 @@ const SphericalRasterCell = struct {
     fill: rl.Color,
 };
 
+fn roundAmbient(v: anytype) Round.Vector {
+    return switch (@TypeOf(v)) {
+        Round.Vector => v,
+        curved.Vec4 => Round.fromCoords(v),
+        else => @compileError("expected spherical ambient coords or round ambient vector"),
+    };
+}
+
+fn sphericalBasisFromErased(basis: GroundBasis) SphericalGroundBasis {
+    return .{
+        .origin = Round.fromCoords(basis.origin),
+        .right = Round.fromCoords(basis.right),
+        .forward = Round.fromCoords(basis.forward),
+        .up = Round.fromCoords(basis.up),
+    };
+}
+
 const ClippedPolygon = struct {
     vertices: [8]demo.H.Vector,
     len: usize,
@@ -937,57 +954,46 @@ fn vec3FromVector(v: demo.H.Vector) curved.Vec3 {
     return curved.vec3(v.coeffNamed("e1"), v.coeffNamed("e2"), v.coeffNamed("e3"));
 }
 
-fn isSphericalGnomonic(view: curved.View) bool {
-    return view.metric == .spherical and view.projection == .gnomonic;
+fn isSphericalGnomonic(view: anytype) bool {
+    const erased_view = curved.erasedView(view);
+    return erased_view.metric == .spherical and erased_view.projection == .gnomonic;
 }
 
-fn sphericalLocalFillSteps(view: curved.View) usize {
-    return if (view.metric != .spherical)
+fn sphericalLocalFillSteps(view: anytype) usize {
+    const erased_view = curved.erasedView(view);
+    return if (erased_view.metric != .spherical)
         native_curved_fill_steps
-    else if (view.projection == .gnomonic)
+    else if (erased_view.projection == .gnomonic)
         5
     else
         4;
 }
 
-fn sphericalLocalEdgeSteps(view: curved.View) usize {
-    return if (view.metric != .spherical)
+fn sphericalLocalEdgeSteps(view: anytype) usize {
+    const erased_view = curved.erasedView(view);
+    return if (erased_view.metric != .spherical)
         native_curved_edge_steps
-    else if (view.projection == .gnomonic)
+    else if (erased_view.projection == .gnomonic)
         20
     else
         16;
 }
 
-fn curvedGroundSteps(view: curved.View) usize {
-    return if (view.metric == .spherical) 8 else native_ground_steps;
+fn curvedGroundSteps(view: anytype) usize {
+    return if (curved.erasedView(view).metric == .spherical) 8 else native_ground_steps;
 }
 
-fn curvedGroundSubdivideDepth(world_view: curved.View, render_view: curved.View) usize {
+fn curvedGroundSubdivideDepth(world_view: anytype, render_view: anytype) usize {
     _ = world_view;
-    return if (render_view.metric == .spherical)
+    return if (curved.erasedView(render_view).metric == .spherical)
         2
     else
         native_ground_subdivide_depth;
 }
 
-fn signedAmbientForView(view: curved.View, ambient_input: curved.Vec4) curved.Vec4 {
-    var ambient = ambient_input;
-    if (view.metric == .spherical and view.scene_sign < 0.0) {
-        ambient = curved.ambientScale(view.metric, ambient, -1.0);
-    }
-    return ambient;
-}
-
 fn sampleAmbientForNativeRender(view: curved.View, ambient_input: curved.Vec4, screen: curved.Screen) curved.ProjectedSample {
-    const ambient = signedAmbientForView(view, ambient_input);
     if (view.metric == .spherical and view.projection == .gnomonic) {
-        const model_point = curved.modelPointForAmbientWithCamera(
-            view.metric,
-            view.camera,
-            ambient,
-            .linear,
-        ) orelse return .{};
+        const model_point = view.cameraModelPointForAmbient(ambient_input, .linear) orelse return .{};
         return curved.sampleProjectedModelPoint(
             view.metric,
             view.projection,
@@ -997,7 +1003,7 @@ fn sampleAmbientForNativeRender(view: curved.View, ambient_input: curved.Vec4, s
             screen,
         );
     }
-    return view.sampleProjectedAmbient(ambient, screen);
+    return view.sampleProjectedAmbient(ambient_input, screen);
 }
 
 fn projectNativeSphericalConformalPoint(model_point: curved.Vec3, screen: curved.Screen) ?[2]f32 {
@@ -1021,20 +1027,14 @@ fn nativeSphericalSampleStatus(distance: f32, clip: curved.DistanceClip, project
 }
 
 fn nativeSphericalConformalSampleForPass(
-    base_view: curved.View,
-    render_view: curved.View,
+    base_view: curved.SphericalView,
+    render_view: curved.SphericalView,
     pass: curved.SphericalRenderPass,
-    ambient_input: curved.Vec4,
+    ambient_input: anytype,
     screen: curved.Screen,
 ) curved.ProjectedSample {
     _ = render_view;
-    const ambient = signedAmbientForView(base_view, ambient_input);
-    const model_point = curved.modelPointForAmbientWithCamera(
-        .spherical,
-        base_view.camera,
-        ambient,
-        .conformal,
-    ) orelse return .{};
+    const model_point = base_view.cameraModelPointForAmbient(roundAmbient(ambient_input), .conformal) orelse return .{};
     const radius2 = curved.vec3x(model_point) * curved.vec3x(model_point) +
         curved.vec3y(model_point) * curved.vec3y(model_point) +
         curved.vec3z(model_point) * curved.vec3z(model_point);
@@ -1062,7 +1062,7 @@ fn nativeSphericalConformalSampleForPass(
 }
 
 fn drawSphericalGroundFullscreen(
-    view: curved.View,
+    view: curved.SphericalView,
     basis: SphericalGroundBasis,
     screen: curved.Screen,
     viewport: rl.Rectangle,
@@ -1109,7 +1109,7 @@ fn drawSphericalGroundFullscreen(
 }
 
 fn rasterizeSphericalGroundFullscreen(
-    view: curved.View,
+    view: curved.SphericalView,
     basis: SphericalGroundBasis,
     screen: curved.Screen,
     pixels: []rl.Color,
@@ -1153,17 +1153,18 @@ fn bilerpCurvedQuad(a: curved.Vec3, b: curved.Vec3, c: curved.Vec3, d: curved.Ve
 }
 
 fn mapSphericalPassSample(
-    base_view: curved.View,
+    base_view: anytype,
     pass: curved.SphericalRenderPass,
     sample_in: curved.ProjectedSample,
 ) curved.ProjectedSample {
+    const erased_view = curved.erasedView(base_view);
     var sample = sample_in;
     if (sample.projected == null or sample.status != .visible) return sample;
 
-    sample.distance = base_view.mapSphericalRenderDistance(pass, sample.distance);
-    sample.status = if (sample.distance < base_view.clip.near)
+    sample.distance = erased_view.mapSphericalRenderDistance(pass, sample.distance);
+    sample.status = if (sample.distance < erased_view.clip.near)
         .clipped_near
-    else if (sample.distance > base_view.clip.far)
+    else if (sample.distance > erased_view.clip.far)
         .clipped_far
     else
         .visible;
@@ -1217,16 +1218,42 @@ fn sampleForCurvedRender(
 }
 
 fn sampleSphericalLocalPoint(
-    base_view: curved.View,
-    render_view: curved.View,
+    base_view: curved.SphericalView,
+    render_view: curved.SphericalView,
     render_pass: CurvedRenderPass,
     local: curved.Vec3,
     screen: curved.Screen,
 ) curved.ProjectedSample {
-    const ambient = demo.sphericalDemoAmbientPoint(base_view.params, local);
+    const ambient = roundAmbient(demo.sphericalDemoAmbientPoint(base_view.params, local));
     return switch (render_pass) {
-        .direct => sampleAmbientForNativeRender(render_view, ambient, screen),
+        .direct => render_view.sampleProjectedAmbient(ambient, screen),
         .spherical => |pass| nativeSphericalConformalSampleForPass(base_view, render_view, pass, ambient, screen),
+    };
+}
+
+fn sphericalGroundSampleForCurvedRender(
+    surface_view: curved.SphericalView,
+    render_view: curved.SphericalView,
+    render_pass: CurvedRenderPass,
+    basis: SphericalGroundBasis,
+    lateral: f32,
+    forward_distance: f32,
+    screen: curved.Screen,
+) curved.ProjectedSample {
+    if (!groundPointAllowed(curved.erasedView(surface_view), lateral, forward_distance)) return .{};
+    const ambient = curved.ambientFromTypedTangentBasisPoint(
+        .spherical,
+        surface_view.params,
+        basis.origin,
+        basis.right,
+        basis.forward,
+        lateral,
+        forward_distance,
+    ) orelse return .{};
+
+    return switch (render_pass) {
+        .direct => render_view.sampleProjectedAmbient(ambient, screen),
+        .spherical => |pass| nativeSphericalConformalSampleForPass(surface_view, render_view, pass, ambient, screen),
     };
 }
 
@@ -1268,7 +1295,13 @@ fn groundSampleForCurvedRender(
 
     return switch (render_pass) {
         .direct => sampleAmbientForNativeRender(render_view, ambient, screen),
-        .spherical => |pass| nativeSphericalConformalSampleForPass(surface_view, render_view, pass, ambient, screen),
+        .spherical => |pass| nativeSphericalConformalSampleForPass(
+            surface_view.typed(.spherical),
+            render_view.typed(.spherical),
+            pass,
+            ambient,
+            screen,
+        ),
     };
 }
 
@@ -1276,9 +1309,10 @@ fn sphericalGroundTangentRadius(params: curved.Params) f32 {
     return params.radius * (@as(f32, std.math.pi) * 0.5) * 0.98;
 }
 
-fn groundPointAllowed(view: curved.View, lateral: f32, forward_distance: f32) bool {
-    if (view.metric != .spherical) return true;
-    const max_radius = sphericalGroundTangentRadius(view.params);
+fn groundPointAllowed(view: anytype, lateral: f32, forward_distance: f32) bool {
+    const erased_view = curved.erasedView(view);
+    if (erased_view.metric != .spherical) return true;
+    const max_radius = sphericalGroundTangentRadius(erased_view.params);
     return lateral * lateral + forward_distance * forward_distance <= max_radius * max_radius;
 }
 
@@ -1299,17 +1333,18 @@ fn groundStrokeColor(fill: rl.Color) rl.Color {
     return colorWithAlpha(mixColor(fill, white, 0.16), 44);
 }
 
-fn groundExtents(view: curved.View) GroundExtents {
-    return switch (view.metric) {
+fn groundExtents(view: anytype) GroundExtents {
+    const erased_view = curved.erasedView(view);
+    return switch (erased_view.metric) {
         .hyperbolic => .{
-            .lateral = view.params.radius * 2.15,
-            .backward = view.params.radius * 0.85,
-            .forward = view.params.radius * 3.05,
+            .lateral = erased_view.params.radius * 2.15,
+            .backward = erased_view.params.radius * 0.85,
+            .forward = erased_view.params.radius * 3.05,
         },
         .elliptic, .spherical => .{
-            .lateral = sphericalGroundTangentRadius(view.params),
-            .backward = sphericalGroundTangentRadius(view.params),
-            .forward = sphericalGroundTangentRadius(view.params),
+            .lateral = sphericalGroundTangentRadius(erased_view.params),
+            .backward = sphericalGroundTangentRadius(erased_view.params),
+            .forward = sphericalGroundTangentRadius(erased_view.params),
         },
     };
 }
@@ -1324,19 +1359,20 @@ fn sampleRasterDepth(sample: curved.ProjectedSample) f32 {
 }
 
 fn groundCellBroken(
-    render_view: curved.View,
+    render_view: anytype,
     screen: curved.Screen,
     p00: [2]f32,
     p10: [2]f32,
     p11: [2]f32,
     p01: [2]f32,
 ) bool {
-    return curved.shouldBreakProjectedSegment(render_view.projection, p00, p10, screen.width, screen.height) or
-        curved.shouldBreakProjectedSegment(render_view.projection, p10, p11, screen.width, screen.height) or
-        curved.shouldBreakProjectedSegment(render_view.projection, p11, p01, screen.width, screen.height) or
-        curved.shouldBreakProjectedSegment(render_view.projection, p01, p00, screen.width, screen.height) or
-        curved.shouldBreakProjectedSegment(render_view.projection, p00, p11, screen.width, screen.height) or
-        curved.shouldBreakProjectedSegment(render_view.projection, p10, p01, screen.width, screen.height);
+    const projection_mode = curved.erasedView(render_view).projection;
+    return curved.shouldBreakProjectedSegment(projection_mode, p00, p10, screen.width, screen.height) or
+        curved.shouldBreakProjectedSegment(projection_mode, p10, p11, screen.width, screen.height) or
+        curved.shouldBreakProjectedSegment(projection_mode, p11, p01, screen.width, screen.height) or
+        curved.shouldBreakProjectedSegment(projection_mode, p01, p00, screen.width, screen.height) or
+        curved.shouldBreakProjectedSegment(projection_mode, p00, p11, screen.width, screen.height) or
+        curved.shouldBreakProjectedSegment(projection_mode, p10, p01, screen.width, screen.height);
 }
 
 fn projectedQuadTooLarge(
@@ -1415,7 +1451,7 @@ fn drawCurvedGroundCell(
         const p01 = s01.projected.?;
         if (!groundCellBroken(render_view, screen, p00, p10, p11, p01)) {
             const avg_distance = (s00.distance + s10.distance + s11.distance + s01.distance) * 0.25;
-            const fill = groundFillColor(render_view.metric, avg_distance, render_view.clip.near, far_distance, checker);
+            const fill = groundFillColor(.spherical, avg_distance, render_view.clip.near, far_distance, checker);
             const stroke = groundStrokeColor(fill);
             const poly = [_]rl.Vector2{
                 canvasPointToViewport(viewport, p00),
@@ -1446,7 +1482,7 @@ fn drawCurvedGroundCell(
     if (!center_visible) return;
 
     const center_point = center.projected.?;
-    const fill = groundFillColor(render_view.metric, center.distance, render_view.clip.near, far_distance, checker);
+    const fill = groundFillColor(.spherical, center.distance, render_view.clip.near, far_distance, checker);
     const corners = [_]curved.ProjectedSample{ s00, s10, s11, s01 };
     const next = [_]usize{ 1, 2, 3, 0 };
     for (corners, 0..) |corner, i| {
@@ -1473,7 +1509,14 @@ fn drawCurvedGroundPatch(
     viewport: rl.Rectangle,
 ) void {
     if (world_view.metric == .spherical) {
-        drawSphericalGroundPatchPolar(world_view, render_view, render_pass, basis, screen, viewport);
+        drawSphericalGroundPatchPolar(
+            world_view.typed(.spherical),
+            render_view.typed(.spherical),
+            render_pass,
+            sphericalBasisFromErased(basis),
+            screen,
+            viewport,
+        );
         return;
     }
 
@@ -1525,10 +1568,10 @@ fn sphericalGroundPolarPoint(radius: f32, angle: f32) struct { lateral: f32, for
 }
 
 fn drawSphericalGroundPolarCell(
-    world_view: curved.View,
-    render_view: curved.View,
+    world_view: curved.SphericalView,
+    render_view: curved.SphericalView,
     render_pass: CurvedRenderPass,
-    basis: GroundBasis,
+    basis: SphericalGroundBasis,
     screen: curved.Screen,
     viewport: rl.Rectangle,
     r0: f32,
@@ -1547,11 +1590,11 @@ fn drawSphericalGroundPolarCell(
     const center_theta = (theta0 + theta1) * 0.5;
     const cc = sphericalGroundPolarPoint(center_radius, center_theta);
 
-    const s00 = groundSampleForCurvedRender(world_view, render_view, render_pass, basis, c00.lateral, c00.forward, screen);
-    const s10 = groundSampleForCurvedRender(world_view, render_view, render_pass, basis, c10.lateral, c10.forward, screen);
-    const s11 = groundSampleForCurvedRender(world_view, render_view, render_pass, basis, c11.lateral, c11.forward, screen);
-    const s01 = groundSampleForCurvedRender(world_view, render_view, render_pass, basis, c01.lateral, c01.forward, screen);
-    const center = groundSampleForCurvedRender(world_view, render_view, render_pass, basis, cc.lateral, cc.forward, screen);
+    const s00 = sphericalGroundSampleForCurvedRender(world_view, render_view, render_pass, basis, c00.lateral, c00.forward, screen);
+    const s10 = sphericalGroundSampleForCurvedRender(world_view, render_view, render_pass, basis, c10.lateral, c10.forward, screen);
+    const s11 = sphericalGroundSampleForCurvedRender(world_view, render_view, render_pass, basis, c11.lateral, c11.forward, screen);
+    const s01 = sphericalGroundSampleForCurvedRender(world_view, render_view, render_pass, basis, c01.lateral, c01.forward, screen);
+    const center = sphericalGroundSampleForCurvedRender(world_view, render_view, render_pass, basis, cc.lateral, cc.forward, screen);
 
     var visible_count: usize = 0;
     if (sampleVisible(s00)) visible_count += 1;
@@ -1571,7 +1614,7 @@ fn drawSphericalGroundPolarCell(
         const too_large = projectedQuadTooLarge(p00, p10, p11, p01, screen, 0.24);
         if (!broken and (!too_large or depth == 0)) {
             const avg_distance = (s00.distance + s10.distance + s11.distance + s01.distance) * 0.25;
-            const fill = groundFillColor(render_view.metric, avg_distance, render_view.clip.near, far_distance, checker);
+            const fill = groundFillColor(.spherical, avg_distance, render_view.clip.near, far_distance, checker);
             const poly = [_]rl.Vector2{
                 canvasPointToViewport(viewport, p00),
                 canvasPointToViewport(viewport, p10),
@@ -1594,10 +1637,10 @@ fn drawSphericalGroundPolarCell(
 }
 
 fn drawSphericalGroundPatchPolar(
-    world_view: curved.View,
-    render_view: curved.View,
+    world_view: curved.SphericalView,
+    render_view: curved.SphericalView,
     render_pass: CurvedRenderPass,
-    basis: GroundBasis,
+    basis: SphericalGroundBasis,
     screen: curved.Screen,
     viewport: rl.Rectangle,
 ) void {
@@ -1728,8 +1771,8 @@ fn drawCurvedFaceGrid(
             }
 
             const avg_distance = (s00.distance + s10.distance + s11.distance + s01.distance) * 0.25;
-            const fill = nativeCurvedFillColor(base_view.metric, face_index, avg_distance, base_view.clip.near, far_distance);
-            const stroke = nativeCurvedStrokeColor(base_view.metric, face_index, avg_distance, base_view.clip.near, far_distance);
+            const fill = nativeCurvedFillColor(.spherical, face_index, avg_distance, base_view.clip.near, far_distance);
+            const stroke = nativeCurvedStrokeColor(.spherical, face_index, avg_distance, base_view.clip.near, far_distance);
 
             const v00 = canvasPointToViewport(viewport, p00);
             const v10 = canvasPointToViewport(viewport, p10);
@@ -1858,7 +1901,7 @@ const max_spherical_local_cells = demo.cube_faces.len * max_spherical_fill_steps
 var spherical_local_cells_storage: [max_spherical_local_cells]SphericalRasterCell = undefined;
 
 fn appendSphericalLocalProjectedCell(
-    base_view: curved.View,
+    base_view: curved.SphericalView,
     face_index: usize,
     far_distance: f32,
     s00: curved.ProjectedSample,
@@ -1875,7 +1918,7 @@ fn appendSphericalLocalProjectedCell(
     const p11 = s11.projected.?;
     const p01 = s01.projected.?;
     const avg_distance = (s00.distance + s10.distance + s11.distance + s01.distance) * 0.25;
-    const fill = nativeCurvedFillColor(base_view.metric, face_index, avg_distance, base_view.clip.near, far_distance);
+    const fill = nativeCurvedFillColor(.spherical, face_index, avg_distance, base_view.clip.near, far_distance);
     var poly: [8]rl.Vector2 = undefined;
     poly[0] = .{ .x = p00[0] * @as(f32, @floatFromInt(subpixel_x)), .y = p00[1] * @as(f32, @floatFromInt(subpixel_y)) };
     poly[1] = .{ .x = p10[0] * @as(f32, @floatFromInt(subpixel_x)), .y = p10[1] * @as(f32, @floatFromInt(subpixel_y)) };
@@ -1903,8 +1946,8 @@ fn appendSphericalLocalProjectedCell(
 }
 
 fn appendSphericalLocalCellRecursive(
-    base_view: curved.View,
-    render_view: curved.View,
+    base_view: curved.SphericalView,
+    render_view: curved.SphericalView,
     render_pass: CurvedRenderPass,
     screen: curved.Screen,
     quad: [4]curved.Vec3,
@@ -1959,7 +2002,7 @@ fn appendSphericalLocalCellRecursive(
     if (!center_visible) return;
 
     const center_point = center.projected.?;
-    const fill = nativeCurvedFillColor(base_view.metric, face_index, center.distance, base_view.clip.near, far_distance);
+    const fill = nativeCurvedFillColor(.spherical, face_index, center.distance, base_view.clip.near, far_distance);
     const corners = [_]curved.ProjectedSample{ s00, s10, s11, s01 };
     const next = [_]usize{ 1, 2, 3, 0 };
     for (corners, 0..) |corner, i| {
@@ -2000,8 +2043,8 @@ fn appendSphericalLocalCellRecursive(
 }
 
 fn appendSphericalLocalFaceCells(
-    base_view: curved.View,
-    render_view: curved.View,
+    base_view: curved.SphericalView,
+    render_view: curved.SphericalView,
     render_pass: CurvedRenderPass,
     screen: curved.Screen,
     quad: [4]curved.Vec3,
@@ -2046,8 +2089,8 @@ fn appendSphericalLocalFaceCells(
 }
 
 fn drawSphericalLocalGeometry(
-    base_view: curved.View,
-    render_view: curved.View,
+    base_view: curved.SphericalView,
+    render_view: curved.SphericalView,
     render_pass: CurvedRenderPass,
     screen: curved.Screen,
     local_vertices: []const demo.H.Vector,
@@ -2082,8 +2125,8 @@ fn drawSphericalLocalGeometry(
 }
 
 fn drawSphericalLocalSegment(
-    base_view: curved.View,
-    render_view: curved.View,
+    base_view: curved.SphericalView,
+    render_view: curved.SphericalView,
     render_pass: CurvedRenderPass,
     screen: curved.Screen,
     viewport: rl.Rectangle,
@@ -2278,10 +2321,10 @@ fn rasterizeSphericalGroundTriangleOverlay(
 }
 
 fn rasterizeSphericalGroundPolarCellOverlay(
-    world_view: curved.View,
-    render_view: curved.View,
+    world_view: curved.SphericalView,
+    render_view: curved.SphericalView,
     render_pass: CurvedRenderPass,
-    basis: GroundBasis,
+    basis: SphericalGroundBasis,
     screen: curved.Screen,
     r0: f32,
     r1: f32,
@@ -2301,11 +2344,11 @@ fn rasterizeSphericalGroundPolarCellOverlay(
     const center_theta = (theta0 + theta1) * 0.5;
     const cc = sphericalGroundPolarPoint(center_radius, center_theta);
 
-    const s00 = groundSampleForCurvedRender(world_view, render_view, render_pass, basis, c00.lateral, c00.forward, screen);
-    const s10 = groundSampleForCurvedRender(world_view, render_view, render_pass, basis, c10.lateral, c10.forward, screen);
-    const s11 = groundSampleForCurvedRender(world_view, render_view, render_pass, basis, c11.lateral, c11.forward, screen);
-    const s01 = groundSampleForCurvedRender(world_view, render_view, render_pass, basis, c01.lateral, c01.forward, screen);
-    const center = groundSampleForCurvedRender(world_view, render_view, render_pass, basis, cc.lateral, cc.forward, screen);
+    const s00 = sphericalGroundSampleForCurvedRender(world_view, render_view, render_pass, basis, c00.lateral, c00.forward, screen);
+    const s10 = sphericalGroundSampleForCurvedRender(world_view, render_view, render_pass, basis, c10.lateral, c10.forward, screen);
+    const s11 = sphericalGroundSampleForCurvedRender(world_view, render_view, render_pass, basis, c11.lateral, c11.forward, screen);
+    const s01 = sphericalGroundSampleForCurvedRender(world_view, render_view, render_pass, basis, c01.lateral, c01.forward, screen);
+    const center = sphericalGroundSampleForCurvedRender(world_view, render_view, render_pass, basis, cc.lateral, cc.forward, screen);
 
     var visible_count: usize = 0;
     if (sampleVisible(s00)) visible_count += 1;
@@ -2325,7 +2368,7 @@ fn rasterizeSphericalGroundPolarCellOverlay(
         const too_large = projectedQuadTooLarge(p00, p10, p11, p01, screen, 0.24);
         if (!broken and (!too_large or depth == 0)) {
             const avg_distance = (s00.distance + s10.distance + s11.distance + s01.distance) * 0.25;
-            const fill = groundFillColor(render_view.metric, avg_distance, render_view.clip.near, far_distance, checker);
+            const fill = groundFillColor(.spherical, avg_distance, render_view.clip.near, far_distance, checker);
             rasterizeSphericalGroundCellOverlay(fill, s00, s10, s11, s01, pixels, depth_buffer);
             return;
         }
@@ -2343,7 +2386,7 @@ fn rasterizeSphericalGroundPolarCellOverlay(
 
     if (!center_visible) return;
 
-    const fill = groundFillColor(render_view.metric, center.distance, render_view.clip.near, far_distance, checker);
+    const fill = groundFillColor(.spherical, center.distance, render_view.clip.near, far_distance, checker);
     const corners = [_]curved.ProjectedSample{ s00, s10, s11, s01 };
     const next = [_]usize{ 1, 2, 3, 0 };
     for (corners, 0..) |corner, i| {
@@ -2363,10 +2406,10 @@ fn rasterizeSphericalGroundPolarCellOverlay(
 }
 
 fn rasterizeSphericalGroundPatchOverlay(
-    world_view: curved.View,
-    render_view: curved.View,
+    world_view: curved.SphericalView,
+    render_view: curved.SphericalView,
     render_pass: CurvedRenderPass,
-    basis: GroundBasis,
+    basis: SphericalGroundBasis,
     screen: curved.Screen,
     pixels: []rl.Color,
     depth_buffer: []f32,
@@ -2418,11 +2461,11 @@ fn rasterizeSphericalNativeOverlay(app: *const demo.App, pixels: []rl.Color, dep
         spherical.view;
 
     if (app.camera.movement_mode == .walk and spherical.view.projection != .wrapped) {
-        const ground_basis = curved_ground.worldGroundBasis();
+        const ground_basis = curved_ground.worldSphericalGroundBasis();
         const ground_far_start = benchStart();
         rasterizeSphericalGroundPatchOverlay(
-            curved.erasedView(spherical.view),
-            curved.erasedView(render_view),
+            spherical.view,
+            render_view,
             .{ .spherical = .far },
             ground_basis,
             spherical.screen,
@@ -2432,8 +2475,8 @@ fn rasterizeSphericalNativeOverlay(app: *const demo.App, pixels: []rl.Color, dep
         benchAdd(.spherical_ground, ground_far_start);
         const ground_near_start = benchStart();
         rasterizeSphericalGroundPatchOverlay(
-            curved.erasedView(spherical.view),
-            curved.erasedView(render_view),
+            spherical.view,
+            render_view,
             .{ .spherical = .near },
             ground_basis,
             spherical.screen,
@@ -2446,8 +2489,8 @@ fn rasterizeSphericalNativeOverlay(app: *const demo.App, pixels: []rl.Color, dep
     if (spherical.view.projection != .wrapped) {
         const far_start = benchStart();
         drawSphericalLocalGeometry(
-            curved.erasedView(render_view),
-            curved.erasedView(render_view.sphericalRenderPass(.far)),
+            render_view,
+            render_view.sphericalRenderPass(.far),
             .{ .spherical = .far },
             spherical.screen,
             spherical.local_vertices[0..],
@@ -2459,8 +2502,8 @@ fn rasterizeSphericalNativeOverlay(app: *const demo.App, pixels: []rl.Color, dep
 
         const near_start = benchStart();
         drawSphericalLocalGeometry(
-            curved.erasedView(render_view),
-            curved.erasedView(render_view.sphericalRenderPass(.near)),
+            render_view,
+            render_view.sphericalRenderPass(.near),
             .{ .spherical = .near },
             spherical.screen,
             spherical.local_vertices[0..],
@@ -2472,8 +2515,8 @@ fn rasterizeSphericalNativeOverlay(app: *const demo.App, pixels: []rl.Color, dep
     } else {
         const geom_start = benchStart();
         drawSphericalLocalGeometry(
-            curved.erasedView(render_view),
-            curved.erasedView(render_view),
+            render_view,
+            render_view,
             .direct,
             spherical.screen,
             spherical.local_vertices[0..],
@@ -2532,7 +2575,7 @@ fn drawNativeCurvedScene(app: *const demo.App, viewport: rl.Rectangle, spherical
                     const ground_start = benchStart();
                     const ground_basis = curved_ground.worldSphericalGroundBasis();
                     drawSphericalGroundFullscreen(
-                        curved.erasedView(render_view),
+                        render_view,
                         ground_basis,
                         spherical.screen,
                         viewport,
@@ -2542,7 +2585,7 @@ fn drawNativeCurvedScene(app: *const demo.App, viewport: rl.Rectangle, spherical
             }
             if (spherical_overlay) |texture| drawCanvasTexture(texture, viewport);
             const navigator_start = benchStart();
-            drawNativeSphericalNavigator(curved.erasedView(spherical.view), spherical.local_vertices[0..], demo.cube_edges[0..], viewport);
+            drawNativeSphericalNavigator(spherical.view, spherical.local_vertices[0..], demo.cube_edges[0..], viewport);
             benchAdd(.navigator, navigator_start);
         },
     }
@@ -2675,11 +2718,11 @@ fn nativeNavigatorShouldBreak(rect: rl.Rectangle, a: rl.Vector2, b: rl.Vector2) 
     return dx * dx + dy * dy > max_jump * max_jump;
 }
 
-fn sphericalNativeOverviewCamera(view: curved.View) curved_navigator_geometry.SphericalCamera {
+fn sphericalNativeOverviewCamera(view: curved.SphericalView) curved_navigator_geometry.SphericalCamera {
     return curved_navigator_geometry.sphericalGroundOverviewCamera(view);
 }
 
-fn sphericalNativeOverviewRadius(view: curved.View, projection_mode: curved_navigator.SphericalMapProjection) f32 {
+fn sphericalNativeOverviewRadius(view: curved.SphericalView, projection_mode: curved_navigator.SphericalMapProjection) f32 {
     return switch (projection_mode) {
         .stereographic => view.params.radius * (@as(f32, std.math.pi) * 0.5) * 0.98,
         .gnomonic => view.params.radius * 0.72,
@@ -2699,7 +2742,7 @@ fn sphericalNativeMapPoint(
 }
 
 fn sphericalNativeMapExtent(
-    view: curved.View,
+    view: curved.SphericalView,
     map_camera: curved_navigator_geometry.SphericalCamera,
     projection_mode: curved_navigator.SphericalMapProjection,
     field_radius: f32,
@@ -2715,7 +2758,7 @@ fn sphericalNativeMapExtent(
 fn drawNativeSphericalGroundGridLine(
     rect: rl.Rectangle,
     extent: f32,
-    view: curved.View,
+    view: curved.SphericalView,
     map_camera: curved_navigator_geometry.SphericalCamera,
     projection_mode: curved_navigator.SphericalMapProjection,
     constant_lateral: bool,
@@ -2723,7 +2766,6 @@ fn drawNativeSphericalGroundGridLine(
     field_radius: f32,
     color: rl.Color,
 ) void {
-    const spherical = view.typed(.spherical);
     var prev: ?rl.Vector2 = null;
 
     for (0..49) |i| {
@@ -2738,7 +2780,7 @@ fn drawNativeSphericalGroundGridLine(
 
         const ambient = curved.ambientFromTypedTangentBasisPoint(
             .spherical,
-            spherical.params,
+            view.params,
             map_camera.position,
             map_camera.right,
             map_camera.forward,
@@ -2767,20 +2809,19 @@ fn drawNativeSphericalGroundGridLine(
 fn drawNativeSphericalGroundBoundary(
     rect: rl.Rectangle,
     extent: f32,
-    view: curved.View,
+    view: curved.SphericalView,
     map_camera: curved_navigator_geometry.SphericalCamera,
     projection_mode: curved_navigator.SphericalMapProjection,
     field_radius: f32,
     color: rl.Color,
 ) void {
-    const spherical = view.typed(.spherical);
     var prev: ?rl.Vector2 = null;
     for (0..21) |i| {
         const t = @as(f32, @floatFromInt(i)) / 20.0;
         const theta = t * @as(f32, std.math.pi) * 2.0;
         const ambient = curved.ambientFromTypedTangentBasisPoint(
             .spherical,
-            spherical.params,
+            view.params,
             map_camera.position,
             map_camera.right,
             map_camera.forward,
@@ -2809,7 +2850,7 @@ fn drawNativeSphericalGroundBoundary(
 fn drawNativeSphericalLocalEdge(
     rect: rl.Rectangle,
     extent: f32,
-    view: curved.View,
+    view: curved.SphericalView,
     map_camera: curved_navigator_geometry.SphericalCamera,
     projection_mode: curved_navigator.SphericalMapProjection,
     a_local: curved.Vec3,
@@ -2820,7 +2861,7 @@ fn drawNativeSphericalLocalEdge(
     for (0..9) |i| {
         const t = @as(f32, @floatFromInt(i)) / 8.0;
         const local = curved.flatLerp3(a_local, b_local, t);
-        const ambient = signedAmbientForView(view, demo.sphericalDemoAmbientPoint(view.params, local));
+        const ambient = view.signedAmbient(roundAmbient(demo.sphericalDemoAmbientPoint(view.params, local)));
         const map_point = sphericalNativeMapPoint(map_camera, ambient, projection_mode) orelse {
             prev = null;
             continue;
@@ -2840,7 +2881,7 @@ fn drawNativeSphericalLocalEdge(
 fn drawNativeSphericalNavigatorPanel(
     rect: rl.Rectangle,
     label: [:0]const u8,
-    view: curved.View,
+    view: curved.SphericalView,
     local_vertices: []const demo.H.Vector,
     edges: []const [2]usize,
     projection_mode: curved_navigator.SphericalMapProjection,
@@ -2885,7 +2926,7 @@ fn drawNativeSphericalNavigatorPanel(
     const eye = nativeNavigatorProject(rect, extent, 0.0, 0.0);
     const heading_ambient = curved.ambientFromTypedTangentBasisPoint(
         .spherical,
-        view.typed(.spherical).params,
+        view.params,
         map_camera.position,
         map_camera.right,
         map_camera.forward,
@@ -2903,7 +2944,7 @@ fn drawNativeSphericalNavigatorPanel(
 }
 
 fn drawNativeSphericalNavigator(
-    view: curved.View,
+    view: curved.SphericalView,
     local_vertices: []const demo.H.Vector,
     edges: []const [2]usize,
     viewport: rl.Rectangle,
