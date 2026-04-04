@@ -1451,7 +1451,7 @@ fn drawCurvedGroundCell(
         const p01 = s01.projected.?;
         if (!groundCellBroken(render_view, screen, p00, p10, p11, p01)) {
             const avg_distance = (s00.distance + s10.distance + s11.distance + s01.distance) * 0.25;
-            const fill = groundFillColor(.spherical, avg_distance, render_view.clip.near, far_distance, checker);
+            const fill = groundFillColor(render_view.metric, avg_distance, render_view.clip.near, far_distance, checker);
             const stroke = groundStrokeColor(fill);
             const poly = [_]rl.Vector2{
                 canvasPointToViewport(viewport, p00),
@@ -1482,7 +1482,7 @@ fn drawCurvedGroundCell(
     if (!center_visible) return;
 
     const center_point = center.projected.?;
-    const fill = groundFillColor(.spherical, center.distance, render_view.clip.near, far_distance, checker);
+    const fill = groundFillColor(render_view.metric, center.distance, render_view.clip.near, far_distance, checker);
     const corners = [_]curved.ProjectedSample{ s00, s10, s11, s01 };
     const next = [_]usize{ 1, 2, 3, 0 };
     for (corners, 0..) |corner, i| {
@@ -1771,8 +1771,8 @@ fn drawCurvedFaceGrid(
             }
 
             const avg_distance = (s00.distance + s10.distance + s11.distance + s01.distance) * 0.25;
-            const fill = nativeCurvedFillColor(.spherical, face_index, avg_distance, base_view.clip.near, far_distance);
-            const stroke = nativeCurvedStrokeColor(.spherical, face_index, avg_distance, base_view.clip.near, far_distance);
+            const fill = nativeCurvedFillColor(base_view.metric, face_index, avg_distance, base_view.clip.near, far_distance);
+            const stroke = nativeCurvedStrokeColor(base_view.metric, face_index, avg_distance, base_view.clip.near, far_distance);
 
             const v00 = canvasPointToViewport(viewport, p00);
             const v10 = canvasPointToViewport(viewport, p10);
