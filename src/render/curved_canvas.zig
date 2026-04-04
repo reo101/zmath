@@ -123,11 +123,10 @@ pub fn drawEdge(
     var prev_distance: ?f32 = null;
     var prev_status: curved.SampleStatus = .hidden;
     const shade_far_distance = view.shadeFarDistance();
-    const metric = viewMetric(view);
 
     for (0..style.steps + 1) |i| {
         const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(style.steps));
-        const chart = curved.geodesicChartPoint(metric, view.params, a_chart, b_chart, t) orelse {
+        const chart = view.geodesicChartPoint(a_chart, b_chart, t) orelse {
             prev_point = null;
             prev_distance = null;
             prev_status = .hidden;

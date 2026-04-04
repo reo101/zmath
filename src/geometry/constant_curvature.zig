@@ -289,7 +289,22 @@ pub fn TypedView(comptime metric: Metric) type {
             return if (metric == .spherical) (@as(f32, std.math.pi) * self.params.radius) else self.clip.far;
         }
 
-        fn sceneAmbientPoint(self: Self, chart: anytype) ?Ambient.Vector {
+        pub fn embedPoint(self: Self, chart: anytype) ?Ambient.Vector {
+            return typedEmbedPoint(metric, self.params, chart);
+        }
+
+        pub fn chartCoords(self: Self, ambient: Ambient.Vector) Vec3 {
+            return typedChartCoords(metric, self.params, ambient);
+        }
+
+        pub fn geodesicChartPoint(self: Self, a_chart: anytype, b_chart: anytype, t: f32) ?Vec3 {
+            const a = self.embedPoint(a_chart) orelse return null;
+            const b = self.embedPoint(b_chart) orelse return null;
+            const ambient = typedGeodesicAmbientPoint(metric, a, b, t) orelse return null;
+            return self.chartCoords(ambient);
+        }
+
+        pub fn sceneAmbientPoint(self: Self, chart: anytype) ?Ambient.Vector {
             const ambient = typedEmbedPoint(metric, self.params, chart) orelse return null;
             return if (metric == .spherical and self.scene_sign < 0.0)
                 Ambient.scale(ambient, -1.0)
@@ -443,17 +458,47 @@ fn isFiniteVec4(v: Vec4) bool {
     return true;
 }
 
-fn ambientIdentity(metric: Metric) Vec4 {
-    _ = metric;
-    return .{ 1.0, 0.0, 0.0, 0.0 };
-}
-
 fn typedEmbedPoint(
     comptime metric: Metric,
     params: Params,
     chart_input: anytype,
 ) ?AmbientFor(metric).Vector {
-    return AmbientFor(metric).fromCoords(embedPoint(metric, params, chart_input) orelse return null);
+    const Ambient = AmbientFor(metric);
+    const chart = coerceVec3(chart_input);
+    const scale = chartScale(params);
+    const scaled = vec3(vec3x(chart) / scale, vec3y(chart) / scale, vec3z(chart) / scale);
+    const r2 = scaled.scalarProduct(scaled);
+
+    return switch (metric) {
+        .hyperbolic => switch (params.chart_model) {
+            .projective => {
+                const point = hpga.Point.proper(vec3x(scaled), vec3y(scaled), vec3z(scaled)) orelse return null;
+                return Ambient.fromCoords(hpga.ambientCoords(point));
+            },
+            .conformal => {
+                if (r2 >= 1.0) return null;
+                const denom = 1.0 - r2;
+                return Ambient.fromCoords(.{
+                    (1.0 + r2) / denom,
+                    2.0 * vec3x(scaled) / denom,
+                    2.0 * vec3y(scaled) / denom,
+                    2.0 * vec3z(scaled) / denom,
+                });
+            },
+        },
+        .elliptic, .spherical => switch (params.chart_model) {
+            .projective => Ambient.fromCoords(epga.ambientCoords(epga.Point.proper(vec3x(scaled), vec3y(scaled), vec3z(scaled)))),
+            .conformal => {
+                const denom = 1.0 + r2;
+                return Ambient.fromCoords(.{
+                    (1.0 - r2) / denom,
+                    2.0 * vec3x(scaled) / denom,
+                    2.0 * vec3y(scaled) / denom,
+                    2.0 * vec3z(scaled) / denom,
+                });
+            },
+        },
+    };
 }
 
 fn typedChartCoords(
@@ -461,7 +506,31 @@ fn typedChartCoords(
     params: Params,
     ambient: AmbientFor(metric).Vector,
 ) Vec3 {
-    return chartCoords(metric, params, AmbientFor(metric).toCoords(ambient));
+    const Ambient = AmbientFor(metric);
+    var point = ambient;
+    if (metric == .elliptic and Ambient.w(point) < 0.0) {
+        point = Ambient.scale(point, -1.0);
+    }
+
+    const scale = chartScale(params);
+    return switch (params.chart_model) {
+        .projective => {
+            const inv_w = scale / safeDivDenom(Ambient.w(point));
+            return vec3(
+                Ambient.x(point) * inv_w,
+                Ambient.y(point) * inv_w,
+                Ambient.z(point) * inv_w,
+            );
+        },
+        .conformal => {
+            const inv = scale / safeDivDenom(1.0 + Ambient.w(point));
+            return vec3(
+                Ambient.x(point) * inv,
+                Ambient.y(point) * inv,
+                Ambient.z(point) * inv,
+            );
+        },
+    };
 }
 
 fn typedZero(comptime metric: Metric) AmbientFor(metric).Vector {
@@ -1055,12 +1124,34 @@ pub const View = struct {
         };
     }
 
-    fn sceneAmbientPoint(self: View, chart: anytype) ?Vec4 {
-        var ambient = embedPoint(self.metric, self.params, chart) orelse return null;
-        if (self.metric == .spherical and self.scene_sign < 0.0) {
-            ambient = scale4(self.metric, ambient, -1.0);
-        }
-        return ambient;
+    pub fn embedPoint(self: View, chart: anytype) ?Vec4 {
+        return switch (self.metric) {
+            inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
+                self.typed(metric_tag).embedPoint(chart) orelse return null,
+            ),
+        };
+    }
+
+    pub fn chartCoords(self: View, ambient: Vec4) Vec3 {
+        return switch (self.metric) {
+            inline else => |metric_tag| self.typed(metric_tag).chartCoords(
+                AmbientFor(metric_tag).fromCoords(ambient),
+            ),
+        };
+    }
+
+    pub fn geodesicChartPoint(self: View, a_chart: anytype, b_chart: anytype, t: f32) ?Vec3 {
+        return switch (self.metric) {
+            inline else => |metric_tag| self.typed(metric_tag).geodesicChartPoint(a_chart, b_chart, t),
+        };
+    }
+
+    pub fn sceneAmbientPoint(self: View, chart: anytype) ?Vec4 {
+        return switch (self.metric) {
+            inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
+                self.typed(metric_tag).sceneAmbientPoint(chart) orelse return null,
+            ),
+        };
     }
 
     pub fn sampleProjectedPoint(self: View, chart: anytype, screen: Screen) ProjectedSample {
@@ -1605,65 +1696,20 @@ fn orthonormalCandidate(metric: Metric, position: Vec4, candidate: Vec4, refs: [
 // and Gunn, "Geometry in the Hyperbolic Plane and Beyond"
 // https://arxiv.org/pdf/1602.08562
 pub fn embedPoint(metric: Metric, params: Params, chart_input: anytype) ?Vec4 {
-    const chart = coerceVec3(chart_input);
-    const scale = chartScale(params);
-    const scaled = vec3(vec3x(chart) / scale, vec3y(chart) / scale, vec3z(chart) / scale);
-    const r2 = scaled.scalarProduct(scaled);
-
     return switch (metric) {
-        .hyperbolic => switch (params.chart_model) {
-            .projective => {
-                const point = hpga.Point.proper(vec3x(scaled), vec3y(scaled), vec3z(scaled)) orelse return null;
-                return hpga.ambientCoords(point);
-            },
-            // Hyperbolica devlog #3 uses the conformal Poincare ball internally.
-            // https://www.youtube.com/watch?v=pXWRYpdYc7Q
-            .conformal => {
-                if (r2 >= 1.0) return null;
-                const denom = 1.0 - r2;
-                return .{
-                    (1.0 + r2) / denom,
-                    2.0 * vec3x(scaled) / denom,
-                    2.0 * vec3y(scaled) / denom,
-                    2.0 * vec3z(scaled) / denom,
-                };
-            },
-        },
-        .elliptic, .spherical => switch (params.chart_model) {
-            .projective => epga.ambientCoords(epga.Point.proper(vec3x(scaled), vec3y(scaled), vec3z(scaled))),
-            // Hyperbolica devlogs #2 and #3 treat spherical space through the
-            // conformal stereographic chart so the far side can wrap cleanly.
-            // https://www.youtube.com/watch?v=yY9GAyJtuJ0
-            // https://www.youtube.com/watch?v=pXWRYpdYc7Q
-            .conformal => {
-                const denom = 1.0 + r2;
-                return .{
-                    (1.0 - r2) / denom,
-                    2.0 * vec3x(scaled) / denom,
-                    2.0 * vec3y(scaled) / denom,
-                    2.0 * vec3z(scaled) / denom,
-                };
-            },
-        },
+        inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
+            typedEmbedPoint(metric_tag, params, chart_input) orelse return null,
+        ),
     };
 }
 
 pub fn chartCoords(metric: Metric, params: Params, ambient: Vec4) Vec3 {
-    var point = ambient;
-    if (metric == .elliptic and point[0] < 0.0) {
-        point = scale4(metric, point, -1.0);
-    }
-
-    const scale = chartScale(params);
-    return switch (params.chart_model) {
-        .projective => {
-            const inv_w = scale / safeDivDenom(point[0]);
-            return vec3(point[1] * inv_w, point[2] * inv_w, point[3] * inv_w);
-        },
-        .conformal => {
-            const inv = scale / safeDivDenom(1.0 + point[0]);
-            return vec3(point[1] * inv, point[2] * inv, point[3] * inv);
-        },
+    return switch (metric) {
+        inline else => |metric_tag| typedChartCoords(
+            metric_tag,
+            params,
+            AmbientFor(metric_tag).fromCoords(ambient),
+        ),
     };
 }
 
@@ -2841,6 +2887,60 @@ test "conformal chart roundtrips for hyperbolic and spherical spaces" {
     const spherical_roundtrip = chartCoords(.spherical, spherical_params, embedPoint(.spherical, spherical_params, spherical_chart).?);
     inline for (spherical_chart, 0..) |expected, i| {
         try std.testing.expectApproxEqAbs(expected, spherical_roundtrip[i], 1e-5);
+    }
+}
+
+test "typed embed and chart helpers match erased wrappers" {
+    const params = Params{
+        .radius = 1.48,
+        .angular_zoom = 1.0,
+        .chart_model = .conformal,
+    };
+    const chart = vec3(0.12, -0.07, 0.15);
+    const typed_view = try SphericalView.init(
+        params,
+        .stereographic,
+        .{ .near = 0.08, .far = std.math.inf(f32) },
+        .{ 0.0, 0.0, -0.82 },
+        .{ 0.0, 0.0, 0.0 },
+    );
+    const erased_view = typed_view.erased();
+
+    const typed_ambient = typed_view.embedPoint(chart).?;
+    const erased_ambient = erased_view.embedPoint(chart).?;
+    const typed_ambient_coords = curved_ambient.Round.toCoords(typed_ambient);
+    inline for (typed_ambient_coords, 0..) |expected, i| {
+        try std.testing.expectApproxEqAbs(expected, erased_ambient[i], 1e-6);
+    }
+
+    const typed_chart = typed_view.chartCoords(typed_ambient);
+    const erased_chart = erased_view.chartCoords(erased_ambient);
+    inline for (typed_chart, 0..) |expected, i| {
+        try std.testing.expectApproxEqAbs(expected, erased_chart[i], 1e-6);
+    }
+}
+
+test "typed geodesic chart helper matches erased wrapper" {
+    const params = Params{
+        .radius = 0.32,
+        .angular_zoom = 0.72,
+        .chart_model = .conformal,
+    };
+    const typed_view = try HyperView.init(
+        params,
+        .gnomonic,
+        .{ .near = 0.08, .far = 1.55 },
+        .{ 0.0, 0.0, -params.radius * 0.78 },
+        .{ 0.0, 0.0, 0.0 },
+    );
+    const erased_view = typed_view.erased();
+    const a = vec3(-0.12, -0.03, 0.08);
+    const b = vec3(0.15, 0.09, 0.02);
+
+    const typed_point = typed_view.geodesicChartPoint(a, b, 0.35).?;
+    const erased_point = erased_view.geodesicChartPoint(a, b, 0.35).?;
+    inline for (typed_point, 0..) |expected, i| {
+        try std.testing.expectApproxEqAbs(expected, erased_point[i], 1e-6);
     }
 }
 

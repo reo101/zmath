@@ -547,10 +547,10 @@ fn debugPrintVec4(name: []const u8, v: curved.Vec4) void {
 
 fn dumpCurvedViewState(label: []const u8, view: anytype) void {
     const erased_view = curved.erasedView(view);
-    const eye_chart = curved.chartCoords(erased_view.metric, erased_view.params, erased_view.camera.position);
-    var look_probe = erased_view.camera;
-    curved.moveForward(&look_probe, erased_view.metric, erased_view.params, @min(erased_view.params.radius * 0.18, 0.18));
-    const look_chart = curved.chartCoords(erased_view.metric, erased_view.params, look_probe.position);
+    const eye_chart = view.chartCoords(view.camera.position);
+    var look_probe = view;
+    look_probe.moveForwardBy(@min(look_probe.params.radius * 0.18, 0.18));
+    const look_chart = look_probe.chartCoords(look_probe.camera.position);
 
     std.debug.print(
         \\{s}.metric={s}
@@ -1157,7 +1157,7 @@ fn adjustCurvature(camera: *CameraState, mode: DemoMode, more_curved: bool) Curv
     switch (mode) {
         .hyperbolic => {
             const previous_radius = camera.hyper.params.radius;
-            const eye_chart = curved.chartCoords(.hyperbolic, camera.hyper.params, curved.erasedView(camera.hyper).camera.position);
+            const eye_chart = camera.hyper.chartCoords(camera.hyper.camera.position);
             const lower = hyperbolicRadiusFloor(eye_chart);
             const upper = @max(lower, hyperbolic_radius_max);
             const unclamped_radius = previous_radius * scale;

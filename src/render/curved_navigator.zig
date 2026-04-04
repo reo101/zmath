@@ -41,10 +41,10 @@ pub fn drawCurvedNavigator(
     const top_rect = NavigatorRect{ .x = panel_x, .y = top_y, .width = panel_width, .height = panel_height };
     const bottom_rect = NavigatorRect{ .x = panel_x, .y = bottom_y, .width = panel_width, .height = panel_height };
 
-    const eye_chart = curved.chartCoords(erased_view.metric, erased_view.params, erased_view.camera.position);
-    var look_probe = erased_view.camera;
-    curved.moveForward(&look_probe, erased_view.metric, erased_view.params, @min(erased_view.params.radius * 0.18, 0.18));
-    const look_chart = curved.chartCoords(erased_view.metric, erased_view.params, look_probe.position);
+    const eye_chart = view.chartCoords(view.camera.position);
+    var look_probe = view;
+    look_probe.moveForwardBy(@min(look_probe.params.radius * 0.18, 0.18));
+    const look_chart = look_probe.chartCoords(look_probe.camera.position);
 
     if (erased_view.metric == .spherical) {
         const map_camera = nav_geom.sphericalGroundOverviewCamera(erased_view);
@@ -136,7 +136,7 @@ fn drawSphericalMapGeodesic(
 
     for (0..25) |i| {
         const t = @as(f32, @floatFromInt(i)) / 24.0;
-        const chart = curved.geodesicChartPoint(.spherical, spherical.params, a_chart, b_chart, t) orelse continue;
+        const chart = spherical.geodesicChartPoint(a_chart, b_chart, t) orelse continue;
         const ambient = nav_geom.signedSphericalAmbient(view, chart) orelse continue;
         const map_point = nav_geom.sphericalMapPoint(map_camera, ambient, projection_mode) orelse {
             prev_point = null;
@@ -339,12 +339,11 @@ fn drawNavigatorGeodesic(
     b_chart: curved.Vec3,
     tone: u8,
 ) void {
-    const erased_view = curved.erasedView(view);
     var prev_point: ?[2]f32 = null;
 
     for (0..19) |i| {
         const t = @as(f32, @floatFromInt(i)) / 18.0;
-        const chart = curved.geodesicChartPoint(erased_view.metric, erased_view.params, a_chart, b_chart, t) orelse continue;
+        const chart = view.geodesicChartPoint(a_chart, b_chart, t) orelse continue;
         const coords = curved.vec3Coords(chart);
         const point = projectNavigatorPoint(rect, extent, coords[axes.horizontal], coords[axes.vertical]);
         if (prev_point) |prev| {
