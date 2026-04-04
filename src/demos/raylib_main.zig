@@ -545,10 +545,14 @@ const SphericalRasterCell = struct {
 };
 
 fn roundAmbient(v: anytype) Round.Vector {
-    return switch (@TypeOf(v)) {
+    const T = @TypeOf(v);
+    return switch (T) {
         Round.Vector => v,
-        curved.Vec4 => Round.fromCoords(v),
-        else => @compileError("expected spherical ambient coords or round ambient vector"),
+        [4]f32 => Round.fromCoords(v),
+        else => if (comptime @hasDecl(T, "coeffsArray"))
+            Round.fromCoords(v.coeffsArray())
+        else
+            @compileError("expected spherical ambient coords or ambient vector"),
     };
 }
 
@@ -946,26 +950,32 @@ fn vec3FromVector(v: demo.H.Vector) curved.Vec3 {
 
 fn metricOf(view: anytype) curved.Metric {
     return switch (@TypeOf(view)) {
-        curved.View => view.metric,
         curved.HyperView => .hyperbolic,
         curved.EllipticView => .elliptic,
         curved.SphericalView => .spherical,
-        else => @compileError("expected curved view"),
+        else => @compileError("expected typed curved view"),
     };
 }
 
-fn ambientForView(view: anytype, ambient_input: curved.Vec4) switch (@TypeOf(view)) {
-    curved.View => curved.Vec4,
+fn ambientForView(view: anytype, ambient_input: anytype) switch (@TypeOf(view)) {
     curved.HyperView => curved.AmbientFor(.hyperbolic).Vector,
     curved.EllipticView => curved.AmbientFor(.elliptic).Vector,
     curved.SphericalView => curved.AmbientFor(.spherical).Vector,
-    else => @compileError("expected curved view"),
+    else => @compileError("expected typed curved view"),
 } {
     return switch (@TypeOf(view)) {
-        curved.View => ambient_input,
-        curved.HyperView => curved.AmbientFor(.hyperbolic).fromCoords(ambient_input),
-        curved.EllipticView => curved.AmbientFor(.elliptic).fromCoords(ambient_input),
-        curved.SphericalView => curved.AmbientFor(.spherical).fromCoords(ambient_input),
+        curved.HyperView => if (@TypeOf(ambient_input) == curved.AmbientFor(.hyperbolic).Vector)
+            ambient_input
+        else
+            curved.AmbientFor(.hyperbolic).fromCoords(ambient_input),
+        curved.EllipticView => if (@TypeOf(ambient_input) == curved.AmbientFor(.elliptic).Vector)
+            ambient_input
+        else
+            curved.AmbientFor(.elliptic).fromCoords(ambient_input),
+        curved.SphericalView => if (@TypeOf(ambient_input) == curved.AmbientFor(.spherical).Vector)
+            ambient_input
+        else
+            curved.AmbientFor(.spherical).fromCoords(ambient_input),
         else => unreachable,
     };
 }
@@ -973,7 +983,6 @@ fn ambientForView(view: anytype, ambient_input: curved.Vec4) switch (@TypeOf(vie
 fn sphericalViewOf(view: anytype) ?curved.SphericalView {
     return switch (@TypeOf(view)) {
         curved.SphericalView => view,
-        curved.View => if (view.metric == .spherical) view.typed(.spherical) else null,
         else => null,
     };
 }
@@ -1012,7 +1021,7 @@ fn curvedGroundSubdivideDepth(world_view: anytype, render_view: anytype) usize {
         native_ground_subdivide_depth;
 }
 
-fn sampleAmbientForNativeRender(view: anytype, ambient_input: curved.Vec4, screen: curved.Screen) curved.ProjectedSample {
+fn sampleAmbientForNativeRender(view: anytype, ambient_input: anytype, screen: curved.Screen) curved.ProjectedSample {
     if (metricOf(view) == .spherical and view.projection == .gnomonic) {
         const model_point = view.cameraModelPointForAmbient(ambientForView(view, ambient_input), .linear) orelse return .{};
         return curved.sampleProjectedModelPoint(
@@ -1533,19 +1542,6 @@ fn drawCurvedGroundPatch(
                 viewport,
             );
             return;
-        },
-        curved.View => {
-            if (world_view.metric == .spherical) {
-                drawSphericalGroundPatchPolar(
-                    world_view.typed(.spherical),
-                    sphericalViewOf(render_view) orelse return,
-                    render_pass,
-                    curved_ground.sphericalGroundBasis(basis),
-                    screen,
-                    viewport,
-                );
-                return;
-            }
         },
         else => {},
     }

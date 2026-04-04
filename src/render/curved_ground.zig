@@ -14,10 +14,10 @@ pub fn TypedGroundBasis(comptime metric: curved.Metric) type {
 }
 
 const ErasedGroundBasis = struct {
-    origin: curved.Vec4,
-    right: curved.Vec4,
-    forward: curved.Vec4,
-    up: curved.Vec4,
+    origin: [4]f32,
+    right: [4]f32,
+    forward: [4]f32,
+    up: [4]f32,
 };
 
 pub const HyperGroundBasis = TypedGroundBasis(.hyperbolic);
@@ -30,8 +30,8 @@ pub const SphericalGroundHit = struct {
     forward: f32,
 };
 
-fn ambientCoords(v: anytype) curved.Vec4 {
-    return if (@TypeOf(v) == curved.Vec4) v else v.coeffsArray();
+fn ambientCoords(v: anytype) [4]f32 {
+    return if (@TypeOf(v) == [4]f32) v else v.coeffsArray();
 }
 
 fn erasedGroundBasis(basis: anytype) ErasedGroundBasis {
@@ -59,8 +59,7 @@ pub fn sphericalGroundBasis(basis: anytype) SphericalGroundBasis {
 fn sphericalView(view: anytype) curved.SphericalView {
     return switch (@TypeOf(view)) {
         curved.SphericalView => view,
-        curved.View => view.typed(.spherical),
-        else => @compileError("expected `SphericalView` or erased curved `View`"),
+        else => @compileError("expected `SphericalView`"),
     };
 }
 
@@ -114,10 +113,15 @@ pub fn ambientPointForBasis(
     basis: anytype,
     lateral: f32,
     forward_distance: f32,
-) ?curved.Vec4 {
+) ?switch (@TypeOf(view)) {
+    curved.HyperView => curved.AmbientFor(.hyperbolic).Vector,
+    curved.EllipticView => curved.AmbientFor(.elliptic).Vector,
+    curved.SphericalView => curved.AmbientFor(.spherical).Vector,
+    else => @compileError("expected typed curved view"),
+} {
     switch (@TypeOf(view)) {
         curved.HyperView => {
-            const ambient = curved.ambientFromTypedTangentBasisPoint(
+            return curved.ambientFromTypedTangentBasisPoint(
                 .hyperbolic,
                 view.params,
                 basis.origin,
@@ -125,11 +129,10 @@ pub fn ambientPointForBasis(
                 basis.forward,
                 lateral,
                 forward_distance,
-            ) orelse return null;
-            return ambient.coeffsArray();
+            );
         },
         curved.EllipticView => {
-            const ambient = curved.ambientFromTypedTangentBasisPoint(
+            return curved.ambientFromTypedTangentBasisPoint(
                 .elliptic,
                 view.params,
                 basis.origin,
@@ -137,11 +140,10 @@ pub fn ambientPointForBasis(
                 basis.forward,
                 lateral,
                 forward_distance,
-            ) orelse return null;
-            return ambient.coeffsArray();
+            );
         },
         curved.SphericalView => {
-            const ambient = curved.ambientFromTypedTangentBasisPoint(
+            return curved.ambientFromTypedTangentBasisPoint(
                 .spherical,
                 view.params,
                 basis.origin,
@@ -149,21 +151,9 @@ pub fn ambientPointForBasis(
                 basis.forward,
                 lateral,
                 forward_distance,
-            ) orelse return null;
-            return ambient.coeffsArray();
-        },
-        else => {
-            const erased_basis = erasedGroundBasis(basis);
-            return curved.ambientFromTangentBasisPoint(
-                view.metric,
-                view.params,
-                erased_basis.origin,
-                erased_basis.right,
-                erased_basis.forward,
-                lateral,
-                forward_distance,
             );
         },
+        else => unreachable,
     }
 }
 
@@ -171,19 +161,10 @@ fn signedGroundBasisForView(view: anytype, basis: ErasedGroundBasis) ErasedGroun
     switch (@TypeOf(view)) {
         curved.SphericalView => if (view.scene_sign < 0.0) {
             return .{
-                .origin = curved.ambientScale(.spherical, basis.origin, -1.0),
-                .right = curved.ambientScale(.spherical, basis.right, -1.0),
-                .forward = curved.ambientScale(.spherical, basis.forward, -1.0),
-                .up = curved.ambientScale(.spherical, basis.up, -1.0),
-            };
-        },
-        curved.View => {
-            if (view.metric != .spherical or view.scene_sign >= 0.0) return basis;
-            return .{
-                .origin = curved.ambientScale(.spherical, basis.origin, -1.0),
-                .right = curved.ambientScale(.spherical, basis.right, -1.0),
-                .forward = curved.ambientScale(.spherical, basis.forward, -1.0),
-                .up = curved.ambientScale(.spherical, basis.up, -1.0),
+                .origin = .{ -basis.origin[0], -basis.origin[1], -basis.origin[2], -basis.origin[3] },
+                .right = .{ -basis.right[0], -basis.right[1], -basis.right[2], -basis.right[3] },
+                .forward = .{ -basis.forward[0], -basis.forward[1], -basis.forward[2], -basis.forward[3] },
+                .up = .{ -basis.up[0], -basis.up[1], -basis.up[2], -basis.up[3] },
             };
         },
         else => {},

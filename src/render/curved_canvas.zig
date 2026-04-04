@@ -27,8 +27,7 @@ fn viewMetric(view: anytype) curved.Metric {
         curved.HyperView => .hyperbolic,
         curved.EllipticView => .elliptic,
         curved.SphericalView => .spherical,
-        curved.View => view.metric,
-        else => @compileError("expected typed or erased curved view"),
+        else => @compileError("expected typed curved view"),
     };
 }
 

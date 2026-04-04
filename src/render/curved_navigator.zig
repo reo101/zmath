@@ -20,11 +20,10 @@ const NavigatorRect = struct {
 
 fn metricOf(view: anytype) curved.Metric {
     return switch (@TypeOf(view)) {
-        curved.View => view.metric,
         curved.HyperView => .hyperbolic,
         curved.EllipticView => .elliptic,
         curved.SphericalView => .spherical,
-        else => @compileError("expected curved view"),
+        else => @compileError("expected typed curved view"),
     };
 }
 
@@ -58,7 +57,6 @@ pub fn drawCurvedNavigator(
     if (metricOf(view) == .spherical) {
         const spherical_view: curved.SphericalView = switch (@TypeOf(view)) {
             curved.SphericalView => view,
-            curved.View => view.typed(.spherical),
             else => unreachable,
         };
         const map_camera = nav_geom.sphericalGroundOverviewCamera(spherical_view);
