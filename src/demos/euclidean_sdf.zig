@@ -31,32 +31,32 @@ pub const Scene = struct {
             .up = sdfVec3FromVector(scene.up),
             .forward = sdfVec3FromVector(scene.forward),
             .cube_half_extent = scene.cube_scale,
-            .local_row_x = .{ .x = axis_x.x, .y = axis_y.x, .z = axis_z.x },
-            .local_row_y = .{ .x = axis_x.y, .y = axis_y.y, .z = axis_z.y },
-            .local_row_z = .{ .x = axis_x.z, .y = axis_y.z, .z = axis_z.z },
+            .local_row_x = sdf.vec3(sdf.x(axis_x), sdf.x(axis_y), sdf.x(axis_z)),
+            .local_row_y = sdf.vec3(sdf.y(axis_x), sdf.y(axis_y), sdf.y(axis_z)),
+            .local_row_z = sdf.vec3(sdf.z(axis_x), sdf.z(axis_y), sdf.z(axis_z)),
             .bound_radius = scene.cube_scale * @sqrt(3.0),
         };
     }
 
     pub fn worldToCubeLocal(self: Scene, point: sdf.Vec3) sdf.Vec3 {
-        return .{
-            .x = point.dot(self.local_row_x),
-            .y = point.dot(self.local_row_y),
-            .z = point.dot(self.local_row_z),
-        };
+        return sdf.vec3(
+            sdf.dot(point, self.local_row_x),
+            sdf.dot(point, self.local_row_y),
+            sdf.dot(point, self.local_row_z),
+        );
     }
 
     pub fn cubeLocalToWorldDirection(self: Scene, local: sdf.Vec3) sdf.Vec3 {
-        return (sdf.Vec3{
-            .x = self.local_row_x.x * local.x + self.local_row_y.x * local.y + self.local_row_z.x * local.z,
-            .y = self.local_row_x.y * local.x + self.local_row_y.y * local.y + self.local_row_z.y * local.z,
-            .z = self.local_row_x.z * local.x + self.local_row_y.z * local.y + self.local_row_z.z * local.z,
-        }).normalized();
+        return sdf.normalized(sdf.vec3(
+            sdf.x(self.local_row_x) * sdf.x(local) + sdf.x(self.local_row_y) * sdf.y(local) + sdf.x(self.local_row_z) * sdf.z(local),
+            sdf.y(self.local_row_x) * sdf.x(local) + sdf.y(self.local_row_y) * sdf.y(local) + sdf.y(self.local_row_z) * sdf.z(local),
+            sdf.z(self.local_row_x) * sdf.x(local) + sdf.z(self.local_row_y) * sdf.y(local) + sdf.z(self.local_row_z) * sdf.z(local),
+        ));
     }
 
     pub fn sample(self: *const Scene, point: sdf.Vec3) sdf.Sample {
         return .{
-            .distance = sdf.box(self.worldToCubeLocal(point), sdf.Vec3.splat(self.cube_half_extent)),
+            .distance = sdf.box(self.worldToCubeLocal(point), sdf.splat(self.cube_half_extent)),
             .material = 1,
         };
     }
@@ -80,18 +80,18 @@ pub const Scene = struct {
         const depth_offset = projection.euclideanProjectionDepthOffset(self.projection_mode);
         const x_plane = x_ndc * aspect * depth_offset / self.zoom;
         const y_plane = y_ndc * depth_offset / self.zoom;
-        const plane_point = self.eye.add(self.right.scale(x_plane)).add(self.up.scale(y_plane));
+        const plane_point = sdf.add(sdf.add(self.eye, sdf.scale(self.right, x_plane)), sdf.scale(self.up, y_plane));
 
         return switch (self.projection_mode) {
             .perspective => {
-                const origin = self.eye.sub(self.forward.scale(depth_offset));
+                const origin = sdf.sub(self.eye, sdf.scale(self.forward, depth_offset));
                 return .{
                     .origin = origin,
-                    .direction = plane_point.sub(origin).normalized(),
+                    .direction = sdf.normalized(sdf.sub(plane_point, origin)),
                 };
             },
             .isometric => .{
-                .origin = plane_point.sub(self.forward.scale(demo.far_clip_z + depth_offset)),
+                .origin = sdf.sub(plane_point, sdf.scale(self.forward, demo.far_clip_z + depth_offset)),
                 .direction = self.forward,
             },
         };
@@ -120,7 +120,7 @@ pub const Scene = struct {
     }
 
     pub fn viewDepth(self: Scene, point: sdf.Vec3) f32 {
-        return point.sub(self.eye).dot(self.forward);
+        return sdf.dot(sdf.sub(point, self.eye), self.forward);
     }
 };
 
@@ -134,8 +134,8 @@ pub fn sampleScene(scene: *const Scene, point: sdf.Vec3) sdf.Sample {
 }
 
 pub fn raySphereInterval(ray: sdf.Ray, radius: f32) ?RayInterval {
-    const b = ray.origin.dot(ray.direction);
-    const c = ray.origin.dot(ray.origin) - radius * radius;
+    const b = sdf.dot(ray.origin, ray.direction);
+    const c = sdf.dot(ray.origin, ray.origin) - radius * radius;
     const disc = b * b - c;
     if (disc < 0.0) return null;
     const root = @sqrt(disc);
@@ -149,24 +149,24 @@ pub fn raySphereInterval(ray: sdf.Ray, radius: f32) ?RayInterval {
 }
 
 pub fn boxLocalNormal(point: sdf.Vec3, half_extent: f32) sdf.Vec3 {
-    const abs_point = point.abs();
-    const delta = abs_point.sub(sdf.Vec3.splat(half_extent));
-    const outside = delta.max(sdf.Vec3.splat(0.0));
-    if (outside.magnitudeSquared() > 1e-8) {
-        return (sdf.Vec3{
-            .x = signedUnit(point.x) * outside.x,
-            .y = signedUnit(point.y) * outside.y,
-            .z = signedUnit(point.z) * outside.z,
-        }).normalized();
+    const abs_point = sdf.abs(point);
+    const delta = sdf.sub(abs_point, sdf.splat(half_extent));
+    const outside = sdf.max(delta, sdf.splat(0.0));
+    if (sdf.magnitudeSquared(outside) > 1e-8) {
+        return sdf.normalized(sdf.vec3(
+            signedUnit(sdf.x(point)) * sdf.x(outside),
+            signedUnit(sdf.y(point)) * sdf.y(outside),
+            signedUnit(sdf.z(point)) * sdf.z(outside),
+        ));
     }
 
-    if (abs_point.x >= abs_point.y and abs_point.x >= abs_point.z) {
-        return .{ .x = signedUnit(point.x), .y = 0.0, .z = 0.0 };
+    if (sdf.x(abs_point) >= sdf.y(abs_point) and sdf.x(abs_point) >= sdf.z(abs_point)) {
+        return sdf.vec3(signedUnit(sdf.x(point)), 0.0, 0.0);
     }
-    if (abs_point.y >= abs_point.z) {
-        return .{ .x = 0.0, .y = signedUnit(point.y), .z = 0.0 };
+    if (sdf.y(abs_point) >= sdf.z(abs_point)) {
+        return sdf.vec3(0.0, signedUnit(sdf.y(point)), 0.0);
     }
-    return .{ .x = 0.0, .y = 0.0, .z = signedUnit(point.z) };
+    return sdf.vec3(0.0, 0.0, signedUnit(sdf.z(point)));
 }
 
 fn signedUnit(value: f32) f32 {
@@ -174,24 +174,20 @@ fn signedUnit(value: f32) f32 {
 }
 
 fn sdfVec3FromVector(v: demo.H.Vector) sdf.Vec3 {
-    return .{
-        .x = v.coeffNamed("e1"),
-        .y = v.coeffNamed("e2"),
-        .z = v.coeffNamed("e3"),
-    };
+    return sdf.vec3(v.coeffNamed("e1"), v.coeffNamed("e2"), v.coeffNamed("e3"));
 }
 
 test "bounding sphere interval rejects clear misses" {
     const ray = sdf.Ray{
-        .origin = .{ .x = 3.0, .y = 0.0, .z = 0.0 },
-        .direction = .{ .x = 0.0, .y = 0.0, .z = 1.0 },
+        .origin = sdf.vec3(3.0, 0.0, 0.0),
+        .direction = sdf.vec3(0.0, 0.0, 1.0),
     };
     try std.testing.expect(raySphereInterval(ray, 1.0) == null);
 }
 
 test "box local normal picks dominant face inside box shell" {
-    const normal = boxLocalNormal(.{ .x = 0.99, .y = 0.10, .z = 0.20 }, 1.0);
-    try std.testing.expectApproxEqAbs(@as(f32, 1.0), normal.x, 1e-6);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.0), normal.y, 1e-6);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.0), normal.z, 1e-6);
+    const normal = boxLocalNormal(sdf.vec3(0.99, 0.10, 0.20), 1.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), sdf.x(normal), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), sdf.y(normal), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), sdf.z(normal), 1e-6);
 }

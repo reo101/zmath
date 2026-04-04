@@ -626,22 +626,18 @@ const EuclideanSdfScene = struct {
 
     fn sample(self: *const EuclideanSdfScene, point: sdf.Vec3) sdf.Sample {
         return .{
-            .distance = sdf.box(self.worldToCubeLocal(point), sdf.Vec3.splat(self.cube_half_extent)),
+            .distance = sdf.box(self.worldToCubeLocal(point), sdf.splat(self.cube_half_extent)),
             .material = 1,
         };
     }
 };
 
 fn sdfVec3FromVector(v: demo.H.Vector) sdf.Vec3 {
-    return .{
-        .x = v.coeffNamed("e1"),
-        .y = v.coeffNamed("e2"),
-        .z = v.coeffNamed("e3"),
-    };
+    return sdf.vec3(v.coeffNamed("e1"), v.coeffNamed("e2"), v.coeffNamed("e3"));
 }
 
 fn vectorFromSdfVec3(v: sdf.Vec3) demo.H.Vector {
-    return demo.H.Vector.init(.{ v.x, v.y, v.z });
+    return demo.H.Vector.init(.{ sdf.x(v), sdf.y(v), sdf.z(v) });
 }
 
 fn euclideanSdfScene(scene: demo.EuclideanScene) EuclideanSdfScene {
@@ -672,34 +668,34 @@ fn euclideanSdfRay(scene: EuclideanSdfScene, sample_x: usize, sample_y: usize) s
     const depth_offset = projection.euclideanProjectionDepthOffset(scene.projection_mode);
     const x_plane = x_ndc * aspect * depth_offset / scene.zoom;
     const y_plane = y_ndc * depth_offset / scene.zoom;
-    const plane_point = scene.eye.add(scene.right.scale(x_plane)).add(scene.up.scale(y_plane));
+    const plane_point = sdf.add(sdf.add(scene.eye, sdf.scale(scene.right, x_plane)), sdf.scale(scene.up, y_plane));
 
     return switch (scene.projection_mode) {
         .perspective => {
-            const origin = scene.eye.sub(scene.forward.scale(depth_offset));
+            const origin = sdf.sub(scene.eye, sdf.scale(scene.forward, depth_offset));
             return .{
                 .origin = origin,
-                .direction = plane_point.sub(origin).normalized(),
+                .direction = sdf.normalized(sdf.sub(plane_point, origin)),
             };
         },
         .isometric => .{
-            .origin = plane_point.sub(scene.forward.scale(demo.far_clip_z + depth_offset)),
+            .origin = sdf.sub(plane_point, sdf.scale(scene.forward, demo.far_clip_z + depth_offset)),
             .direction = scene.forward,
         },
     };
 }
 
 fn cubeFaceIndexFromLocalNormal(normal: sdf.Vec3) usize {
-    const ax = @abs(normal.x);
-    const ay = @abs(normal.y);
-    const az = @abs(normal.z);
-    if (ax >= ay and ax >= az) return if (normal.x >= 0.0) 0 else 1;
-    if (ay >= az) return if (normal.y >= 0.0) 2 else 3;
-    return if (normal.z >= 0.0) 4 else 5;
+    const ax = @abs(sdf.x(normal));
+    const ay = @abs(sdf.y(normal));
+    const az = @abs(sdf.z(normal));
+    if (ax >= ay and ax >= az) return if (sdf.x(normal) >= 0.0) 0 else 1;
+    if (ay >= az) return if (sdf.y(normal) >= 0.0) 2 else 3;
+    return if (sdf.z(normal) >= 0.0) 4 else 5;
 }
 
 fn euclideanViewDepth(scene: EuclideanSdfScene, point: sdf.Vec3) f32 {
-    return point.sub(scene.eye).dot(scene.forward);
+    return sdf.dot(sdf.sub(point, scene.eye), scene.forward);
 }
 
 fn nativeEuclideanSdfColor(face_index: usize, normal: sdf.Vec3, depth: f32, steps: usize) rl.Color {
