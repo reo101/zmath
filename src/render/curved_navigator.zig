@@ -3,7 +3,6 @@ const canvas_api = @import("canvas.zig");
 const curved = @import("../geometry/constant_curvature.zig");
 const curved_canvas = @import("curved_canvas.zig");
 const nav_geom = @import("curved_navigator_geometry.zig");
-const Round = curved.AmbientFor(.spherical);
 
 const NavigatorAxes = struct {
     horizontal: usize,
@@ -160,6 +159,7 @@ fn drawSphericalGroundBoundary(
     field_radius: f32,
     tone: u8,
 ) void {
+    const spherical = curved.erasedView(view).typed(.spherical);
     var prev_point: ?[2]f32 = null;
 
     for (0..65) |i| {
@@ -167,16 +167,16 @@ fn drawSphericalGroundBoundary(
         const theta = t * @as(f32, std.math.pi) * 2.0;
         const lateral = @cos(theta) * field_radius;
         const forward = @sin(theta) * field_radius;
-        const ambient = curved.ambientFromTangentBasisPoint(
+        const ambient = curved.ambientFromTypedTangentBasisPoint(
             .spherical,
-            curved.erasedView(view).params,
-            Round.toCoords(map_camera.position),
-            Round.toCoords(map_camera.right),
-            Round.toCoords(map_camera.forward),
+            spherical.params,
+            map_camera.position,
+            map_camera.right,
+            map_camera.forward,
             lateral,
             forward,
         ) orelse continue;
-        const map_point = nav_geom.sphericalMapPoint(map_camera, Round.fromCoords(ambient), projection_mode) orelse {
+        const map_point = nav_geom.sphericalMapPoint(map_camera, ambient, projection_mode) orelse {
             prev_point = null;
             continue;
         };
@@ -200,6 +200,7 @@ fn drawSphericalGroundGridLine(
     field_radius: f32,
     tone: u8,
 ) void {
+    const spherical = curved.erasedView(view).typed(.spherical);
     var prev_point: ?[2]f32 = null;
 
     for (0..49) |i| {
@@ -207,19 +208,19 @@ fn drawSphericalGroundGridLine(
         const varying = (t * 2.0 - 1.0) * field_radius;
         const lateral = if (fixed_is_lateral) fixed else varying;
         const forward = if (fixed_is_lateral) varying else fixed;
-        const ambient = curved.ambientFromTangentBasisPoint(
+        const ambient = curved.ambientFromTypedTangentBasisPoint(
             .spherical,
-            curved.erasedView(view).params,
-            Round.toCoords(map_camera.position),
-            Round.toCoords(map_camera.right),
-            Round.toCoords(map_camera.forward),
+            spherical.params,
+            map_camera.position,
+            map_camera.right,
+            map_camera.forward,
             lateral,
             forward,
         ) orelse {
             prev_point = null;
             continue;
         };
-        const map_point = nav_geom.sphericalMapPoint(map_camera, Round.fromCoords(ambient), projection_mode) orelse {
+        const map_point = nav_geom.sphericalMapPoint(map_camera, ambient, projection_mode) orelse {
             prev_point = null;
             continue;
         };
@@ -289,16 +290,16 @@ fn drawSphericalGroundOverviewPanel(
     }
 
     const eye_point = projectNavigatorPoint(rect, extent, 0.0, 0.0);
-    const heading_ambient = curved.ambientFromTangentBasisPoint(
+    const heading_ambient = curved.ambientFromTypedTangentBasisPoint(
         .spherical,
-        curved.erasedView(view).params,
-        Round.toCoords(map_camera.position),
-        Round.toCoords(map_camera.right),
-        Round.toCoords(map_camera.forward),
+        curved.erasedView(view).typed(.spherical).params,
+        map_camera.position,
+        map_camera.right,
+        map_camera.forward,
         0.0,
         field_radius * 0.18,
     ) orelse return;
-    const look_map = nav_geom.sphericalMapPoint(map_camera, Round.fromCoords(heading_ambient), projection_mode) orelse return;
+    const look_map = nav_geom.sphericalMapPoint(map_camera, heading_ambient, projection_mode) orelse return;
     const look_point = projectNavigatorPoint(rect, extent, look_map[0], look_map[1]);
     canvas.drawLine(eye_point[0], eye_point[1], look_point[0], look_point[1], '#', 253);
     drawNavigatorMarker(canvas, look_point, 253);

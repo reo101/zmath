@@ -2695,10 +2695,14 @@ fn sphericalNativeOverviewRadius(view: curved.View, projection_mode: curved_navi
 
 fn sphericalNativeMapPoint(
     map_camera: curved_navigator_geometry.SphericalCamera,
-    ambient: curved.Vec4,
+    ambient: anytype,
     projection_mode: curved_navigator.SphericalMapProjection,
 ) ?[2]f32 {
-    return curved_navigator_geometry.sphericalMapPoint(map_camera, Round.fromCoords(ambient), projection_mode);
+    const typed_ambient = if (@TypeOf(ambient) == curved_navigator_geometry.SphericalAmbient)
+        ambient
+    else
+        Round.fromCoords(ambient);
+    return curved_navigator_geometry.sphericalMapPoint(map_camera, typed_ambient, projection_mode);
 }
 
 fn sphericalNativeMapExtent(
@@ -2726,6 +2730,7 @@ fn drawNativeSphericalGroundGridLine(
     field_radius: f32,
     color: rl.Color,
 ) void {
+    const spherical = view.typed(.spherical);
     var prev: ?rl.Vector2 = null;
 
     for (0..49) |i| {
@@ -2738,12 +2743,12 @@ fn drawNativeSphericalGroundGridLine(
             continue;
         }
 
-        const ambient = curved.ambientFromTangentBasisPoint(
+        const ambient = curved.ambientFromTypedTangentBasisPoint(
             .spherical,
-            view.params,
-            Round.toCoords(map_camera.position),
-            Round.toCoords(map_camera.right),
-            Round.toCoords(map_camera.forward),
+            spherical.params,
+            map_camera.position,
+            map_camera.right,
+            map_camera.forward,
             lateral,
             forward,
         ) orelse {
@@ -2775,16 +2780,17 @@ fn drawNativeSphericalGroundBoundary(
     field_radius: f32,
     color: rl.Color,
 ) void {
+    const spherical = view.typed(.spherical);
     var prev: ?rl.Vector2 = null;
     for (0..21) |i| {
         const t = @as(f32, @floatFromInt(i)) / 20.0;
         const theta = t * @as(f32, std.math.pi) * 2.0;
-        const ambient = curved.ambientFromTangentBasisPoint(
+        const ambient = curved.ambientFromTypedTangentBasisPoint(
             .spherical,
-            view.params,
-            Round.toCoords(map_camera.position),
-            Round.toCoords(map_camera.right),
-            Round.toCoords(map_camera.forward),
+            spherical.params,
+            map_camera.position,
+            map_camera.right,
+            map_camera.forward,
             @cos(theta) * field_radius,
             @sin(theta) * field_radius,
         ) orelse {
@@ -2884,12 +2890,12 @@ fn drawNativeSphericalNavigatorPanel(
     }
 
     const eye = nativeNavigatorProject(rect, extent, 0.0, 0.0);
-    const heading_ambient = curved.ambientFromTangentBasisPoint(
+    const heading_ambient = curved.ambientFromTypedTangentBasisPoint(
         .spherical,
-        view.params,
-        Round.toCoords(map_camera.position),
-        Round.toCoords(map_camera.right),
-        Round.toCoords(map_camera.forward),
+        view.typed(.spherical).params,
+        map_camera.position,
+        map_camera.right,
+        map_camera.forward,
         0.0,
         field_radius * 0.18,
     ) orelse return;

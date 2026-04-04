@@ -1275,33 +1275,55 @@ pub fn ambientFromTangentBasisPoint(
     lateral: f32,
     forward_distance: f32,
 ) ?Vec4 {
-    if (!isFiniteVec4(origin) or !isFiniteVec4(right) or !isFiniteVec4(forward)) return origin;
+    return switch (metric) {
+        inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
+            ambientFromTypedTangentBasisPoint(
+                metric_tag,
+                params,
+                AmbientFor(metric_tag).fromCoords(origin),
+                AmbientFor(metric_tag).fromCoords(right),
+                AmbientFor(metric_tag).fromCoords(forward),
+                lateral,
+                forward_distance,
+            ) orelse return null,
+        ),
+    };
+}
+
+pub fn ambientFromTypedTangentBasisPoint(
+    comptime metric: Metric,
+    params: Params,
+    origin: AmbientFor(metric).Vector,
+    right: AmbientFor(metric).Vector,
+    forward: AmbientFor(metric).Vector,
+    lateral: f32,
+    forward_distance: f32,
+) ?AmbientFor(metric).Vector {
+    const Ambient = AmbientFor(metric);
+    if (!Ambient.isFinite(origin) or !Ambient.isFinite(right) or !Ambient.isFinite(forward)) return origin;
     if (!std.math.isFinite(lateral) or !std.math.isFinite(forward_distance)) return origin;
 
-    const tangent = add4(
-        metric,
-        scale4(metric, right, lateral),
-        scale4(metric, forward, forward_distance),
+    const tangent = Ambient.add(
+        Ambient.scale(right, lateral),
+        Ambient.scale(forward, forward_distance),
     );
-    const tangent_norm2 = metricDot(metric, tangent, tangent);
+    const tangent_norm2 = Ambient.dot(tangent, tangent);
     if (!std.math.isFinite(tangent_norm2) or tangent_norm2 <= 1e-6) return origin;
 
     const tangent_norm = @sqrt(tangent_norm2);
     const normalized_distance = tangent_norm / params.radius;
     if (!std.math.isFinite(normalized_distance)) return origin;
     const position = switch (metric) {
-        .hyperbolic => add4(
-            metric,
-            scale4(metric, origin, std.math.cosh(normalized_distance)),
-            scale4(metric, tangent, std.math.sinh(normalized_distance) / tangent_norm),
+        .hyperbolic => Ambient.add(
+            Ambient.scale(origin, std.math.cosh(normalized_distance)),
+            Ambient.scale(tangent, std.math.sinh(normalized_distance) / tangent_norm),
         ),
-        .elliptic, .spherical => add4(
-            metric,
-            scale4(metric, origin, @cos(normalized_distance)),
-            scale4(metric, tangent, @sin(normalized_distance) / tangent_norm),
+        .elliptic, .spherical => Ambient.add(
+            Ambient.scale(origin, @cos(normalized_distance)),
+            Ambient.scale(tangent, @sin(normalized_distance) / tangent_norm),
         ),
     };
-    return normalizeAmbient(metric, position);
+    return typedNormalizeAmbient(metric, position);
 }
 
 fn antipodalSphericalPassCamera(camera: Camera) Camera {
@@ -2014,6 +2036,15 @@ fn typedModelPointForAmbient(
     };
     if (@abs(denom) <= 1e-6) return null;
     return vec3(relative.x / denom, relative.y / denom, relative.z / denom);
+}
+
+pub fn modelPointForTypedAmbientWithCamera(
+    comptime metric: Metric,
+    camera: TypedCamera(metric),
+    ambient: AmbientFor(metric).Vector,
+    model: CameraModel,
+) ?Vec3 {
+    return typedModelPointForAmbient(metric, camera, ambient, model);
 }
 
 pub fn modelPointForAmbientWithCamera(metric: Metric, camera: Camera, ambient: Vec4, model: CameraModel) ?Vec3 {

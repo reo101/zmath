@@ -17,15 +17,6 @@ fn sphericalView(view: anytype) curved.SphericalView {
         curved.erasedView(view).typed(.spherical);
 }
 
-fn erasedSphericalCamera(camera: SphericalCamera) curved.Camera {
-    return .{
-        .position = Round.toCoords(camera.position),
-        .right = Round.toCoords(camera.right),
-        .up = Round.toCoords(camera.up),
-        .forward = Round.toCoords(camera.forward),
-    };
-}
-
 pub fn signedSphericalAmbient(view: anytype, chart: curved.Vec3) ?SphericalAmbient {
     const spherical = sphericalView(view);
     var ambient = Round.fromCoords(curved.embedPoint(.spherical, spherical.params, chart) orelse return null);
@@ -64,10 +55,10 @@ pub fn sphericalMapPoint(
         .stereographic => .conformal,
         .gnomonic => .linear,
     };
-    const point = curved.modelPointForAmbientWithCamera(
+    const point = curved.modelPointForTypedAmbientWithCamera(
         .spherical,
-        erasedSphericalCamera(map_camera),
-        Round.toCoords(ambient),
+        map_camera,
+        ambient,
         model,
     ) orelse return null;
     return .{ curved.vec3x(point), curved.vec3z(point) };
@@ -90,16 +81,16 @@ pub fn sphericalGroundFieldExtent(
         const theta = t * @as(f32, std.math.pi) * 2.0;
         const lateral = @cos(theta) * field_radius;
         const forward = @sin(theta) * field_radius;
-        const ambient = curved.ambientFromTangentBasisPoint(
+        const ambient = curved.ambientFromTypedTangentBasisPoint(
             .spherical,
             spherical.params,
-            Round.toCoords(map_camera.position),
-            Round.toCoords(map_camera.right),
-            Round.toCoords(map_camera.forward),
+            map_camera.position,
+            map_camera.right,
+            map_camera.forward,
             lateral,
             forward,
         ) orelse continue;
-        const point = sphericalMapPoint(map_camera, Round.fromCoords(ambient), projection_mode) orelse continue;
+        const point = sphericalMapPoint(map_camera, ambient, projection_mode) orelse continue;
         extent = @max(extent, @abs(point[0]) * 1.08);
         extent = @max(extent, @abs(point[1]) * 1.08);
     }
