@@ -1244,7 +1244,7 @@ fn sampleSphericalLocalPoint(
     local: curved.Vec3,
     screen: curved.Screen,
 ) curved.ProjectedSample {
-    const ambient = roundAmbient(demo.sphericalDemoAmbientPoint(base_view.params, local));
+    const ambient = demo.sphericalDemoAmbientPoint(base_view.params, local);
     return switch (render_pass) {
         .direct => render_view.sampleProjectedAmbient(ambient, screen),
         .spherical => |pass| nativeSphericalConformalSampleForPass(base_view, render_view, pass, ambient, screen),
@@ -2892,7 +2892,7 @@ fn drawNativeSphericalLocalEdge(
     for (0..9) |i| {
         const t = @as(f32, @floatFromInt(i)) / 8.0;
         const local = curved.flatLerp3(a_local, b_local, t);
-        const ambient = view.signedAmbient(roundAmbient(demo.sphericalDemoAmbientPoint(view.params, local)));
+        const ambient = view.signedAmbient(demo.sphericalDemoAmbientPoint(view.params, local));
         const map_point = sphericalNativeMapPoint(map_camera, ambient, projection_mode) orelse {
             prev = null;
             continue;

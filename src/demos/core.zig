@@ -541,7 +541,7 @@ fn debugPrintVec3(name: []const u8, v: curved.Vec3) void {
     std.debug.print("{s}=.{{ {d:.6}, {d:.6}, {d:.6} }}\n", .{ name, coords[0], coords[1], coords[2] });
 }
 
-fn debugPrintVec4(name: []const u8, v: curved.Vec4) void {
+fn debugPrintVec4(name: []const u8, v: [4]f32) void {
     std.debug.print("{s}=.{{ {d:.6}, {d:.6}, {d:.6}, {d:.6} }}\n", .{ name, v[0], v[1], v[2], v[3] });
 }
 
@@ -555,8 +555,8 @@ fn curvedMetricOf(view: anytype) curved.Metric {
     };
 }
 
-fn ambientCoords(v: anytype) curved.Vec4 {
-    return if (@TypeOf(v) == curved.Vec4) v else v.coeffsArray();
+fn ambientCoords(v: anytype) [4]f32 {
+    return if (@TypeOf(v) == [4]f32) v else v.coeffsArray();
 }
 
 fn dumpCurvedViewState(label: []const u8, view: anytype) void {
@@ -1266,7 +1266,7 @@ pub fn sphericalLocalCubeVertices(scale: f32, rotor: h.Rotor) [unit_cube_vertice
     return vertices;
 }
 
-pub fn sphericalDemoAmbientPoint(params: curved.Params, local: curved.Vec3) curved.Vec4 {
+pub fn sphericalDemoAmbientPoint(params: curved.Params, local: curved.Vec3) RoundAmbient.Vector {
     // HyperEngine models walkable objects relative to the ground plane with a
     // dedicated TanK-height transform instead of as one rigid exponential-map
     // solid. The spherical demo path mirrors that "footprint + lifted height"
@@ -1279,7 +1279,7 @@ fn sphericalCubeChartVertices(local_vertices: [unit_cube_vertices.len]h.Vector, 
     var chart_vertices: [unit_cube_vertices.len]h.Vector = undefined;
     for (local_vertices, 0..) |vertex, i| {
         const ambient = sphericalDemoAmbientPoint(params, vec3FromVector(vertex));
-        chart_vertices[i] = vectorFromVec3(curved.chartCoords(.spherical, params, ambient));
+        chart_vertices[i] = vectorFromVec3(curved.chartCoords(.spherical, params, RoundAmbient.toCoords(ambient)));
     }
     return chart_vertices;
 }
@@ -1481,16 +1481,13 @@ test "spherical backward walk does not oscillate between two positions" {
         .scene_sign = 1.0,
     };
 
-    var prev2_position: ?curved.Vec4 = null;
-    var prev_position = RoundAmbient.toCoords(camera.spherical.camera.position);
+    var prev2_position: ?RoundAmbient.Vector = null;
+    var prev_position = camera.spherical.camera.position;
     for (0..40) |_| {
         adjustCameraTranslation(&camera, .spherical, 's');
-        const position = RoundAmbient.toCoords(camera.spherical.camera.position);
+        const position = camera.spherical.camera.position;
         if (prev2_position) |prev2| {
-            const two_step_dot = prev2[0] * position[0] +
-                prev2[1] * position[1] +
-                prev2[2] * position[2] +
-                prev2[3] * position[3];
+            const two_step_dot = RoundAmbient.dot(prev2, position);
             try std.testing.expect(two_step_dot < 0.995);
         }
         prev2_position = prev_position;
