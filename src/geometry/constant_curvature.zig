@@ -1373,41 +1373,45 @@ fn hemisphereDistance(params: Params) f32 {
     return maxSphericalDistance(params) * 0.5;
 }
 
-pub fn sphericalAmbientFromLocalPoint(params: Params, local_input: anytype) Vec4 {
+pub fn sphericalAmbientFromLocalPoint(params: Params, local_input: anytype) AmbientFor(.spherical).Vector {
+    const Round = AmbientFor(.spherical);
     const local = coerceVec3(local_input);
     const local_radius = local.magnitude();
-    if (local_radius <= 1e-6) return .{ 1.0, 0.0, 0.0, 0.0 };
+    if (local_radius <= 1e-6) return Round.identity();
 
     const theta = local_radius / params.radius;
     const spatial_scale = @sin(theta) / local_radius;
-    return .{
+    return Round.fromCoords(.{
         @cos(theta),
         vec3x(local) * spatial_scale,
         vec3y(local) * spatial_scale,
         vec3z(local) * spatial_scale,
-    };
+    });
 }
 
-pub fn sphericalAmbientFromGroundHeightPoint(params: Params, local_input: anytype) Vec4 {
+pub fn sphericalAmbientFromGroundHeightPoint(params: Params, local_input: anytype) AmbientFor(.spherical).Vector {
+    const Round = AmbientFor(.spherical);
     const local = coerceVec3(local_input);
-    const base = ambientFromTangentBasisPoint(
+    const base = ambientFromTypedTangentBasisPoint(
         .spherical,
         params,
-        .{ 1.0, 0.0, 0.0, 0.0 },
-        .{ 0.0, 1.0, 0.0, 0.0 },
-        .{ 0.0, 0.0, 0.0, 1.0 },
+        Round.identity(),
+        Round.fromCoords(.{ 0.0, 1.0, 0.0, 0.0 }),
+        Round.fromCoords(.{ 0.0, 0.0, 0.0, 1.0 }),
         vec3x(local),
         vec3z(local),
-    ) orelse return .{ 1.0, 0.0, 0.0, 0.0 };
+    ) orelse return Round.identity();
     if (@abs(vec3y(local)) <= 1e-6) return base;
 
-    const up = worldUpAt(.spherical, base) orelse return base;
+    const up = typedWorldUpAt(.spherical, base) orelse return base;
     const normalized_height = vec3y(local) / params.radius;
-    return normalizeAmbient(.spherical, add4(
+    return typedNormalizeAmbient(
         .spherical,
-        scale4(.spherical, base, @cos(normalized_height)),
-        scale4(.spherical, up, @sin(normalized_height)),
-    ));
+        Round.add(
+            Round.scale(base, @cos(normalized_height)),
+            Round.scale(up, @sin(normalized_height)),
+        ),
+    );
 }
 
 pub fn ambientFromTangentBasisPoint(
@@ -2937,6 +2941,7 @@ test "typed geodesic chart helper matches erased wrapper" {
 }
 
 test "spherical local exponential map preserves distance from the origin" {
+    const Round = AmbientFor(.spherical);
     const params = Params{
         .radius = 1.48,
         .angular_zoom = 1.0,
@@ -2945,12 +2950,13 @@ test "spherical local exponential map preserves distance from the origin" {
     const local = vec3(0.31, -0.22, 0.18);
     const ambient = sphericalAmbientFromLocalPoint(params, local);
     const local_distance = flatVector(local).magnitude();
-    const spherical_distance = params.radius * std.math.acos(std.math.clamp(ambient[0], -1.0, 1.0));
+    const spherical_distance = params.radius * std.math.acos(std.math.clamp(Round.w(ambient), -1.0, 1.0));
 
     try std.testing.expectApproxEqAbs(local_distance, spherical_distance, 1e-5);
 }
 
 test "spherical ground-height mapping matches the radial map on horizontal and vertical axes" {
+    const Round = AmbientFor(.spherical);
     const params = Params{
         .radius = 1.48,
         .angular_zoom = 1.0,
@@ -2960,15 +2966,15 @@ test "spherical ground-height mapping matches the radial map on horizontal and v
     const horizontal = vec3(0.31, 0.0, -0.22);
     const horizontal_exp = sphericalAmbientFromLocalPoint(params, horizontal);
     const horizontal_ground = sphericalAmbientFromGroundHeightPoint(params, horizontal);
-    inline for (horizontal_exp, 0..) |expected, i| {
-        try std.testing.expectApproxEqAbs(expected, horizontal_ground[i], 1e-5);
+    inline for (Round.toCoords(horizontal_exp), Round.toCoords(horizontal_ground)) |expected, actual| {
+        try std.testing.expectApproxEqAbs(expected, actual, 1e-5);
     }
 
     const vertical = vec3(0.0, 0.27, 0.0);
     const vertical_exp = sphericalAmbientFromLocalPoint(params, vertical);
     const vertical_ground = sphericalAmbientFromGroundHeightPoint(params, vertical);
-    inline for (vertical_exp, 0..) |expected, i| {
-        try std.testing.expectApproxEqAbs(expected, vertical_ground[i], 1e-5);
+    inline for (Round.toCoords(vertical_exp), Round.toCoords(vertical_ground)) |expected, actual| {
+        try std.testing.expectApproxEqAbs(expected, actual, 1e-5);
     }
 }
 
@@ -2990,8 +2996,9 @@ test "spherical ground-height mapping lifts from the wrapped footprint along loc
     ).?;
     const up = worldUpAt(.spherical, base).?;
     const ambient = sphericalAmbientFromGroundHeightPoint(params, local);
-    const direction = geodesicDirection(.spherical, base, ambient).?;
-    const height_distance = params.radius * std.math.acos(std.math.clamp(metricDot(.spherical, base, ambient), -1.0, 1.0));
+    const ambient_coords = AmbientFor(.spherical).toCoords(ambient);
+    const direction = geodesicDirection(.spherical, base, ambient_coords).?;
+    const height_distance = params.radius * std.math.acos(std.math.clamp(metricDot(.spherical, base, ambient_coords), -1.0, 1.0));
 
     try std.testing.expectApproxEqAbs(vec3y(local), height_distance, 1e-5);
     try std.testing.expectApproxEqAbs(1.0, metricDot(.spherical, direction, up), 1e-5);
@@ -3014,8 +3021,8 @@ test "ambient from tangent basis point matches spherical horizontal ground mappi
         vec3z(local),
     ).?;
     const expected = sphericalAmbientFromGroundHeightPoint(params, local);
-    inline for (expected, 0..) |coord, i| {
-        try std.testing.expectApproxEqAbs(coord, ambient[i], 1e-5);
+    inline for (AmbientFor(.spherical).toCoords(expected), ambient) |coord, actual| {
+        try std.testing.expectApproxEqAbs(coord, actual, 1e-5);
     }
 }
 
@@ -3035,7 +3042,7 @@ test "spherical direct ambient sampling respects scene sign after chart wrap" {
     const screen = Screen{ .width = 160, .height = 90, .zoom = 1.0 };
     const local = vec3(0.26, 0.18, 0.31);
     const ambient = sphericalAmbientFromLocalPoint(view.params, local);
-    const chart = view.chartCoords(ambient);
+    const chart = view.chartCoords(AmbientFor(.spherical).toCoords(ambient));
 
     var pos_before_wrap = view.camera.position;
     while (1.0 + view.camera.position[0] >= spherical_chart_min_denom) {
@@ -3049,7 +3056,7 @@ test "spherical direct ambient sampling respects scene sign after chart wrap" {
     try std.testing.expect(view.camera.position[0] > 0.0);
 
     const chart_sample = view.sampleProjectedPoint(chart, screen);
-    const ambient_sample = view.sampleProjectedAmbient(ambient, screen);
+    const ambient_sample = view.sampleProjectedAmbient(AmbientFor(.spherical).toCoords(ambient), screen);
 
     try std.testing.expectEqual(chart_sample.status, ambient_sample.status);
     try std.testing.expectApproxEqAbs(chart_sample.distance, ambient_sample.distance, 1e-5);
