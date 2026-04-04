@@ -13,7 +13,7 @@ pub fn TypedGroundBasis(comptime metric: curved.Metric) type {
     };
 }
 
-pub const GroundBasis = struct {
+const ErasedGroundBasis = struct {
     origin: curved.Vec4,
     right: curved.Vec4,
     forward: curved.Vec4,
@@ -34,7 +34,7 @@ fn ambientCoords(v: anytype) curved.Vec4 {
     return if (@TypeOf(v) == curved.Vec4) v else v.coeffsArray();
 }
 
-pub fn erasedGroundBasis(basis: anytype) GroundBasis {
+fn erasedGroundBasis(basis: anytype) ErasedGroundBasis {
     return .{
         .origin = ambientCoords(basis.origin),
         .right = ambientCoords(basis.right),
@@ -46,7 +46,7 @@ pub fn erasedGroundBasis(basis: anytype) GroundBasis {
 pub fn sphericalGroundBasis(basis: anytype) SphericalGroundBasis {
     return switch (@TypeOf(basis)) {
         SphericalGroundBasis => basis,
-        GroundBasis => .{
+        ErasedGroundBasis => .{
             .origin = Round.fromCoords(basis.origin),
             .right = Round.fromCoords(basis.right),
             .forward = Round.fromCoords(basis.forward),
@@ -62,10 +62,6 @@ fn sphericalView(view: anytype) curved.SphericalView {
         curved.View => view.typed(.spherical),
         else => @compileError("expected `SphericalView` or erased curved `View`"),
     };
-}
-
-pub fn worldGroundBasis() GroundBasis {
-    return erasedGroundBasis(typedWorldGroundBasis(.hyperbolic));
 }
 
 pub fn typedWorldGroundBasis(comptime metric: curved.Metric) TypedGroundBasis(metric) {
@@ -92,23 +88,6 @@ pub fn sphericalGroundBasisForPass(pass: curved.SphericalRenderPass) SphericalGr
             .forward = basis.forward,
             .up = basis.up,
         },
-    };
-}
-
-pub fn walkGroundBasis(view: anytype, pitch_angle: f32) ?GroundBasis {
-    switch (@TypeOf(view)) {
-        curved.HyperView, curved.EllipticView, curved.SphericalView => {
-            const basis = typedWalkGroundBasis(view, pitch_angle) orelse return null;
-            return erasedGroundBasis(basis);
-        },
-        else => {},
-    }
-    const basis = view.walkSurfaceBasis(pitch_angle) orelse return null;
-    return .{
-        .origin = ambientCoords(view.camera.position),
-        .right = ambientCoords(basis.right),
-        .forward = ambientCoords(basis.forward),
-        .up = ambientCoords(basis.up),
     };
 }
 
@@ -188,7 +167,7 @@ pub fn ambientPointForBasis(
     }
 }
 
-pub fn signedGroundBasisForView(view: anytype, basis: GroundBasis) GroundBasis {
+fn signedGroundBasisForView(view: anytype, basis: ErasedGroundBasis) ErasedGroundBasis {
     switch (@TypeOf(view)) {
         curved.SphericalView => if (view.scene_sign < 0.0) {
             return .{
@@ -344,7 +323,7 @@ test "signedGroundBasisForView flips spherical negative scene" {
         curved.vec3(0.0, 0.0, -0.82),
         curved.vec3(0.0, 0.0, 0.0),
     );
-    const basis = worldGroundBasis();
+    const basis = erasedGroundBasis(typedWorldGroundBasis(.hyperbolic));
     const positive = signedGroundBasisForView(view, basis);
     view.scene_sign = -1.0;
     const negative = signedGroundBasisForView(view, basis);
