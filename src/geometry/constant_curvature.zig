@@ -178,8 +178,13 @@ pub fn TypedView(comptime metric: Metric) type {
             eye_chart: anytype,
             target_chart: anytype,
         ) CameraError!Self {
-            const erased_view = try View.init(metric, params, projection_mode, clip, eye_chart, target_chart);
-            return fromErased(erased_view);
+            return .{
+                .params = params,
+                .projection = projection_mode,
+                .clip = clip,
+                .camera = try typedInitCamera(metric, params, coerceVec3(eye_chart), coerceVec3(target_chart)),
+                .scene_sign = 1.0,
+            };
         }
 
         pub fn fromErased(view: View) Self {
@@ -279,9 +284,21 @@ pub fn TypedView(comptime metric: Metric) type {
         }
 
         pub fn adjustRadius(self: *Self, radius: f32, look_ahead: f32) CameraError!void {
-            var erased_view = self.erased();
-            try erased_view.adjustRadius(radius, look_ahead);
-            self.* = fromErased(erased_view);
+            if (radius <= 1e-6) return error.InvalidChartPoint;
+
+            const next_params = Params{
+                .radius = radius,
+                .angular_zoom = self.params.angular_zoom,
+                .chart_model = self.params.chart_model,
+            };
+            const eye_chart = typedChartCoords(metric, next_params, self.camera.position);
+            var probe = self.camera;
+            typedMoveAlongDirection(metric, &probe, next_params, probe.forward, look_ahead);
+            const target_chart = typedChartCoords(metric, next_params, probe.position);
+            const next_camera = try typedInitCamera(metric, next_params, eye_chart, target_chart);
+
+            self.params = next_params;
+            self.camera = next_camera;
         }
 
         pub fn shadeFarDistance(self: Self) f32 {
@@ -289,11 +306,11 @@ pub fn TypedView(comptime metric: Metric) type {
         }
 
         fn sceneAmbientPoint(self: Self, chart: anytype) ?Ambient.Vector {
-            const ambient = embedPoint(metric, self.params, chart) orelse return null;
+            const ambient = typedEmbedPoint(metric, self.params, chart) orelse return null;
             return if (metric == .spherical and self.scene_sign < 0.0)
-                Ambient.scale(Ambient.fromCoords(ambient), -1.0)
+                Ambient.scale(ambient, -1.0)
             else
-                Ambient.fromCoords(ambient);
+                ambient;
         }
 
         pub fn sampleProjectedPoint(self: Self, chart: anytype, screen: Screen) ProjectedSample {
@@ -447,6 +464,22 @@ fn ambientIdentity(metric: Metric) Vec4 {
     return .{ 1.0, 0.0, 0.0, 0.0 };
 }
 
+fn typedEmbedPoint(
+    comptime metric: Metric,
+    params: Params,
+    chart_input: anytype,
+) ?AmbientFor(metric).Vector {
+    return AmbientFor(metric).fromCoords(embedPoint(metric, params, chart_input) orelse return null);
+}
+
+fn typedChartCoords(
+    comptime metric: Metric,
+    params: Params,
+    ambient: AmbientFor(metric).Vector,
+) Vec3 {
+    return chartCoords(metric, params, AmbientFor(metric).toCoords(ambient));
+}
+
 fn typedZero(comptime metric: Metric) AmbientFor(metric).Vector {
     const Ambient = AmbientFor(metric);
     return Ambient.scale(Ambient.identity(), 0.0);
@@ -496,6 +529,24 @@ fn typedReorthonormalize(comptime metric: Metric, camera: *TypedCamera(metric)) 
     camera.forward = typedOrthonormalCandidate(metric, camera.position, camera.forward, &.{}) orelse camera.forward;
     camera.right = typedOrthonormalCandidate(metric, camera.position, camera.right, &.{camera.forward}) orelse camera.right;
     camera.up = typedOrthonormalCandidate(metric, camera.position, camera.up, &.{ camera.forward, camera.right }) orelse camera.up;
+}
+
+fn typedNormalizeAmbient(comptime metric: Metric, ambient: AmbientFor(metric).Vector) AmbientFor(metric).Vector {
+    const Ambient = AmbientFor(metric);
+    if (!Ambient.isFinite(ambient)) return Ambient.identity();
+    const norm2 = Ambient.dot(ambient, ambient);
+    const inv = switch (metric) {
+        .hyperbolic => inv: {
+            if (!std.math.isFinite(norm2) or -norm2 <= 1e-6) return Ambient.identity();
+            break :inv 1.0 / @sqrt(-norm2);
+        },
+        .elliptic, .spherical => inv: {
+            if (!std.math.isFinite(norm2) or norm2 <= 1e-6) return Ambient.identity();
+            break :inv 1.0 / @sqrt(norm2);
+        },
+    };
+    const normalized = Ambient.scale(ambient, inv);
+    return if (Ambient.isFinite(normalized)) normalized else Ambient.identity();
 }
 
 fn typedRotatePair(
@@ -696,6 +747,92 @@ fn typedTransportedTangent(
         Ambient.sub(tangent, Ambient.scale(old_direction, along)),
         Ambient.scale(new_direction, along),
     );
+}
+
+fn typedGeodesicAmbientPoint(
+    comptime metric: Metric,
+    a: AmbientFor(metric).Vector,
+    b_input: AmbientFor(metric).Vector,
+    t: f32,
+) ?AmbientFor(metric).Vector {
+    const Ambient = AmbientFor(metric);
+    var b = b_input;
+
+    return switch (metric) {
+        .hyperbolic => {
+            const cosh_omega = @max(-Ambient.dot(a, b), 1.0);
+            const omega = std.math.acosh(cosh_omega);
+            if (omega <= 1e-5) return a;
+
+            const inv_denom = 1.0 / std.math.sinh(omega);
+            const p = Ambient.add(
+                Ambient.scale(a, std.math.sinh((1.0 - t) * omega) * inv_denom),
+                Ambient.scale(b, std.math.sinh(t * omega) * inv_denom),
+            );
+            return typedNormalizeAmbient(metric, p);
+        },
+        .elliptic, .spherical => {
+            if (metric == .elliptic and Ambient.dot(a, b) < 0.0) {
+                b = Ambient.scale(b, -1.0);
+            }
+
+            const cos_omega = std.math.clamp(Ambient.dot(a, b), -1.0, 1.0);
+            const omega = std.math.acos(cos_omega);
+            if (omega <= 1e-5) return a;
+
+            const inv_denom = 1.0 / @sin(omega);
+            const p = Ambient.add(
+                Ambient.scale(a, @sin((1.0 - t) * omega) * inv_denom),
+                Ambient.scale(b, @sin(t * omega) * inv_denom),
+            );
+            return typedNormalizeAmbient(metric, p);
+        },
+    };
+}
+
+fn typedGeodesicDirection(
+    comptime metric: Metric,
+    eye: AmbientFor(metric).Vector,
+    target_input: AmbientFor(metric).Vector,
+) ?AmbientFor(metric).Vector {
+    const Ambient = AmbientFor(metric);
+    var target = target_input;
+    if (metric == .elliptic and Ambient.dot(eye, target) < 0.0) {
+        target = Ambient.scale(target, -1.0);
+    }
+
+    const inner = Ambient.dot(eye, target);
+    const tangent = switch (metric) {
+        .hyperbolic => Ambient.add(target, Ambient.scale(eye, inner)),
+        .elliptic, .spherical => Ambient.sub(target, Ambient.scale(eye, inner)),
+    };
+    return typedTryNormalizeTangent(metric, tangent);
+}
+
+fn typedInitCamera(
+    comptime metric: Metric,
+    params: Params,
+    eye_chart_input: anytype,
+    target_chart_input: anytype,
+) CameraError!TypedCamera(metric) {
+    const position = typedEmbedPoint(metric, params, eye_chart_input) orelse return error.InvalidChartPoint;
+    const target = typedEmbedPoint(metric, params, target_chart_input) orelse return error.InvalidChartPoint;
+    const forward = typedGeodesicDirection(metric, position, target) orelse return error.DegenerateDirection;
+    const up = typedOrthonormalCandidate(metric, position, typedBasisVector(metric, .{ 0.0, 0.0, 1.0, 0.0 }), &.{forward}) orelse
+        typedOrthonormalCandidate(metric, position, typedBasisVector(metric, .{ 0.0, 0.0, 0.0, 1.0 }), &.{forward}) orelse
+        return error.DegenerateDirection;
+    const right = typedOrthonormalCandidate(metric, position, typedBasisVector(metric, .{ 0.0, 1.0, 0.0, 0.0 }), &.{ forward, up }) orelse
+        typedOrthonormalCandidate(metric, position, typedBasisVector(metric, .{ 0.0, 0.0, 0.0, 1.0 }), &.{ forward, up }) orelse
+        return error.DegenerateDirection;
+
+    var camera = TypedCamera(metric){
+        .position = position,
+        .right = right,
+        .up = up,
+        .forward = forward,
+    };
+    typedReorthonormalize(metric, &camera);
+    return camera;
 }
 
 fn typedMoveAlongDirection(
@@ -919,21 +1056,13 @@ pub const View = struct {
     }
 
     pub fn adjustRadius(self: *View, radius: f32, look_ahead: f32) CameraError!void {
-        if (radius <= 1e-6) return error.InvalidChartPoint;
-
-        const next_params = Params{
-            .radius = radius,
-            .angular_zoom = self.params.angular_zoom,
-            .chart_model = self.params.chart_model,
-        };
-        const eye_chart = chartCoords(self.metric, next_params, self.camera.position);
-        var probe = self.camera;
-        moveForward(&probe, self.metric, next_params, look_ahead);
-        const target_chart = chartCoords(self.metric, next_params, probe.position);
-        const next_camera = try initCamera(self.metric, next_params, eye_chart, target_chart);
-
-        self.params = next_params;
-        self.camera = next_camera;
+        switch (self.metric) {
+            inline else => |metric_tag| {
+                var typed_view = self.typed(metric_tag);
+                try typed_view.adjustRadius(radius, look_ahead);
+                self.* = typed_view.erased();
+            },
+        }
     }
 
     pub fn shadeFarDistance(self: View) f32 {
@@ -1217,24 +1346,13 @@ fn typedAntipodalSphericalPassCamera(camera: TypedCamera(.spherical)) TypedCamer
 }
 
 fn sampleProjectedAmbientPointSinglePass(view: View, ambient: Vec4, screen: Screen) ProjectedSample {
-    if (cameraModelForRender(view.metric, view.projection)) |camera_model| {
-        const model_point = modelPointForAmbient(view.metric, view.camera, ambient, camera_model) orelse return .{};
-        return sampleProjectedModelPoint(
-            view.metric,
-            view.projection,
-            view.params,
-            view.clip,
-            model_point,
+    return switch (view.metric) {
+        inline else => |metric_tag| typedSampleProjectedAmbientPointSinglePass(
+            metric_tag,
+            view.typed(metric_tag),
+            AmbientFor(metric_tag).fromCoords(ambient),
             screen,
-        );
-    }
-
-    const point_sample = sampleAmbientPoint(view.metric, view.params, view.camera, ambient) orelse return .{};
-    const projected = projectSample(view.projection, point_sample, screen.width, screen.height, screen.zoom);
-    return .{
-        .distance = point_sample.distance,
-        .projected = projected,
-        .status = sampleStatus(point_sample.distance, view.clip, projected),
+        ),
     };
 }
 
@@ -1271,10 +1389,16 @@ fn sampleProjectedAmbientPointForPass(
     ambient: Vec4,
     screen: Screen,
 ) ProjectedSample {
-    const selection = sphericalPassSelection(view, ambient) orelse return .{};
-    if (selection.pass != pass) return .{ .distance = selection.near_distance };
-
-    return sampleProjectedAmbientPointForPassRaw(view, pass, ambient, screen);
+    return switch (view.metric) {
+        .spherical => typedSampleProjectedAmbientPointForPass(
+            .spherical,
+            view.typed(.spherical),
+            pass,
+            curved_ambient.Round.fromCoords(ambient),
+            screen,
+        ),
+        inline else => .{},
+    };
 }
 
 fn typedSampleProjectedAmbientPointForPass(
@@ -1296,57 +1420,15 @@ fn sampleProjectedAmbientPointForPassRaw(
     ambient: Vec4,
     screen: Screen,
 ) ProjectedSample {
-    const model = cameraModelForRender(view.metric, view.projection);
-
-    if (pass == .near) {
-        if (model) |camera_model| {
-            const model_point = modelPointForAmbient(view.metric, view.camera, ambient, camera_model) orelse return .{};
-            return sampleProjectedModelPoint(
-                view.metric,
-                view.projection,
-                view.params,
-                view.clip,
-                model_point,
-                screen,
-            );
-        }
-
-        const near_sample = sampleAmbientPoint(view.metric, view.params, view.camera, ambient) orelse return .{};
-        const projected = projectSample(view.projection, near_sample, screen.width, screen.height, screen.zoom);
-        return .{
-            .distance = near_sample.distance,
-            .projected = projected,
-            .status = sampleStatus(near_sample.distance, view.clip, projected),
-        };
-    }
-
-    const far_camera = antipodalSphericalPassCamera(view.camera);
-    if (model) |camera_model| {
-        const model_point = modelPointForAmbient(view.metric, far_camera, ambient, camera_model) orelse return .{};
-        const far_sample = sampleProjectedModelPoint(
-            view.metric,
-            view.projection,
-            view.params,
-            .{ .near = 0.0, .far = hemisphereDistance(view.params) },
-            model_point,
+    return switch (view.metric) {
+        .spherical => typedSampleProjectedAmbientPointForPassRaw(
+            .spherical,
+            view.typed(.spherical),
+            pass,
+            curved_ambient.Round.fromCoords(ambient),
             screen,
-        );
-        if (far_sample.projected == null) return far_sample;
-        const mapped_distance = maxSphericalDistance(view.params) - far_sample.distance;
-        return .{
-            .distance = mapped_distance,
-            .projected = far_sample.projected,
-            .status = sampleStatus(mapped_distance, view.clip, far_sample.projected),
-        };
-    }
-
-    const far_pass_sample = sampleAmbientPoint(view.metric, view.params, far_camera, ambient) orelse return .{};
-    const mapped_distance = maxSphericalDistance(view.params) - far_pass_sample.distance;
-    const projected = projectSample(view.projection, far_pass_sample, screen.width, screen.height, screen.zoom);
-    return .{
-        .distance = mapped_distance,
-        .projected = projected,
-        .status = sampleStatus(mapped_distance, view.clip, projected),
+        ),
+        inline else => .{},
     };
 }
 
@@ -1412,10 +1494,12 @@ fn typedSampleProjectedAmbientPointForPassRaw(
 }
 
 fn sphericalPassSelection(view: View, ambient: Vec4) ?SphericalPassSelection {
-    const near_sample = sampleAmbientPoint(view.metric, view.params, view.camera, ambient) orelse return null;
-    return .{
-        .pass = if (near_sample.z_dir >= 0.0) .near else .far,
-        .near_distance = near_sample.distance,
+    return switch (view.metric) {
+        inline else => |metric_tag| typedSphericalPassSelection(
+            metric_tag,
+            view.typed(metric_tag),
+            AmbientFor(metric_tag).fromCoords(ambient),
+        ),
     };
 }
 
@@ -1432,13 +1516,14 @@ fn typedSphericalPassSelection(
 }
 
 fn sampleProjectedAmbientPoint(view: View, ambient: Vec4, screen: Screen) ProjectedSample {
-    if (view.metric != .spherical or !sphericalUsesMultipass(view.projection)) {
-        return sampleProjectedAmbientPointSinglePass(view, ambient, screen);
-    }
-
-    const near = sampleProjectedAmbientPointForPass(view, .near, ambient, screen);
-    if (near.status != .hidden or near.projected != null) return near;
-    return sampleProjectedAmbientPointForPass(view, .far, ambient, screen);
+    return switch (view.metric) {
+        inline else => |metric_tag| typedSampleProjectedAmbientPoint(
+            metric_tag,
+            view.typed(metric_tag),
+            AmbientFor(metric_tag).fromCoords(ambient),
+            screen,
+        ),
+    };
 }
 
 fn typedSampleProjectedAmbientPoint(
@@ -1577,20 +1662,11 @@ pub fn chartCoords(metric: Metric, params: Params, ambient: Vec4) Vec3 {
 }
 
 fn normalizeAmbient(metric: Metric, ambient: Vec4) Vec4 {
-    if (!isFiniteVec4(ambient)) return ambientIdentity(metric);
-    const norm2 = metricDot(metric, ambient, ambient);
-    const inv = switch (metric) {
-        .hyperbolic => inv: {
-            if (!std.math.isFinite(norm2) or -norm2 <= 1e-6) return ambientIdentity(metric);
-            break :inv 1.0 / @sqrt(-norm2);
-        },
-        .elliptic, .spherical => inv: {
-            if (!std.math.isFinite(norm2) or norm2 <= 1e-6) return ambientIdentity(metric);
-            break :inv 1.0 / @sqrt(norm2);
-        },
+    return switch (metric) {
+        inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
+            typedNormalizeAmbient(metric_tag, AmbientFor(metric_tag).fromCoords(ambient)),
+        ),
     };
-    const normalized = scale4(metric, ambient, inv);
-    return if (isFiniteVec4(normalized)) normalized else ambientIdentity(metric);
 }
 
 fn transportedTangent(metric: Metric, old_direction: Vec4, new_direction: Vec4, tangent: Vec4) Vec4 {
@@ -1603,39 +1679,15 @@ fn transportedTangent(metric: Metric, old_direction: Vec4, new_direction: Vec4, 
 }
 
 fn geodesicAmbientPoint(metric: Metric, a: Vec4, b_input: Vec4, t: f32) ?Vec4 {
-    var b = b_input;
-
     return switch (metric) {
-        .hyperbolic => {
-            const cosh_omega = @max(-metricDot(metric, a, b), 1.0);
-            const omega = std.math.acosh(cosh_omega);
-            if (omega <= 1e-5) return a;
-
-            const inv_denom = 1.0 / std.math.sinh(omega);
-            const p = add4(
-                metric,
-                scale4(metric, a, std.math.sinh((1.0 - t) * omega) * inv_denom),
-                scale4(metric, b, std.math.sinh(t * omega) * inv_denom),
-            );
-            return normalizeAmbient(metric, p);
-        },
-        .elliptic, .spherical => {
-            if (metric == .elliptic and metricDot(metric, a, b) < 0.0) {
-                b = scale4(metric, b, -1.0);
-            }
-
-            const cos_omega = std.math.clamp(metricDot(metric, a, b), -1.0, 1.0);
-            const omega = std.math.acos(cos_omega);
-            if (omega <= 1e-5) return a;
-
-            const inv_denom = 1.0 / @sin(omega);
-            const p = add4(
-                metric,
-                scale4(metric, a, @sin((1.0 - t) * omega) * inv_denom),
-                scale4(metric, b, @sin(t * omega) * inv_denom),
-            );
-            return normalizeAmbient(metric, p);
-        },
+        inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
+            typedGeodesicAmbientPoint(
+                metric_tag,
+                AmbientFor(metric_tag).fromCoords(a),
+                AmbientFor(metric_tag).fromCoords(b_input),
+                t,
+            ) orelse return null,
+        ),
     };
 }
 
@@ -1654,34 +1706,24 @@ pub fn geodesicChartPoint(metric: Metric, params: Params, a_chart: anytype, b_ch
 // the target point, obtained by removing the eye component with the ambient
 // metric of the model. Same references as above.
 fn geodesicDirection(metric: Metric, eye: Vec4, target: Vec4) ?Vec4 {
-    var adjusted_target = target;
-    if (metric == .elliptic and metricDot(metric, eye, adjusted_target) < 0.0) {
-        adjusted_target = scale4(metric, adjusted_target, -1.0);
-    }
-
-    const inner = metricDot(metric, eye, adjusted_target);
-    const tangent = switch (metric) {
-        .hyperbolic => add4(metric, adjusted_target, scale4(metric, eye, inner)),
-        .elliptic, .spherical => sub4(metric, adjusted_target, scale4(metric, eye, inner)),
+    return switch (metric) {
+        inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
+            typedGeodesicDirection(
+                metric_tag,
+                AmbientFor(metric_tag).fromCoords(eye),
+                AmbientFor(metric_tag).fromCoords(target),
+            ) orelse return null,
+        ),
     };
-    return tryNormalizeTangent(metric, tangent);
 }
 
 fn relativeCoords(metric: Metric, camera: Camera, ambient: Vec4) RelativeCoords {
-    var point = ambient;
-    if (metric == .elliptic and metricDot(metric, camera.position, point) < 0.0) {
-        point = scale4(metric, point, -1.0);
-    }
-
-    const inner = metricDot(metric, camera.position, point);
-    return .{
-        .w = switch (metric) {
-            .hyperbolic => -inner,
-            .elliptic, .spherical => inner,
-        },
-        .x = metricDot(metric, point, camera.right),
-        .y = metricDot(metric, point, camera.up),
-        .z = metricDot(metric, point, camera.forward),
+    return switch (metric) {
+        inline else => |metric_tag| typedRelativeCoords(
+            metric_tag,
+            typedCameraFromErased(metric_tag, camera),
+            AmbientFor(metric_tag).fromCoords(ambient),
+        ),
     };
 }
 
@@ -1795,26 +1837,12 @@ fn reorthonormalize(metric: Metric, camera: *Camera) void {
 }
 
 pub fn initCamera(metric: Metric, params: Params, eye_chart_input: anytype, target_chart_input: anytype) CameraError!Camera {
-    const eye_chart = coerceVec3(eye_chart_input);
-    const target_chart = coerceVec3(target_chart_input);
-    const position = embedPoint(metric, params, eye_chart) orelse return error.InvalidChartPoint;
-    const target = embedPoint(metric, params, target_chart) orelse return error.InvalidChartPoint;
-    const forward = geodesicDirection(metric, position, target) orelse return error.DegenerateDirection;
-    const up = orthonormalCandidate(metric, position, .{ 0.0, 0.0, 1.0, 0.0 }, &.{forward}) orelse
-        orthonormalCandidate(metric, position, .{ 0.0, 0.0, 0.0, 1.0 }, &.{forward}) orelse
-        return error.DegenerateDirection;
-    const right = orthonormalCandidate(metric, position, .{ 0.0, 1.0, 0.0, 0.0 }, &.{ forward, up }) orelse
-        orthonormalCandidate(metric, position, .{ 0.0, 0.0, 0.0, 1.0 }, &.{ forward, up }) orelse
-        return error.DegenerateDirection;
-
-    var camera = Camera{
-        .position = position,
-        .right = right,
-        .up = up,
-        .forward = forward,
+    return switch (metric) {
+        inline else => |metric_tag| typedCameraToErased(
+            metric_tag,
+            try typedInitCamera(metric_tag, params, coerceVec3(eye_chart_input), coerceVec3(target_chart_input)),
+        ),
     };
-    reorthonormalize(metric, &camera);
-    return camera;
 }
 
 fn rotatePair(metric: Metric, camera: *Camera, first: *Vec4, second: *Vec4, angle: f32) void {
@@ -1828,11 +1856,23 @@ fn rotatePair(metric: Metric, camera: *Camera, first: *Vec4, second: *Vec4, angl
 }
 
 pub fn yaw(camera: *Camera, metric: Metric, angle: f32) void {
-    rotatePair(metric, camera, &camera.forward, &camera.right, angle);
+    switch (metric) {
+        inline else => |metric_tag| {
+            var typed_camera = typedCameraFromErased(metric_tag, camera.*);
+            typedYaw(metric_tag, &typed_camera, angle);
+            camera.* = typedCameraToErased(metric_tag, typed_camera);
+        },
+    }
 }
 
 pub fn pitch(camera: *Camera, metric: Metric, angle: f32) void {
-    rotatePair(metric, camera, &camera.forward, &camera.up, angle);
+    switch (metric) {
+        inline else => |metric_tag| {
+            var typed_camera = typedCameraFromErased(metric_tag, camera.*);
+            typedPitch(metric_tag, &typed_camera, angle);
+            camera.* = typedCameraToErased(metric_tag, typed_camera);
+        },
+    }
 }
 
 // Geodesic camera transport in the ambient models:
@@ -1843,35 +1883,19 @@ pub fn pitch(camera: *Camera, metric: Metric, angle: f32) void {
 // https://arxiv.org/abs/1310.2713
 // https://arxiv.org/pdf/1602.08562
 pub fn moveAlongDirection(camera: *Camera, metric: Metric, params: Params, direction: Vec4, distance: f32) void {
-    const old_position = camera.position;
-    const old_direction = tryNormalizeTangent(metric, projectToTangent(metric, old_position, direction)) orelse return;
-    const old_forward = camera.forward;
-    const old_right = camera.right;
-    const old_up = camera.up;
-    const normalized_distance = distance / params.radius;
-    var new_position: Vec4 = undefined;
-    var new_direction: Vec4 = undefined;
-
     switch (metric) {
-        .hyperbolic => {
-            const c = std.math.cosh(normalized_distance);
-            const s = std.math.sinh(normalized_distance);
-            new_position = add4(metric, scale4(metric, old_position, c), scale4(metric, old_direction, s));
-            new_direction = add4(metric, scale4(metric, old_position, s), scale4(metric, old_direction, c));
-        },
-        .elliptic, .spherical => {
-            const c = @cos(normalized_distance);
-            const s = @sin(normalized_distance);
-            new_position = add4(metric, scale4(metric, old_position, c), scale4(metric, old_direction, s));
-            new_direction = add4(metric, scale4(metric, old_direction, c), scale4(metric, old_position, -s));
+        inline else => |metric_tag| {
+            var typed_camera = typedCameraFromErased(metric_tag, camera.*);
+            typedMoveAlongDirection(
+                metric_tag,
+                &typed_camera,
+                params,
+                AmbientFor(metric_tag).fromCoords(direction),
+                distance,
+            );
+            camera.* = typedCameraToErased(metric_tag, typed_camera);
         },
     }
-
-    camera.position = new_position;
-    camera.forward = transportedTangent(metric, old_direction, new_direction, old_forward);
-    camera.right = transportedTangent(metric, old_direction, new_direction, old_right);
-    camera.up = transportedTangent(metric, old_direction, new_direction, old_up);
-    reorthonormalize(metric, camera);
 }
 
 pub fn moveForward(camera: *Camera, metric: Metric, params: Params, distance: f32) void {
@@ -1901,12 +1925,11 @@ fn headingBasis(metric: Metric, camera: Camera) ?HeadingBasis {
 }
 
 pub fn worldHeadingDirection(metric: Metric, camera: Camera, x_heading: f32, z_heading: f32) ?Vec4 {
-    const basis = headingBasis(metric, camera) orelse return null;
-    return tryNormalizeTangent(metric, add4(
-        metric,
-        scale4(metric, basis.east, x_heading),
-        scale4(metric, basis.north, z_heading),
-    ));
+    return switch (metric) {
+        inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
+            typedWorldHeadingDirection(metric_tag, typedCameraFromErased(metric_tag, camera), x_heading, z_heading) orelse return null,
+        ),
+    };
 }
 
 fn worldUpAt(metric: Metric, position: Vec4) ?Vec4 {
@@ -1919,23 +1942,8 @@ fn worldUpDirection(metric: Metric, camera: Camera) ?Vec4 {
 }
 
 fn currentWalkOrientation(metric: Metric, camera: Camera) ?WalkOrientation {
-    const basis = headingBasis(metric, camera) orelse return null;
-    const pitch_angle = std.math.asin(std.math.clamp(metricDot(metric, camera.forward, basis.up), -1.0, 1.0));
-
-    const forward_ground = orthonormalCandidate(metric, camera.position, camera.forward, &.{basis.up}) orelse fallback_ground: {
-        const up_sign: f32 = if (pitch_angle >= 0.0) -1.0 else 1.0;
-        break :fallback_ground orthonormalCandidate(metric, camera.position, scale4(metric, camera.up, up_sign), &.{basis.up}) orelse return null;
-    };
-
-    const x_heading = metricDot(metric, forward_ground, basis.east);
-    const z_heading = metricDot(metric, forward_ground, basis.north);
-    const heading_len = @sqrt(x_heading * x_heading + z_heading * z_heading);
-    if (heading_len <= 1e-6) return null;
-
-    return .{
-        .x_heading = x_heading / heading_len,
-        .z_heading = z_heading / heading_len,
-        .pitch = pitch_angle,
+    return switch (metric) {
+        inline else => |metric_tag| typedCurrentWalkOrientation(metric_tag, typedCameraFromErased(metric_tag, camera)),
     };
 }
 
@@ -1946,19 +1954,13 @@ pub fn orientFromHeadingPitch(
     z_heading: f32,
     pitch_angle: f32,
 ) void {
-    const basis = headingBasis(metric, camera.*) orelse return;
-    const horizontal_forward = worldHeadingDirection(metric, camera.*, x_heading, z_heading) orelse return;
-    const horizontal_right = worldHeadingDirection(metric, camera.*, z_heading, -x_heading) orelse return;
-
-    camera.forward = add4(
-        metric,
-        scale4(metric, horizontal_forward, @cos(pitch_angle)),
-        scale4(metric, basis.up, @sin(pitch_angle)),
-    );
-    camera.forward = tryNormalizeTangent(metric, projectToTangent(metric, camera.position, camera.forward)) orelse return;
-    camera.right = orthonormalCandidate(metric, camera.position, horizontal_right, &.{camera.forward}) orelse return;
-    camera.up = orthonormalCandidate(metric, camera.position, basis.up, &.{ camera.forward, camera.right }) orelse return;
-    reorthonormalize(metric, camera);
+    switch (metric) {
+        inline else => |metric_tag| {
+            var typed_camera = typedCameraFromErased(metric_tag, camera.*);
+            typedOrientFromHeadingPitch(metric_tag, &typed_camera, x_heading, z_heading, pitch_angle);
+            camera.* = typedCameraToErased(metric_tag, typed_camera);
+        },
+    }
 }
 
 pub fn projectPoint(
@@ -1980,21 +1982,13 @@ pub fn projectPoint(
 }
 
 fn sampleAmbientPoint(metric: Metric, params: Params, camera: Camera, ambient: Vec4) ?Sample {
-    const relative = relativeCoords(metric, camera, ambient);
-    const spatial_norm = relativeSpatialLength(relative);
-    if (spatial_norm <= 1e-6) return null;
-
-    const distance = switch (metric) {
-        .hyperbolic => params.radius * std.math.acosh(@max(relative.w, 1.0)),
-        .elliptic => params.radius * std.math.acos(std.math.clamp(relative.w, -1.0, 1.0)),
-        .spherical => params.radius * std.math.acos(std.math.clamp(relative.w, -1.0, 1.0)),
-    };
-
-    return .{
-        .distance = distance,
-        .x_dir = relative.x / spatial_norm,
-        .y_dir = relative.y / spatial_norm,
-        .z_dir = relative.z / spatial_norm,
+    return switch (metric) {
+        inline else => |metric_tag| typedSampleAmbientPoint(
+            metric_tag,
+            params,
+            typedCameraFromErased(metric_tag, camera),
+            AmbientFor(metric_tag).fromCoords(ambient),
+        ),
     };
 }
 
@@ -2028,20 +2022,14 @@ pub fn samplePoint(metric: Metric, params: Params, camera: Camera, chart: anytyp
 }
 
 fn modelPointForAmbient(metric: Metric, camera: Camera, ambient: Vec4, model: CameraModel) ?Vec3 {
-    const relative = relativeCoords(metric, camera, ambient);
-    const denom = switch (model) {
-        // Hyperbolica devlog #4 uses the linear camera-relative models where
-        // straight interpolation matters: Beltrami-Klein for hyperbolic space
-        // and gnomonic for spherical space.
-        // https://www.youtube.com/watch?v=rqSLuOR3dwY
-        .linear => relative.w,
-        // Devlog #3 uses the conformal charts internally, matching Poincare
-        // for hyperbolic space and stereographic for spherical space.
-        // https://www.youtube.com/watch?v=pXWRYpdYc7Q
-        .conformal => 1.0 + relative.w,
+    return switch (metric) {
+        inline else => |metric_tag| typedModelPointForAmbient(
+            metric_tag,
+            typedCameraFromErased(metric_tag, camera),
+            AmbientFor(metric_tag).fromCoords(ambient),
+            model,
+        ),
     };
-    if (@abs(denom) <= 1e-6) return null;
-    return vec3(relative.x / denom, relative.y / denom, relative.z / denom);
 }
 
 fn typedModelPointForAmbient(
@@ -2306,6 +2294,58 @@ test "typed spherical view matches erased sampling queries" {
     try std.testing.expectApproxEqAbs(erased_far.distance, typed_far.distance, 1e-5);
     try std.testing.expectApproxEqAbs(erased_far.projected.?[0], typed_far.projected.?[0], 1e-4);
     try std.testing.expectApproxEqAbs(erased_far.projected.?[1], typed_far.projected.?[1], 1e-4);
+}
+
+test "typed curved views initialize like erased views" {
+    const params = Params{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal };
+    const clip = DistanceClip{ .near = 0.08, .far = std.math.inf(f32) };
+
+    const typed_hyper = try HyperView.init(params, .gnomonic, clip, .{ 0.0, 0.0, -0.22 }, .{ 0.0, 0.0, 0.0 });
+    const erased_hyper = try View.init(.hyperbolic, params, .gnomonic, clip, .{ 0.0, 0.0, -0.22 }, .{ 0.0, 0.0, 0.0 });
+    const typed_round = try SphericalView.init(params, .stereographic, clip, .{ 0.0, 0.0, -0.82 }, .{ 0.0, 0.0, 0.0 });
+    const erased_round = try View.init(.spherical, params, .stereographic, clip, .{ 0.0, 0.0, -0.82 }, .{ 0.0, 0.0, 0.0 });
+
+    const typed_hyper_erased = typed_hyper.erased();
+    const typed_round_erased = typed_round.erased();
+    inline for (&.{ typed_hyper_erased.camera.position, typed_hyper_erased.camera.right, typed_hyper_erased.camera.up, typed_hyper_erased.camera.forward }, &.{ erased_hyper.camera.position, erased_hyper.camera.right, erased_hyper.camera.up, erased_hyper.camera.forward }) |expected, actual| {
+        inline for (expected, 0..) |coord, i| {
+            try std.testing.expectApproxEqAbs(coord, actual[i], 1e-6);
+        }
+    }
+    inline for (&.{ typed_round_erased.camera.position, typed_round_erased.camera.right, typed_round_erased.camera.up, typed_round_erased.camera.forward }, &.{ erased_round.camera.position, erased_round.camera.right, erased_round.camera.up, erased_round.camera.forward }) |expected, actual| {
+        inline for (expected, 0..) |coord, i| {
+            try std.testing.expectApproxEqAbs(coord, actual[i], 1e-6);
+        }
+    }
+}
+
+test "typed adjustRadius matches erased adjustment" {
+    var typed = try SphericalView.init(
+        .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
+        .wrapped,
+        .{ .near = 0.08, .far = std.math.inf(f32) },
+        .{ 0.0, 0.0, -0.82 },
+        .{ 0.0, 0.0, 0.0 },
+    );
+    var erased = try View.init(
+        .spherical,
+        .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
+        .wrapped,
+        .{ .near = 0.08, .far = std.math.inf(f32) },
+        .{ 0.0, 0.0, -0.82 },
+        .{ 0.0, 0.0, 0.0 },
+    );
+
+    try typed.adjustRadius(1.15, 0.18);
+    try erased.adjustRadius(1.15, 0.18);
+
+    const typed_erased = typed.erased();
+    try std.testing.expectApproxEqAbs(typed_erased.params.radius, erased.params.radius, 1e-6);
+    inline for (&.{ typed_erased.camera.position, typed_erased.camera.right, typed_erased.camera.up, typed_erased.camera.forward }, &.{ erased.camera.position, erased.camera.right, erased.camera.up, erased.camera.forward }) |expected, actual| {
+        inline for (expected, 0..) |coord, i| {
+            try std.testing.expectApproxEqAbs(coord, actual[i], 1e-5);
+        }
+    }
 }
 
 test "adjustRadius preserves a valid camera" {
