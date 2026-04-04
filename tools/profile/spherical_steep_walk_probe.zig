@@ -3,43 +3,48 @@ const zmath = @import("zmath");
 const demo = @import("demo_core");
 
 const curved = zmath.geometry.constant_curvature;
+const Round = curved.AmbientFor(.spherical);
+const SphericalView = curved.SphericalView;
 const screen_width: usize = 160;
 const screen_height: usize = 90;
 
 fn printState(writer: anytype, step: usize, app: demo.App) !void {
     const view = app.camera.spherical;
-    const eye_chart = curved.chartCoords(view.metric, view.params, view.camera.position);
+    const eye_chart = view.chartCoords(view.camera.position);
     const walk = view.walkOrientation();
+    const pos = Round.toCoords(view.camera.position);
+    const fwd = Round.toCoords(view.camera.forward);
+    const up = Round.toCoords(view.camera.up);
 
     try writer.print(
         "step {d} eye_chart=({d:.6},{d:.6},{d:.6}) w={d:.6} denom={d:.6}\n",
-        .{ step, eye_chart[0], eye_chart[1], eye_chart[2], view.camera.position[0], 1.0 + view.camera.position[0] },
+        .{ step, curved.vec3x(eye_chart), curved.vec3y(eye_chart), curved.vec3z(eye_chart), pos[0], 1.0 + pos[0] },
     );
     try writer.print(
         "  pos=({d:.6},{d:.6},{d:.6},{d:.6})\n",
         .{
-            view.camera.position[0],
-            view.camera.position[1],
-            view.camera.position[2],
-            view.camera.position[3],
+            pos[0],
+            pos[1],
+            pos[2],
+            pos[3],
         },
     );
     try writer.print(
         "  fwd=({d:.6},{d:.6},{d:.6},{d:.6})\n",
         .{
-            view.camera.forward[0],
-            view.camera.forward[1],
-            view.camera.forward[2],
-            view.camera.forward[3],
+            fwd[0],
+            fwd[1],
+            fwd[2],
+            fwd[3],
         },
     );
     try writer.print(
         "  up =({d:.6},{d:.6},{d:.6},{d:.6})\n",
         .{
-            view.camera.up[0],
-            view.camera.up[1],
-            view.camera.up[2],
-            view.camera.up[3],
+            up[0],
+            up[1],
+            up[2],
+            up[3],
         },
     );
     if (walk) |w| {
@@ -52,39 +57,42 @@ fn printState(writer: anytype, step: usize, app: demo.App) !void {
     }
 }
 
-fn printViewState(writer: anytype, step: usize, view: curved.View) !void {
-    const eye_chart = curved.chartCoords(view.metric, view.params, view.camera.position);
+fn printViewState(writer: anytype, step: usize, view: SphericalView) !void {
+    const eye_chart = view.chartCoords(view.camera.position);
     const walk = view.walkOrientation();
+    const pos = Round.toCoords(view.camera.position);
+    const fwd = Round.toCoords(view.camera.forward);
+    const up = Round.toCoords(view.camera.up);
 
     try writer.print(
         "step {d} eye_chart=({d:.6},{d:.6},{d:.6}) w={d:.6} denom={d:.6}\n",
-        .{ step, eye_chart[0], eye_chart[1], eye_chart[2], view.camera.position[0], 1.0 + view.camera.position[0] },
+        .{ step, curved.vec3x(eye_chart), curved.vec3y(eye_chart), curved.vec3z(eye_chart), pos[0], 1.0 + pos[0] },
     );
     try writer.print(
         "  pos=({d:.6},{d:.6},{d:.6},{d:.6})\n",
         .{
-            view.camera.position[0],
-            view.camera.position[1],
-            view.camera.position[2],
-            view.camera.position[3],
+            pos[0],
+            pos[1],
+            pos[2],
+            pos[3],
         },
     );
     try writer.print(
         "  fwd=({d:.6},{d:.6},{d:.6},{d:.6})\n",
         .{
-            view.camera.forward[0],
-            view.camera.forward[1],
-            view.camera.forward[2],
-            view.camera.forward[3],
+            fwd[0],
+            fwd[1],
+            fwd[2],
+            fwd[3],
         },
     );
     try writer.print(
         "  up =({d:.6},{d:.6},{d:.6},{d:.6})\n",
         .{
-            view.camera.up[0],
-            view.camera.up[1],
-            view.camera.up[2],
-            view.camera.up[3],
+            up[0],
+            up[1],
+            up[2],
+            up[3],
         },
     );
     if (walk) |w| {
@@ -98,23 +106,13 @@ fn printViewState(writer: anytype, step: usize, view: curved.View) !void {
 }
 
 fn vec3FromVector(v: demo.H.Vector) curved.Vec3 {
-    return .{
-        v.coeffNamed("e1"),
-        v.coeffNamed("e2"),
-        v.coeffNamed("e3"),
-    };
+    return curved.vec3(v.coeffNamed("e1"), v.coeffNamed("e2"), v.coeffNamed("e3"));
 }
 
-fn liftedWalkView(view: curved.View, pitch_angle: f32) curved.View {
-    const surface_up = view.walkSurfaceUp(pitch_angle) orelse return view;
+fn liftedWalkView(view: SphericalView, _: f32) SphericalView {
+    const surface_up = view.walkSurfaceUp() orelse return view;
     var lifted = view;
-    curved.moveAlongDirection(
-        &lifted.camera,
-        view.metric,
-        view.params,
-        surface_up,
-        0.34,
-    );
+    lifted.moveAlong(surface_up, 0.34);
     return lifted;
 }
 
@@ -147,8 +145,8 @@ pub fn main(init: std.process.Init) !void {
 
         const pos = app.camera.spherical.camera.position;
         const fwd = app.camera.spherical.camera.forward;
-        const position_dot = prev_pos[0] * pos[0] + prev_pos[1] * pos[1] + prev_pos[2] * pos[2] + prev_pos[3] * pos[3];
-        const forward_dot = prev_fwd[0] * fwd[0] + prev_fwd[1] * fwd[1] + prev_fwd[2] * fwd[2] + prev_fwd[3] * fwd[3];
+        const position_dot = Round.dot(prev_pos, pos);
+        const forward_dot = Round.dot(prev_fwd, fwd);
         const scene = demo.curvedScene(app, screen_width, screen_height).?.spherical;
         const render_view = liftedWalkView(scene.view, app.camera.euclid_pitch);
 

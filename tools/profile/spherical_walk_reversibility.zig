@@ -3,30 +3,34 @@ const zmath = @import("zmath");
 const demo = @import("demo_core");
 
 const curved = zmath.geometry.constant_curvature;
+const Round = curved.AmbientFor(.spherical);
+const SphericalView = curved.SphericalView;
 
-fn dot4(a: curved.Vec4, b: curved.Vec4) f32 {
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+fn dot4(a: Round.Vector, b: Round.Vector) f32 {
+    return Round.dot(a, b);
 }
 
 fn printState(writer: anytype, label: []const u8, app: demo.App) !void {
     const view = app.camera.spherical;
-    const eye_chart = curved.chartCoords(view.metric, view.params, view.camera.position);
+    const eye_chart = view.chartCoords(view.camera.position);
+    const pos = Round.toCoords(view.camera.position);
+    const fwd = Round.toCoords(view.camera.forward);
     try writer.print(
         "{s}: eye_chart=({d:.6},{d:.6},{d:.6}) scene_sign={d:.1} pos=({d:.6},{d:.6},{d:.6},{d:.6}) fwd=({d:.6},{d:.6},{d:.6},{d:.6})\n",
         .{
             label,
-            eye_chart[0],
-            eye_chart[1],
-            eye_chart[2],
+            curved.vec3x(eye_chart),
+            curved.vec3y(eye_chart),
+            curved.vec3z(eye_chart),
             view.scene_sign,
-            view.camera.position[0],
-            view.camera.position[1],
-            view.camera.position[2],
-            view.camera.position[3],
-            view.camera.forward[0],
-            view.camera.forward[1],
-            view.camera.forward[2],
-            view.camera.forward[3],
+            pos[0],
+            pos[1],
+            pos[2],
+            pos[3],
+            fwd[0],
+            fwd[1],
+            fwd[2],
+            fwd[3],
         },
     );
 }

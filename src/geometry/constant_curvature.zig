@@ -37,15 +37,9 @@ pub const WalkOrientation = struct {
     pitch: f32,
 };
 
-pub const WalkBasis = struct {
+const WalkBasis = struct {
     forward: Vec4,
     right: Vec4,
-    up: Vec4,
-};
-
-const HeadingBasis = struct {
-    east: Vec4,
-    north: Vec4,
     up: Vec4,
 };
 
@@ -455,9 +449,17 @@ fn viewCamera(view: View) Camera {
     };
 }
 
+fn projectionModeOf(view: anytype) projection.DirectionProjection {
+    return switch (@TypeOf(view)) {
+        View => viewProjection(view),
+        HyperView, EllipticView, SphericalView => view.projection,
+        else => @compileError("expected a curved view"),
+    };
+}
+
 pub const SphericalRenderPass = enum { near, far };
 
-pub const spherical_chart_min_denom: f32 = 0.25;
+const spherical_chart_min_denom: f32 = 0.25;
 
 const SphericalPassSelection = struct {
     pass: SphericalRenderPass,
@@ -484,7 +486,7 @@ pub fn vec3Coords(v: Vec3) [3]f32 {
     return .{ vec3x(v), vec3y(v), vec3z(v) };
 }
 
-pub fn coerceVec3(value: anytype) Vec3 {
+fn coerceVec3(value: anytype) Vec3 {
     return if (@TypeOf(value) == Vec3) value else Vec3.init(value);
 }
 
@@ -979,7 +981,7 @@ fn sphericalUsesMultipass(projection_mode: projection.DirectionProjection) bool 
     };
 }
 
-pub const View = union(Metric) {
+const View = union(Metric) {
     hyperbolic: HyperView,
     elliptic: EllipticView,
     spherical: SphericalView,
@@ -1378,7 +1380,7 @@ pub fn sphericalAmbientFromGroundHeightPoint(params: Params, local_input: anytyp
     );
 }
 
-pub fn ambientFromTangentBasisPoint(
+fn ambientFromTangentBasisPoint(
     metric: Metric,
     params: Params,
     origin: Vec4,
@@ -1436,22 +1438,6 @@ pub fn ambientFromTypedTangentBasisPoint(
         ),
     };
     return typedNormalizeAmbient(metric, position);
-}
-
-fn antipodalSphericalPassCamera(camera: Camera) Camera {
-    // Move to the antipodal point and reverse the forward direction so the
-    // far hemisphere faces the camera.  Right and up are kept unchanged so
-    // that screen-space x/y stay continuous across the near/far seam:
-    //   near camera relative coords:  (x, y, z)
-    //   far camera relative coords:   (x, y, -z)
-    // Only z flips, which the pass-selection logic already expects (z < 0
-    // in the near camera becomes z > 0 in the far camera).
-    return .{
-        .position = scale4(.spherical, camera.position, -1.0),
-        .right = camera.right,
-        .up = camera.up,
-        .forward = scale4(.spherical, camera.forward, -1.0),
-    };
 }
 
 fn typedAntipodalSphericalPassCamera(camera: TypedCamera(.spherical)) TypedCamera(.spherical) {
@@ -1674,15 +1660,6 @@ fn normalizeAmbient(metric: Metric, ambient: Vec4) Vec4 {
     };
 }
 
-fn transportedTangent(metric: Metric, old_direction: Vec4, new_direction: Vec4, tangent: Vec4) Vec4 {
-    const along = metricDot(metric, tangent, old_direction);
-    return add4(
-        metric,
-        sub4(metric, tangent, scale4(metric, old_direction, along)),
-        scale4(metric, new_direction, along),
-    );
-}
-
 fn geodesicAmbientPoint(metric: Metric, a: Vec4, b_input: Vec4, t: f32) ?Vec4 {
     return switch (metric) {
         inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
@@ -1700,7 +1677,7 @@ fn geodesicAmbientPoint(metric: Metric, a: Vec4, b_input: Vec4, t: f32) ?Vec4 {
 // References:
 // https://arxiv.org/abs/1310.2713
 // https://arxiv.org/pdf/1602.08562
-pub fn geodesicChartPoint(metric: Metric, params: Params, a_chart: anytype, b_chart: anytype, t: f32) ?Vec3 {
+fn geodesicChartPoint(metric: Metric, params: Params, a_chart: anytype, b_chart: anytype, t: f32) ?Vec3 {
     const a = embedPoint(metric, params, a_chart) orelse return null;
     const b = embedPoint(metric, params, b_chart) orelse return null;
     const ambient = geodesicAmbientPoint(metric, a, b, t) orelse return null;
@@ -1718,16 +1695,6 @@ fn geodesicDirection(metric: Metric, eye: Vec4, target: Vec4) ?Vec4 {
                 AmbientFor(metric_tag).fromCoords(eye),
                 AmbientFor(metric_tag).fromCoords(target),
             ) orelse return null,
-        ),
-    };
-}
-
-fn relativeCoords(metric: Metric, camera: Camera, ambient: Vec4) RelativeCoords {
-    return switch (metric) {
-        inline else => |metric_tag| typedRelativeCoords(
-            metric_tag,
-            typedCameraFromErased(metric_tag, camera),
-            AmbientFor(metric_tag).fromCoords(ambient),
         ),
     };
 }
@@ -1880,8 +1847,9 @@ pub fn modelPointForTypedAmbientWithCamera(
     return typedModelPointForAmbient(metric, camera, ambient, model);
 }
 
-fn edgeHasProjectionBreak(view: View, a_chart: Vec3, b_chart: Vec3, screen: Screen, steps: usize) bool {
+fn edgeHasProjectionBreak(view: anytype, a_chart: Vec3, b_chart: Vec3, screen: Screen, steps: usize) bool {
     var prev_point: ?[2]f32 = null;
+    const projection_mode = projectionModeOf(view);
 
     for (0..steps + 1) |i| {
         const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(steps));
@@ -1893,7 +1861,7 @@ fn edgeHasProjectionBreak(view: View, a_chart: Vec3, b_chart: Vec3, screen: Scre
         }
 
         if (prev_point) |pp| {
-            if (shouldBreakProjectionSegment(view.projection, pp, sample.projected.?, screen.width, screen.height)) {
+            if (shouldBreakProjectionSegment(projection_mode, pp, sample.projected.?, screen.width, screen.height)) {
                 return true;
             }
         }
@@ -1905,8 +1873,7 @@ fn edgeHasProjectionBreak(view: View, a_chart: Vec3, b_chart: Vec3, screen: Scre
 }
 
 test "hyperbolic and spherical views initialize and sample" {
-    var hyper = try View.init(
-        .hyperbolic,
+    var hyper = try HyperView.init(
         .{ .radius = 0.32, .angular_zoom = 0.72, .chart_model = .conformal },
         .gnomonic,
         .{ .near = 0.08, .far = 1.55 },
@@ -1916,8 +1883,7 @@ test "hyperbolic and spherical views initialize and sample" {
     const hyper_sample = hyper.sampleProjectedPoint(.{ 0.05, 0.02, 0.01 }, .{ .width = 80, .height = 40, .zoom = hyper.params.angular_zoom });
     try std.testing.expect(hyper_sample.status != .hidden);
 
-    var spherical = try View.init(
-        .spherical,
+    var spherical = try SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .wrapped,
         .{ .near = 0.08, .far = std.math.inf(f32) },
@@ -2110,8 +2076,7 @@ test "typed adjustRadius matches erased adjustment" {
 }
 
 test "adjustRadius preserves a valid camera" {
-    var view = try View.init(
-        .spherical,
+    var view = try SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .wrapped,
         .{ .near = 0.08, .far = std.math.inf(f32) },
@@ -2124,8 +2089,7 @@ test "adjustRadius preserves a valid camera" {
 }
 
 test "adjustRadius leaves the view unchanged on rebuild failure" {
-    var view = try View.init(
-        .spherical,
+    var view = try SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .stereographic,
         .{ .near = 0.08, .far = std.math.inf(f32) },
@@ -2145,8 +2109,7 @@ test "adjustRadius leaves the view unchanged on rebuild failure" {
 }
 
 test "walk orientation roundtrips for curved views" {
-    var hyper = try View.init(
-        .hyperbolic,
+    var hyper = try HyperView.init(
         .{ .radius = 0.32, .angular_zoom = 0.72, .chart_model = .conformal },
         .gnomonic,
         .{ .near = 0.08, .far = 1.55 },
@@ -2159,8 +2122,7 @@ test "walk orientation roundtrips for curved views" {
     try std.testing.expectApproxEqAbs(@as(f32, 0.8), hyper_walk.z_heading, 1e-3);
     try std.testing.expectApproxEqAbs(@as(f32, 0.35), hyper_walk.pitch, 1e-3);
 
-    var spherical = try View.init(
-        .spherical,
+    var spherical = try SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .wrapped,
         .{ .near = 0.08, .far = std.math.inf(f32) },
@@ -2175,8 +2137,7 @@ test "walk orientation roundtrips for curved views" {
 }
 
 test "walk yaw preserves pitch while rotating heading" {
-    var hyper = try View.init(
-        .hyperbolic,
+    var hyper = try HyperView.init(
         .{ .radius = 0.32, .angular_zoom = 0.72, .chart_model = .conformal },
         .gnomonic,
         .{ .near = 0.08, .far = 1.55 },
@@ -2193,8 +2154,7 @@ test "walk yaw preserves pitch while rotating heading" {
 }
 
 test "spherical walk yaw stays recoverable near steep pitch" {
-    var spherical = try View.init(
-        .spherical,
+    var spherical = try SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .wrapped,
         .{ .near = 0.08, .far = std.math.inf(f32) },
@@ -2211,8 +2171,7 @@ test "spherical walk yaw stays recoverable near steep pitch" {
 }
 
 test "surface yaw keeps spherical walk surface up fixed" {
-    var spherical = try View.init(
-        .spherical,
+    var spherical = try SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .stereographic,
         .{ .near = 0.08, .far = std.math.inf(f32) },
@@ -2226,14 +2185,8 @@ test "surface yaw keeps spherical walk surface up fixed" {
     const after_up = spherical.walkSurfaceUp().?;
     const orientation = spherical.walkOrientation().?;
 
-    const up_dot = before_up[0] * after_up[0] +
-        before_up[1] * after_up[1] +
-        before_up[2] * after_up[2] +
-        before_up[3] * after_up[3];
-    const position_dot = before_position[0] * spherical.camera.position[0] +
-        before_position[1] * spherical.camera.position[1] +
-        before_position[2] * spherical.camera.position[2] +
-        before_position[3] * spherical.camera.position[3];
+    const up_dot = curved_ambient.Round.dot(before_up, after_up);
+    const position_dot = curved_ambient.Round.dot(before_position, spherical.camera.position);
 
     try std.testing.expect(up_dot > 0.999);
     try std.testing.expect(position_dot > 0.999);
@@ -2241,8 +2194,7 @@ test "surface yaw keeps spherical walk surface up fixed" {
 }
 
 test "surface pitch keeps spherical walk pitch tied to the surface normal" {
-    var spherical = try View.init(
-        .spherical,
+    var spherical = try SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .stereographic,
         .{ .near = 0.08, .far = std.math.inf(f32) },
@@ -2255,10 +2207,7 @@ test "surface pitch keeps spherical walk pitch tied to the surface normal" {
     const after_up = spherical.walkSurfaceUp().?;
     const orientation = spherical.walkOrientation().?;
 
-    const up_dot = before_up[0] * after_up[0] +
-        before_up[1] * after_up[1] +
-        before_up[2] * after_up[2] +
-        before_up[3] * after_up[3];
+    const up_dot = curved_ambient.Round.dot(before_up, after_up);
     try std.testing.expect(up_dot > 0.999);
     try std.testing.expectApproxEqAbs(@as(f32, 1.05), orientation.pitch, 1e-3);
 }
@@ -2298,8 +2247,7 @@ test "ambient tangent-basis point builder rejects non-finite travel inputs" {
 }
 
 test "spherical walk orientation survives forward transport" {
-    var spherical = try View.init(
-        .spherical,
+    var spherical = try SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .wrapped,
         .{ .near = 0.08, .far = std.math.inf(f32) },
@@ -2320,8 +2268,7 @@ test "spherical walk orientation survives forward transport" {
 }
 
 test "spherical chart wrap preserves the rendered view" {
-    var view = try View.init(
-        .spherical,
+    var view = try SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .stereographic,
         .{ .near = 0.08, .far = std.math.inf(f32) },
@@ -2332,10 +2279,10 @@ test "spherical chart wrap preserves the rendered view" {
     const before = view.sampleProjectedPoint(.{ 0.12, -0.07, 0.15 }, screen);
     try std.testing.expect(before.projected != null);
 
-    view.camera.position = scale4(view.metric, view.camera.position, -1.0);
-    view.camera.right = scale4(view.metric, view.camera.right, -1.0);
-    view.camera.up = scale4(view.metric, view.camera.up, -1.0);
-    view.camera.forward = scale4(view.metric, view.camera.forward, -1.0);
+    view.camera.position = view.camera.position.scale(-1.0);
+    view.camera.right = view.camera.right.scale(-1.0);
+    view.camera.up = view.camera.up.scale(-1.0);
+    view.camera.forward = view.camera.forward.scale(-1.0);
     view.wrapSphericalChart();
 
     const after = view.sampleProjectedPoint(.{ 0.12, -0.07, 0.15 }, screen);
@@ -2616,8 +2563,7 @@ test "spherical antipodal pass preserves screen up and right orientation" {
 }
 
 test "spherical stereographic edge discontinuity is detected after steep transport" {
-    var view = try View.init(
-        .spherical,
+    var view = try SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .stereographic,
         .{ .near = 0.08, .far = std.math.inf(f32) },
@@ -2802,8 +2748,8 @@ test "ambient from tangent basis point matches spherical horizontal ground mappi
 }
 
 test "spherical direct ambient sampling respects scene sign after chart wrap" {
-    var view = try View.init(
-        .spherical,
+    const Round = AmbientFor(.spherical);
+    var view = try SphericalView.init(
         .{
             .radius = 1.48,
             .angular_zoom = 1.0,
@@ -2817,21 +2763,21 @@ test "spherical direct ambient sampling respects scene sign after chart wrap" {
     const screen = Screen{ .width = 160, .height = 90, .zoom = 1.0 };
     const local = vec3(0.26, 0.18, 0.31);
     const ambient = sphericalAmbientFromLocalPoint(view.params, local);
-    const chart = view.chartCoords(AmbientFor(.spherical).toCoords(ambient));
+    const chart = view.chartCoords(ambient);
 
     var pos_before_wrap = view.camera.position;
-    while (1.0 + view.camera.position[0] >= spherical_chart_min_denom) {
+    while (1.0 + Round.w(view.camera.position) >= spherical_chart_min_denom) {
         pos_before_wrap = view.camera.position;
         view.moveAlong(view.camera.forward, 0.2);
     }
     view.wrapSphericalChart();
     // After wrap the camera position should have moved to the opposite chart
     // only once the current conformal denominator is near-singular.
-    try std.testing.expect(1.0 + pos_before_wrap[0] < spherical_chart_min_denom);
-    try std.testing.expect(view.camera.position[0] > 0.0);
+    try std.testing.expect(1.0 + Round.w(pos_before_wrap) < spherical_chart_min_denom);
+    try std.testing.expect(Round.w(view.camera.position) > 0.0);
 
     const chart_sample = view.sampleProjectedPoint(chart, screen);
-    const ambient_sample = view.sampleProjectedAmbient(AmbientFor(.spherical).toCoords(ambient), screen);
+    const ambient_sample = view.sampleProjectedAmbient(ambient, screen);
 
     try std.testing.expectEqual(chart_sample.status, ambient_sample.status);
     try std.testing.expectApproxEqAbs(chart_sample.distance, ambient_sample.distance, 1e-5);

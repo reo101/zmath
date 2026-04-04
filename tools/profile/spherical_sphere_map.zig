@@ -3,6 +3,8 @@ const zmath = @import("zmath");
 const demo = @import("demo_core");
 
 const curved = zmath.geometry.constant_curvature;
+const Round = curved.AmbientFor(.spherical);
+const SphericalView = curved.SphericalView;
 
 const screen_width: usize = 160;
 const screen_height: usize = 90;
@@ -14,11 +16,7 @@ const map_radius: usize = 12;
 const map_diameter: usize = map_radius * 2 + 1;
 
 fn vec3FromVector(v: demo.H.Vector) curved.Vec3 {
-    return .{
-        v.coeffNamed("e1"),
-        v.coeffNamed("e2"),
-        v.coeffNamed("e3"),
-    };
+    return curved.vec3(v.coeffNamed("e1"), v.coeffNamed("e2"), v.coeffNamed("e3"));
 }
 
 fn configureRepro(app: *demo.App) void {
@@ -32,7 +30,6 @@ fn configureRepro(app: *demo.App) void {
     app.camera.euclid_eye_y = 0.0;
     app.camera.euclid_eye_z = -176.578800;
     app.camera.spherical = .{
-        .metric = .spherical,
         .params = .{
             .radius = 0.740000,
             .angular_zoom = 1.000000,
@@ -41,10 +38,10 @@ fn configureRepro(app: *demo.App) void {
         .projection = .stereographic,
         .clip = .{ .near = 0.080000, .far = std.math.inf(f32) },
         .camera = .{
-            .position = .{ 0.372664, -0.325853, 0.000000, -0.868872 },
-            .right = .{ 0.719299, -0.490129, -0.000000, 0.492324 },
-            .up = .{ -0.011725, -0.016168, 0.999800, 0.001035 },
-            .forward = .{ -0.586168, -0.808289, -0.019999, 0.051722 },
+            .position = Round.fromCoords(.{ 0.372664, -0.325853, 0.000000, -0.868872 }),
+            .right = Round.fromCoords(.{ 0.719299, -0.490129, -0.000000, 0.492324 }),
+            .up = Round.fromCoords(.{ -0.011725, -0.016168, 0.999800, 0.001035 }),
+            .forward = Round.fromCoords(.{ -0.586168, -0.808289, -0.019999, 0.051722 }),
         },
         .scene_sign = 1.0,
     };
@@ -62,27 +59,15 @@ const AngularPosition = struct {
     hemisphere: u8, // 'N' = near (z_dir >= 0), 'F' = far
 };
 
-fn angularPosition(view: curved.View, ambient: curved.Vec4) ?AngularPosition {
+fn angularPosition(view: SphericalView, ambient: Round.Vector) ?AngularPosition {
     // Dot product gives cos(geodesic_angle) on unit sphere
-    const dot = ambient[0] * view.camera.position[0] +
-        ambient[1] * view.camera.position[1] +
-        ambient[2] * view.camera.position[2] +
-        ambient[3] * view.camera.position[3];
+    const dot = Round.dot(ambient, view.camera.position);
     const geodesic_angle = std.math.acos(std.math.clamp(dot, -1.0, 1.0));
 
     // Project into camera-relative coordinates
-    const x_dir = ambient[0] * view.camera.right[0] +
-        ambient[1] * view.camera.right[1] +
-        ambient[2] * view.camera.right[2] +
-        ambient[3] * view.camera.right[3];
-    const y_dir = ambient[0] * view.camera.up[0] +
-        ambient[1] * view.camera.up[1] +
-        ambient[2] * view.camera.up[2] +
-        ambient[3] * view.camera.up[3];
-    const z_dir = ambient[0] * view.camera.forward[0] +
-        ambient[1] * view.camera.forward[1] +
-        ambient[2] * view.camera.forward[2] +
-        ambient[3] * view.camera.forward[3];
+    const x_dir = Round.dot(ambient, view.camera.right);
+    const y_dir = Round.dot(ambient, view.camera.up);
+    const z_dir = Round.dot(ambient, view.camera.forward);
 
     const azimuth = std.math.atan2(x_dir, z_dir);
     const lateral = @sqrt(x_dir * x_dir + z_dir * z_dir);
@@ -171,11 +156,11 @@ pub fn main(init: std.process.Init) !void {
     for (0..trace_steps + 1) |step| {
         const scene = demo.curvedScene(app, screen_width, screen_height).?.spherical;
         const view = scene.view;
-        const eye_chart = curved.chartCoords(.spherical, view.params, view.camera.position);
+        const eye_chart = view.chartCoords(view.camera.position);
 
         try stdout.print(
             "\n===== STEP {d:>3} | eye_chart=({d:.4},{d:.4},{d:.4}) =====\n",
-            .{ step, eye_chart[0], eye_chart[1], eye_chart[2] },
+            .{ step, curved.vec3x(eye_chart), curved.vec3y(eye_chart), curved.vec3z(eye_chart) },
         );
 
         // Top-down sphere map (azimuth from forward, looking down from above)
