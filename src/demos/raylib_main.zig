@@ -1649,7 +1649,7 @@ fn drawCurvedSegment(
 
     for (0..native_curved_edge_steps + 1) |i| {
         const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(native_curved_edge_steps));
-        const chart = curved.geodesicChartPoint(base_view.metric, base_view.params, a, b, t) orelse {
+        const chart = base_view.geodesicChartPoint(a, b, t) orelse {
             prev_point = null;
             continue;
         };

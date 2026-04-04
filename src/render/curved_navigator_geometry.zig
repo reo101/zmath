@@ -20,11 +20,7 @@ pub fn sphericalView(view: anytype) curved.SphericalView {
 
 pub fn signedSphericalAmbient(view: anytype, chart: curved.Vec3) ?SphericalAmbient {
     const spherical = sphericalView(view);
-    var ambient = Round.fromCoords(curved.embedPoint(.spherical, spherical.params, chart) orelse return null);
-    if (spherical.scene_sign < 0.0) {
-        ambient = Round.scale(ambient, -1.0);
-    }
-    return ambient;
+    return spherical.sceneAmbientPoint(chart);
 }
 
 pub fn defaultSphericalMapCamera() SphericalCamera {
