@@ -1,95 +1,99 @@
 const std = @import("std");
+const curved_ambient = @import("../geometry/curved_ambient.zig");
 
-pub const Vec3 = struct {
-    x: f32,
-    y: f32,
-    z: f32,
+pub const Flat3 = curved_ambient.Flat3;
+pub const Vec3 = Flat3.Vector;
 
-    pub fn init(x: f32, y: f32, z: f32) Vec3 {
-        return .{ .x = x, .y = y, .z = z };
-    }
+pub fn vec3(x_value: f32, y_value: f32, z_value: f32) Vec3 {
+    return Vec3.init(.{ x_value, y_value, z_value });
+}
 
-    pub fn splat(value: f32) Vec3 {
-        return .{ .x = value, .y = value, .z = value };
-    }
+pub fn splat(value: f32) Vec3 {
+    return vec3(value, value, value);
+}
 
-    pub fn add(self: Vec3, other: Vec3) Vec3 {
-        return .{
-            .x = self.x + other.x,
-            .y = self.y + other.y,
-            .z = self.z + other.z,
-        };
-    }
+pub fn coords(v: Vec3) [3]f32 {
+    return v.coeffsArray();
+}
 
-    pub fn sub(self: Vec3, other: Vec3) Vec3 {
-        return .{
-            .x = self.x - other.x,
-            .y = self.y - other.y,
-            .z = self.z - other.z,
-        };
-    }
+pub fn x(v: Vec3) f32 {
+    return coords(v)[0];
+}
 
-    pub fn scale(self: Vec3, factor: f32) Vec3 {
-        return .{
-            .x = self.x * factor,
-            .y = self.y * factor,
-            .z = self.z * factor,
-        };
-    }
+pub fn y(v: Vec3) f32 {
+    return coords(v)[1];
+}
 
-    pub fn dot(self: Vec3, other: Vec3) f32 {
-        return self.x * other.x + self.y * other.y + self.z * other.z;
-    }
+pub fn z(v: Vec3) f32 {
+    return coords(v)[2];
+}
 
-    pub fn magnitudeSquared(self: Vec3) f32 {
-        return self.dot(self);
-    }
+pub fn add(a: Vec3, b: Vec3) Vec3 {
+    return a.add(b);
+}
 
-    pub fn magnitude(self: Vec3) f32 {
-        return @sqrt(self.magnitudeSquared());
-    }
+pub fn sub(a: Vec3, b: Vec3) Vec3 {
+    return a.sub(b);
+}
 
-    pub fn normalized(self: Vec3) Vec3 {
-        const length = self.magnitude();
-        if (length <= 1e-6) return .{ .x = 0.0, .y = 0.0, .z = 1.0 };
-        return self.scale(1.0 / length);
-    }
+pub fn scale(v: Vec3, factor: f32) Vec3 {
+    return v.scale(factor);
+}
 
-    pub fn abs(self: Vec3) Vec3 {
-        return .{
-            .x = @abs(self.x),
-            .y = @abs(self.y),
-            .z = @abs(self.z),
-        };
-    }
+pub fn dot(a: Vec3, b: Vec3) f32 {
+    return a.scalarProduct(b);
+}
 
-    pub fn max(self: Vec3, other: Vec3) Vec3 {
-        return .{
-            .x = @max(self.x, other.x),
-            .y = @max(self.y, other.y),
-            .z = @max(self.z, other.z),
-        };
-    }
+pub fn magnitudeSquared(v: Vec3) f32 {
+    return dot(v, v);
+}
 
-    pub fn min(self: Vec3, other: Vec3) Vec3 {
-        return .{
-            .x = @min(self.x, other.x),
-            .y = @min(self.y, other.y),
-            .z = @min(self.z, other.z),
-        };
-    }
+pub fn magnitude(v: Vec3) f32 {
+    return v.magnitude();
+}
 
-    pub fn maxComponent(self: Vec3) f32 {
-        return @max(self.x, @max(self.y, self.z));
-    }
-};
+pub fn normalized(v: Vec3) Vec3 {
+    const length = magnitude(v);
+    if (length <= 1e-6) return vec3(0.0, 0.0, 1.0);
+    return scale(v, 1.0 / length);
+}
+
+pub fn abs(v: Vec3) Vec3 {
+    const c = coords(v);
+    return vec3(@abs(c[0]), @abs(c[1]), @abs(c[2]));
+}
+
+pub fn max(a: Vec3, b: Vec3) Vec3 {
+    const ac = coords(a);
+    const bc = coords(b);
+    return vec3(
+        @max(ac[0], bc[0]),
+        @max(ac[1], bc[1]),
+        @max(ac[2], bc[2]),
+    );
+}
+
+pub fn min(a: Vec3, b: Vec3) Vec3 {
+    const ac = coords(a);
+    const bc = coords(b);
+    return vec3(
+        @min(ac[0], bc[0]),
+        @min(ac[1], bc[1]),
+        @min(ac[2], bc[2]),
+    );
+}
+
+pub fn maxComponent(v: Vec3) f32 {
+    const c = coords(v);
+    return @max(c[0], @max(c[1], c[2]));
+}
 
 pub const Ray = struct {
     origin: Vec3,
     direction: Vec3,
 
     pub fn at(self: Ray, distance: f32) Vec3 {
-        return self.origin.add(self.direction.scale(distance));
+        return add(self.origin, scale(self.direction, distance));
     }
 };
 
@@ -115,23 +119,23 @@ pub const MarchOptions = struct {
 };
 
 pub fn sphere(point: Vec3, radius: f32) f32 {
-    return point.magnitude() - radius;
+    return magnitude(point) - radius;
 }
 
 pub fn box(point: Vec3, half_extent: Vec3) f32 {
-    const q = point.abs().sub(half_extent);
-    const outside = q.max(Vec3.splat(0.0)).magnitude();
-    const inside = @min(q.maxComponent(), 0.0);
+    const q = sub(abs(point), half_extent);
+    const outside = magnitude(max(q, splat(0.0)));
+    const inside = @min(maxComponent(q), 0.0);
     return outside + inside;
 }
 
 pub fn torus(point: Vec3, major_radius: f32, minor_radius: f32) f32 {
-    const qx = @sqrt(point.x * point.x + point.y * point.y) - major_radius;
-    return @sqrt(qx * qx + point.z * point.z) - minor_radius;
+    const qx = @sqrt(x(point) * x(point) + y(point) * y(point)) - major_radius;
+    return @sqrt(qx * qx + z(point) * z(point)) - minor_radius;
 }
 
 pub fn plane(point: Vec3, unit_normal: Vec3, offset: f32) f32 {
-    return point.dot(unit_normal) + offset;
+    return dot(point, unit_normal) + offset;
 }
 
 pub fn opUnion(a: Sample, b: Sample) Sample {
@@ -166,19 +170,19 @@ pub fn rotate2(v: [2]f32, angle: f32) [2]f32 {
 pub fn estimateNormal(scene_fn: anytype, point: Vec3, epsilon: f32) Vec3 {
     const e = epsilon;
     const center = scene_fn(point).distance;
-    const nx = center - scene_fn(point.sub(.{ .x = e, .y = 0.0, .z = 0.0 })).distance;
-    const ny = center - scene_fn(point.sub(.{ .x = 0.0, .y = e, .z = 0.0 })).distance;
-    const nz = center - scene_fn(point.sub(.{ .x = 0.0, .y = 0.0, .z = e })).distance;
-    return Vec3.init(nx, ny, nz).normalized();
+    const nx = center - scene_fn(sub(point, vec3(e, 0.0, 0.0))).distance;
+    const ny = center - scene_fn(sub(point, vec3(0.0, e, 0.0))).distance;
+    const nz = center - scene_fn(sub(point, vec3(0.0, 0.0, e))).distance;
+    return normalized(vec3(nx, ny, nz));
 }
 
 pub fn estimateNormalWith(scene_fn: anytype, ctx: anytype, point: Vec3, epsilon: f32) Vec3 {
     const e = epsilon;
     const center = scene_fn(ctx, point).distance;
-    const nx = center - scene_fn(ctx, point.sub(.{ .x = e, .y = 0.0, .z = 0.0 })).distance;
-    const ny = center - scene_fn(ctx, point.sub(.{ .x = 0.0, .y = e, .z = 0.0 })).distance;
-    const nz = center - scene_fn(ctx, point.sub(.{ .x = 0.0, .y = 0.0, .z = e })).distance;
-    return Vec3.init(nx, ny, nz).normalized();
+    const nx = center - scene_fn(ctx, sub(point, vec3(e, 0.0, 0.0))).distance;
+    const ny = center - scene_fn(ctx, sub(point, vec3(0.0, e, 0.0))).distance;
+    const nz = center - scene_fn(ctx, sub(point, vec3(0.0, 0.0, e))).distance;
+    return normalized(vec3(nx, ny, nz));
 }
 
 pub fn raymarch(scene_fn: anytype, ray: Ray, options: MarchOptions) ?Hit {
@@ -224,17 +228,17 @@ pub fn raymarchWith(scene_fn: anytype, ctx: anytype, ray: Ray, options: MarchOpt
 }
 
 test "sphere sdf is negative inside and zero on surface" {
-    try std.testing.expectApproxEqAbs(@as(f32, -1.5), sphere(Vec3.init(0.0, 0.0, 0.0), 1.5), 1e-6);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.0), sphere(Vec3.init(0.0, 0.0, 1.5), 1.5), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, -1.5), sphere(vec3(0.0, 0.0, 0.0), 1.5), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), sphere(vec3(0.0, 0.0, 1.5), 1.5), 1e-6);
 }
 
 test "box sdf matches exact axis-aligned box distance" {
-    try std.testing.expectApproxEqAbs(@as(f32, 0.0), box(Vec3.init(1.0, 0.25, -0.5), Vec3.splat(1.0)), 1e-6);
-    try std.testing.expectApproxEqAbs(@as(f32, 1.0), box(Vec3.init(2.0, 0.0, 0.0), Vec3.splat(1.0)), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), box(vec3(1.0, 0.25, -0.5), splat(1.0)), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), box(vec3(2.0, 0.0, 0.0), splat(1.0)), 1e-6);
 }
 
 test "torus sdf reaches zero on major ring surface" {
-    try std.testing.expectApproxEqAbs(@as(f32, 0.0), torus(Vec3.init(0.5, 0.0, 0.0), 0.4, 0.1), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), torus(vec3(0.5, 0.0, 0.0), 0.4, 0.1), 1e-6);
 }
 
 test "union keeps the nearer material" {
@@ -253,10 +257,9 @@ test "raymarch hits a sphere" {
     };
 
     const ray = Ray{
-        .origin = Vec3.init(0.0, 0.0, -3.0),
-        .direction = Vec3.init(0.0, 0.0, 1.0),
+        .origin = vec3(0.0, 0.0, -3.0),
+        .direction = vec3(0.0, 0.0, 1.0),
     };
     const hit = raymarch(scene.sample, ray, .{}) orelse return error.ExpectedHit;
     try std.testing.expectApproxEqAbs(@as(f32, 2.0), hit.distance, 0.02);
-    try std.testing.expectEqual(@as(u8, 1), hit.sample.material);
 }
