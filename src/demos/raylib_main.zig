@@ -521,7 +521,6 @@ const CurvedRenderPass = union(enum) {
     spherical: curved.SphericalRenderPass,
 };
 
-const GroundBasis = curved_ground.GroundBasis;
 const SphericalGroundBasis = curved_ground.SphericalGroundBasis;
 
 const GroundExtents = struct {
@@ -550,15 +549,6 @@ fn roundAmbient(v: anytype) Round.Vector {
         Round.Vector => v,
         curved.Vec4 => Round.fromCoords(v),
         else => @compileError("expected spherical ambient coords or round ambient vector"),
-    };
-}
-
-fn sphericalBasisFromErased(basis: GroundBasis) SphericalGroundBasis {
-    return .{
-        .origin = Round.fromCoords(basis.origin),
-        .right = Round.fromCoords(basis.right),
-        .forward = Round.fromCoords(basis.forward),
-        .up = Round.fromCoords(basis.up),
     };
 }
 
@@ -954,48 +944,71 @@ fn vec3FromVector(v: demo.H.Vector) curved.Vec3 {
     return curved.vec3(v.coeffNamed("e1"), v.coeffNamed("e2"), v.coeffNamed("e3"));
 }
 
+fn metricOf(view: anytype) curved.Metric {
+    return switch (@TypeOf(view)) {
+        curved.View => view.metric,
+        curved.HyperView => .hyperbolic,
+        curved.EllipticView => .elliptic,
+        curved.SphericalView => .spherical,
+        else => @compileError("expected curved view"),
+    };
+}
+
+fn ambientForView(view: anytype, ambient_input: curved.Vec4) switch (@TypeOf(view)) {
+    curved.View => curved.Vec4,
+    curved.HyperView => curved.AmbientFor(.hyperbolic).Vector,
+    curved.EllipticView => curved.AmbientFor(.elliptic).Vector,
+    curved.SphericalView => curved.AmbientFor(.spherical).Vector,
+    else => @compileError("expected curved view"),
+} {
+    return switch (@TypeOf(view)) {
+        curved.View => ambient_input,
+        curved.HyperView => curved.AmbientFor(.hyperbolic).fromCoords(ambient_input),
+        curved.EllipticView => curved.AmbientFor(.elliptic).fromCoords(ambient_input),
+        curved.SphericalView => curved.AmbientFor(.spherical).fromCoords(ambient_input),
+        else => unreachable,
+    };
+}
+
 fn isSphericalGnomonic(view: anytype) bool {
-    const erased_view = curved.erasedView(view);
-    return erased_view.metric == .spherical and erased_view.projection == .gnomonic;
+    return metricOf(view) == .spherical and view.projection == .gnomonic;
 }
 
 fn sphericalLocalFillSteps(view: anytype) usize {
-    const erased_view = curved.erasedView(view);
-    return if (erased_view.metric != .spherical)
+    return if (metricOf(view) != .spherical)
         native_curved_fill_steps
-    else if (erased_view.projection == .gnomonic)
+    else if (view.projection == .gnomonic)
         5
     else
         4;
 }
 
 fn sphericalLocalEdgeSteps(view: anytype) usize {
-    const erased_view = curved.erasedView(view);
-    return if (erased_view.metric != .spherical)
+    return if (metricOf(view) != .spherical)
         native_curved_edge_steps
-    else if (erased_view.projection == .gnomonic)
+    else if (view.projection == .gnomonic)
         20
     else
         16;
 }
 
 fn curvedGroundSteps(view: anytype) usize {
-    return if (curved.erasedView(view).metric == .spherical) 8 else native_ground_steps;
+    return if (metricOf(view) == .spherical) 8 else native_ground_steps;
 }
 
 fn curvedGroundSubdivideDepth(world_view: anytype, render_view: anytype) usize {
     _ = world_view;
-    return if (curved.erasedView(render_view).metric == .spherical)
+    return if (metricOf(render_view) == .spherical)
         2
     else
         native_ground_subdivide_depth;
 }
 
-fn sampleAmbientForNativeRender(view: curved.View, ambient_input: curved.Vec4, screen: curved.Screen) curved.ProjectedSample {
-    if (view.metric == .spherical and view.projection == .gnomonic) {
-        const model_point = view.cameraModelPointForAmbient(ambient_input, .linear) orelse return .{};
+fn sampleAmbientForNativeRender(view: anytype, ambient_input: curved.Vec4, screen: curved.Screen) curved.ProjectedSample {
+    if (metricOf(view) == .spherical and view.projection == .gnomonic) {
+        const model_point = view.cameraModelPointForAmbient(ambientForView(view, ambient_input), .linear) orelse return .{};
         return curved.sampleProjectedModelPoint(
-            view.metric,
+            metricOf(view),
             view.projection,
             view.params,
             view.clip,
@@ -1003,7 +1016,7 @@ fn sampleAmbientForNativeRender(view: curved.View, ambient_input: curved.Vec4, s
             screen,
         );
     }
-    return view.sampleProjectedAmbient(ambient_input, screen);
+    return view.sampleProjectedAmbient(ambientForView(view, ambient_input), screen);
 }
 
 fn projectNativeSphericalConformalPoint(model_point: curved.Vec3, screen: curved.Screen) ?[2]f32 {
@@ -1240,7 +1253,7 @@ fn sphericalGroundSampleForCurvedRender(
     forward_distance: f32,
     screen: curved.Screen,
 ) curved.ProjectedSample {
-    if (!groundPointAllowed(curved.erasedView(surface_view), lateral, forward_distance)) return .{};
+    if (!groundPointAllowed(surface_view, lateral, forward_distance)) return .{};
     const ambient = curved.ambientFromTypedTangentBasisPoint(
         .spherical,
         surface_view.params,
@@ -1258,8 +1271,7 @@ fn sphericalGroundSampleForCurvedRender(
 }
 
 fn walkEyeHeight(view: anytype) f32 {
-    const erased_view = curved.erasedView(view);
-    return switch (erased_view.metric) {
+    return switch (metricOf(view)) {
         .hyperbolic => view.params.radius * hyperbolic_walk_eye_height_scale,
         .elliptic => 0.14,
         .spherical => view.params.radius * spherical_walk_eye_height_scale,
@@ -1277,29 +1289,25 @@ fn groundSampleForCurvedRender(
     surface_view: anytype,
     render_view: anytype,
     render_pass: CurvedRenderPass,
-    basis: GroundBasis,
+    basis: anytype,
     lateral: f32,
     forward_distance: f32,
     screen: curved.Screen,
 ) curved.ProjectedSample {
     const erased_surface = curved.erasedView(surface_view);
-    const erased_render = curved.erasedView(render_view);
     if (!groundPointAllowed(surface_view, lateral, forward_distance)) return .{};
-    const ambient = curved.ambientFromTangentBasisPoint(
-        erased_surface.metric,
-        erased_surface.params,
-        basis.origin,
-        basis.right,
-        basis.forward,
+    const ambient = curved_ground.ambientPointForBasis(
+        surface_view,
+        basis,
         lateral,
         forward_distance,
     ) orelse return .{};
 
     return switch (render_pass) {
-        .direct => sampleAmbientForNativeRender(erased_render, ambient, screen),
+        .direct => sampleAmbientForNativeRender(render_view, ambient, screen),
         .spherical => |pass| nativeSphericalConformalSampleForPass(
             erased_surface.typed(.spherical),
-            erased_render.typed(.spherical),
+            curved.erasedView(render_view).typed(.spherical),
             pass,
             ambient,
             screen,
@@ -1312,9 +1320,8 @@ fn sphericalGroundTangentRadius(params: curved.Params) f32 {
 }
 
 fn groundPointAllowed(view: anytype, lateral: f32, forward_distance: f32) bool {
-    const erased_view = curved.erasedView(view);
-    if (erased_view.metric != .spherical) return true;
-    const max_radius = sphericalGroundTangentRadius(erased_view.params);
+    if (metricOf(view) != .spherical) return true;
+    const max_radius = sphericalGroundTangentRadius(view.params);
     return lateral * lateral + forward_distance * forward_distance <= max_radius * max_radius;
 }
 
@@ -1336,17 +1343,16 @@ fn groundStrokeColor(fill: rl.Color) rl.Color {
 }
 
 fn groundExtents(view: anytype) GroundExtents {
-    const erased_view = curved.erasedView(view);
-    return switch (erased_view.metric) {
+    return switch (metricOf(view)) {
         .hyperbolic => .{
-            .lateral = erased_view.params.radius * 2.15,
-            .backward = erased_view.params.radius * 0.85,
-            .forward = erased_view.params.radius * 3.05,
+            .lateral = view.params.radius * 2.15,
+            .backward = view.params.radius * 0.85,
+            .forward = view.params.radius * 3.05,
         },
         .elliptic, .spherical => .{
-            .lateral = sphericalGroundTangentRadius(erased_view.params),
-            .backward = sphericalGroundTangentRadius(erased_view.params),
-            .forward = sphericalGroundTangentRadius(erased_view.params),
+            .lateral = sphericalGroundTangentRadius(view.params),
+            .backward = sphericalGroundTangentRadius(view.params),
+            .forward = sphericalGroundTangentRadius(view.params),
         },
     };
 }
@@ -1368,7 +1374,7 @@ fn groundCellBroken(
     p11: [2]f32,
     p01: [2]f32,
 ) bool {
-    const projection_mode = curved.erasedView(render_view).projection;
+    const projection_mode = render_view.projection;
     return curved.shouldBreakProjectedSegment(projection_mode, p00, p10, screen.width, screen.height) or
         curved.shouldBreakProjectedSegment(projection_mode, p10, p11, screen.width, screen.height) or
         curved.shouldBreakProjectedSegment(projection_mode, p11, p01, screen.width, screen.height) or
@@ -1412,7 +1418,7 @@ fn drawCurvedGroundCell(
     world_view: anytype,
     render_view: anytype,
     render_pass: CurvedRenderPass,
-    basis: GroundBasis,
+    basis: anytype,
     screen: curved.Screen,
     viewport: rl.Rectangle,
     x0: f32,
@@ -1508,7 +1514,7 @@ fn drawCurvedGroundPatch(
     world_view: anytype,
     render_view: anytype,
     render_pass: CurvedRenderPass,
-    basis: GroundBasis,
+    basis: anytype,
     screen: curved.Screen,
     viewport: rl.Rectangle,
 ) void {
@@ -1519,7 +1525,7 @@ fn drawCurvedGroundPatch(
             erased_world.typed(.spherical),
             erased_render.typed(.spherical),
             render_pass,
-            sphericalBasisFromErased(basis),
+            curved_ground.sphericalGroundBasis(basis),
             screen,
             viewport,
         );
@@ -1823,12 +1829,11 @@ fn faceOrderDistance(
 }
 
 fn drawCurvedSceneBackdrop(view: anytype, viewport: rl.Rectangle) void {
-    const erased_view = curved.erasedView(view);
-    const top_color = if (erased_view.metric == .spherical)
+    const top_color = if (metricOf(view) == .spherical)
         rl.Color{ .r = 18, .g = 34, .b = 54, .a = 255 }
     else
         rl.Color{ .r = 32, .g = 20, .b = 28, .a = 255 };
-    const bottom_color = if (erased_view.metric == .spherical)
+    const bottom_color = if (metricOf(view) == .spherical)
         rl.Color{ .r = 7, .g = 12, .b = 22, .a = 255 }
     else
         rl.Color{ .r = 10, .g = 8, .b = 16, .a = 255 };
@@ -1843,11 +1848,11 @@ fn drawCurvedSceneBackdrop(view: anytype, viewport: rl.Rectangle) void {
     );
     rl.DrawCircleV(
         .{
-            .x = viewport.x + viewport.width * (if (erased_view.metric == .spherical) @as(f32, 0.76) else @as(f32, 0.24)),
+            .x = viewport.x + viewport.width * (if (metricOf(view) == .spherical) @as(f32, 0.76) else @as(f32, 0.24)),
             .y = viewport.y + viewport.height * 0.18,
         },
         @min(viewport.width, viewport.height) * 0.22,
-        if (erased_view.metric == .spherical) accent_cool else accent_warm,
+        if (metricOf(view) == .spherical) accent_cool else accent_warm,
     );
 }
 
@@ -2552,7 +2557,8 @@ fn drawNativeCurvedScene(app: *const demo.App, viewport: rl.Rectangle, spherical
                 hyper.view;
             drawCurvedSceneBackdrop(render_view, viewport);
             if (app.camera.movement_mode == .walk) {
-                const ground_basis = curved_ground.walkGroundBasis(hyper.view, app.camera.euclid_pitch) orelse curved_ground.worldGroundBasis();
+                const ground_basis = curved_ground.typedWalkGroundBasis(hyper.view, app.camera.euclid_pitch) orelse
+                    curved_ground.typedWorldGroundBasis(.hyperbolic);
                 drawCurvedGroundPatch(
                     hyper.view,
                     render_view,

@@ -43,6 +43,19 @@ pub fn erasedGroundBasis(basis: anytype) GroundBasis {
     };
 }
 
+pub fn sphericalGroundBasis(basis: anytype) SphericalGroundBasis {
+    return switch (@TypeOf(basis)) {
+        SphericalGroundBasis => basis,
+        GroundBasis => .{
+            .origin = Round.fromCoords(basis.origin),
+            .right = Round.fromCoords(basis.right),
+            .forward = Round.fromCoords(basis.forward),
+            .up = Round.fromCoords(basis.up),
+        },
+        else => sphericalGroundBasis(erasedGroundBasis(basis)),
+    };
+}
+
 fn sphericalView(view: anytype) curved.SphericalView {
     return switch (@TypeOf(view)) {
         curved.SphericalView => view,
@@ -115,6 +128,64 @@ pub fn typedWalkGroundBasis(
         .forward = basis.forward,
         .up = basis.up,
     };
+}
+
+pub fn ambientPointForBasis(
+    view: anytype,
+    basis: anytype,
+    lateral: f32,
+    forward_distance: f32,
+) ?curved.Vec4 {
+    switch (@TypeOf(view)) {
+        curved.HyperView => {
+            const ambient = curved.ambientFromTypedTangentBasisPoint(
+                .hyperbolic,
+                view.params,
+                basis.origin,
+                basis.right,
+                basis.forward,
+                lateral,
+                forward_distance,
+            ) orelse return null;
+            return ambient.coeffsArray();
+        },
+        curved.EllipticView => {
+            const ambient = curved.ambientFromTypedTangentBasisPoint(
+                .elliptic,
+                view.params,
+                basis.origin,
+                basis.right,
+                basis.forward,
+                lateral,
+                forward_distance,
+            ) orelse return null;
+            return ambient.coeffsArray();
+        },
+        curved.SphericalView => {
+            const ambient = curved.ambientFromTypedTangentBasisPoint(
+                .spherical,
+                view.params,
+                basis.origin,
+                basis.right,
+                basis.forward,
+                lateral,
+                forward_distance,
+            ) orelse return null;
+            return ambient.coeffsArray();
+        },
+        else => {
+            const erased_basis = erasedGroundBasis(basis);
+            return curved.ambientFromTangentBasisPoint(
+                view.metric,
+                view.params,
+                erased_basis.origin,
+                erased_basis.right,
+                erased_basis.forward,
+                lateral,
+                forward_distance,
+            );
+        },
+    }
 }
 
 pub fn signedGroundBasisForView(view: anytype, basis: GroundBasis) GroundBasis {
