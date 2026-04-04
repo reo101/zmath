@@ -287,6 +287,104 @@ pub fn TypedView(comptime metric: Metric) type {
         pub fn shadeFarDistance(self: Self) f32 {
             return if (metric == .spherical) (@as(f32, std.math.pi) * self.params.radius) else self.clip.far;
         }
+
+        fn sceneAmbientPoint(self: Self, chart: anytype) ?Ambient.Vector {
+            const ambient = embedPoint(metric, self.params, chart) orelse return null;
+            return if (metric == .spherical and self.scene_sign < 0.0)
+                Ambient.scale(Ambient.fromCoords(ambient), -1.0)
+            else
+                Ambient.fromCoords(ambient);
+        }
+
+        pub fn sampleProjectedPoint(self: Self, chart: anytype, screen: Screen) ProjectedSample {
+            const ambient = self.sceneAmbientPoint(chart) orelse return .{};
+            return typedSampleProjectedAmbientPoint(metric, self, ambient, screen);
+        }
+
+        pub fn sampleProjectedAmbient(self: Self, ambient_input: Ambient.Vector, screen: Screen) ProjectedSample {
+            var ambient = ambient_input;
+            if (metric == .spherical and self.scene_sign < 0.0) {
+                ambient = Ambient.scale(ambient, -1.0);
+            }
+            return typedSampleProjectedAmbientPoint(metric, self, ambient, screen);
+        }
+
+        pub fn sampleProjectedPointForSphericalPass(self: Self, pass: SphericalRenderPass, chart: anytype, screen: Screen) ProjectedSample {
+            const ambient = self.sceneAmbientPoint(chart) orelse return .{};
+            return self.sampleProjectedAmbientForSphericalPass(pass, ambient, screen);
+        }
+
+        pub fn sampleProjectedAmbientForSphericalPass(
+            self: Self,
+            pass: SphericalRenderPass,
+            ambient_input: Ambient.Vector,
+            screen: Screen,
+        ) ProjectedSample {
+            std.debug.assert(metric == .spherical);
+            std.debug.assert(sphericalUsesMultipass(self.projection));
+
+            var ambient = ambient_input;
+            if (self.scene_sign < 0.0) {
+                ambient = Ambient.scale(ambient, -1.0);
+            }
+            return typedSampleProjectedAmbientPointForPass(metric, self, pass, ambient, screen);
+        }
+
+        pub fn sampleProjectedAmbientForSphericalPassRaw(
+            self: Self,
+            pass: SphericalRenderPass,
+            ambient_input: Ambient.Vector,
+            screen: Screen,
+        ) ProjectedSample {
+            std.debug.assert(metric == .spherical);
+            std.debug.assert(sphericalUsesMultipass(self.projection));
+
+            var ambient = ambient_input;
+            if (self.scene_sign < 0.0) {
+                ambient = Ambient.scale(ambient, -1.0);
+            }
+            return typedSampleProjectedAmbientPointForPassRaw(metric, self, pass, ambient, screen);
+        }
+
+        pub fn sphericalSelectedPassForAmbient(self: Self, ambient_input: Ambient.Vector) ?SphericalRenderPass {
+            std.debug.assert(metric == .spherical);
+            std.debug.assert(sphericalUsesMultipass(self.projection));
+
+            var ambient = ambient_input;
+            if (self.scene_sign < 0.0) {
+                ambient = Ambient.scale(ambient, -1.0);
+            }
+            return (typedSphericalPassSelection(metric, self, ambient) orelse return null).pass;
+        }
+
+        pub fn sphericalRenderPass(self: Self, pass: SphericalRenderPass) Self {
+            std.debug.assert(metric == .spherical);
+            std.debug.assert(sphericalUsesMultipass(self.projection));
+
+            var render_view = self;
+            render_view.clip = .{
+                .near = if (pass == .near) self.clip.near else 0.0,
+                .far = hemisphereDistance(self.params),
+            };
+
+            if (pass == .far) {
+                render_view.camera = typedAntipodalSphericalPassCamera(render_view.camera);
+            }
+            return render_view;
+        }
+
+        pub fn mapSphericalRenderDistance(self: Self, pass: SphericalRenderPass, pass_distance: f32) f32 {
+            std.debug.assert(metric == .spherical);
+            return switch (pass) {
+                .near => pass_distance,
+                .far => maxSphericalDistance(self.params) - pass_distance,
+            };
+        }
+
+        pub fn cameraModelPoint(self: Self, chart: anytype, model: CameraModel) ?Vec3 {
+            const ambient = self.sceneAmbientPoint(chart) orelse return null;
+            return typedModelPointForAmbient(metric, self.camera, ambient, model);
+        }
     };
 }
 
@@ -853,76 +951,64 @@ pub const View = struct {
     }
 
     pub fn sampleProjectedPoint(self: View, chart: anytype, screen: Screen) ProjectedSample {
-        const ambient = self.sceneAmbientPoint(chart) orelse return .{};
-        return sampleProjectedAmbientPoint(self, ambient, screen);
+        return switch (self.metric) {
+            inline else => |metric_tag| self.typed(metric_tag).sampleProjectedPoint(chart, screen),
+        };
     }
 
     pub fn sampleProjectedAmbient(self: View, ambient_input: Vec4, screen: Screen) ProjectedSample {
-        var ambient = ambient_input;
-        if (self.metric == .spherical and self.scene_sign < 0.0) {
-            ambient = scale4(self.metric, ambient, -1.0);
-        }
-        return sampleProjectedAmbientPoint(self, ambient, screen);
+        return switch (self.metric) {
+            inline else => |metric_tag| self.typed(metric_tag).sampleProjectedAmbient(
+                AmbientFor(metric_tag).fromCoords(ambient_input),
+                screen,
+            ),
+        };
     }
 
     pub fn sampleProjectedPointForSphericalPass(self: View, pass: SphericalRenderPass, chart: anytype, screen: Screen) ProjectedSample {
-        const ambient = self.sceneAmbientPoint(chart) orelse return .{};
-        return sampleProjectedAmbientForSphericalPass(pass, ambient, screen);
+        std.debug.assert(self.metric == .spherical);
+        return self.typed(.spherical).sampleProjectedPointForSphericalPass(pass, chart, screen);
     }
 
     pub fn sampleProjectedAmbientForSphericalPass(self: View, pass: SphericalRenderPass, ambient_input: Vec4, screen: Screen) ProjectedSample {
         std.debug.assert(self.metric == .spherical);
-        std.debug.assert(sphericalUsesMultipass(self.projection));
-
-        const ambient = self.signedSphericalAmbient(ambient_input);
-        return sampleProjectedAmbientPointForPass(self, pass, ambient, screen);
+        return self.typed(.spherical).sampleProjectedAmbientForSphericalPass(
+            pass,
+            curved_ambient.Round.fromCoords(ambient_input),
+            screen,
+        );
     }
 
     pub fn sampleProjectedAmbientForSphericalPassRaw(self: View, pass: SphericalRenderPass, ambient_input: Vec4, screen: Screen) ProjectedSample {
         std.debug.assert(self.metric == .spherical);
-        std.debug.assert(sphericalUsesMultipass(self.projection));
-
-        const ambient = self.signedSphericalAmbient(ambient_input);
-        return sampleProjectedAmbientPointForPassRaw(self, pass, ambient, screen);
+        return self.typed(.spherical).sampleProjectedAmbientForSphericalPassRaw(
+            pass,
+            curved_ambient.Round.fromCoords(ambient_input),
+            screen,
+        );
     }
 
     pub fn sphericalSelectedPassForAmbient(self: View, ambient_input: Vec4) ?SphericalRenderPass {
         std.debug.assert(self.metric == .spherical);
-        std.debug.assert(sphericalUsesMultipass(self.projection));
-
-        const ambient = self.signedSphericalAmbient(ambient_input);
-        const selection = sphericalPassSelection(self, ambient) orelse return null;
-        return selection.pass;
+        return self.typed(.spherical).sphericalSelectedPassForAmbient(
+            curved_ambient.Round.fromCoords(ambient_input),
+        );
     }
 
     pub fn sphericalRenderPass(self: View, pass: SphericalRenderPass) View {
         std.debug.assert(self.metric == .spherical);
-        std.debug.assert(sphericalUsesMultipass(self.projection));
-
-        var render_view = self;
-        render_view.clip = .{
-            .near = if (pass == .near) self.clip.near else 0.0,
-            .far = hemisphereDistance(self.params),
-        };
-
-        if (pass == .far) {
-            render_view.camera = antipodalSphericalPassCamera(self.camera);
-        }
-
-        return render_view;
+        return self.typed(.spherical).sphericalRenderPass(pass).erased();
     }
 
     pub fn mapSphericalRenderDistance(self: View, pass: SphericalRenderPass, pass_distance: f32) f32 {
         std.debug.assert(self.metric == .spherical);
-        return switch (pass) {
-            .near => pass_distance,
-            .far => maxSphericalDistance(self.params) - pass_distance,
-        };
+        return self.typed(.spherical).mapSphericalRenderDistance(pass, pass_distance);
     }
 
     pub fn cameraModelPoint(self: View, chart: anytype, model: CameraModel) ?Vec3 {
-        const ambient = self.sceneAmbientPoint(chart) orelse return null;
-        return modelPointForAmbient(self.metric, self.camera, ambient, model);
+        return switch (self.metric) {
+            inline else => |metric_tag| self.typed(metric_tag).cameraModelPoint(chart, model),
+        };
     }
 
     fn signedSphericalAmbient(self: View, ambient_input: Vec4) Vec4 {
@@ -1121,6 +1207,15 @@ fn antipodalSphericalPassCamera(camera: Camera) Camera {
     };
 }
 
+fn typedAntipodalSphericalPassCamera(camera: TypedCamera(.spherical)) TypedCamera(.spherical) {
+    return .{
+        .position = curved_ambient.Round.scale(camera.position, -1.0),
+        .right = camera.right,
+        .up = camera.up,
+        .forward = curved_ambient.Round.scale(camera.forward, -1.0),
+    };
+}
+
 fn sampleProjectedAmbientPointSinglePass(view: View, ambient: Vec4, screen: Screen) ProjectedSample {
     if (cameraModelForRender(view.metric, view.projection)) |camera_model| {
         const model_point = modelPointForAmbient(view.metric, view.camera, ambient, camera_model) orelse return .{};
@@ -1143,6 +1238,33 @@ fn sampleProjectedAmbientPointSinglePass(view: View, ambient: Vec4, screen: Scre
     };
 }
 
+fn typedSampleProjectedAmbientPointSinglePass(
+    comptime metric: Metric,
+    view: TypedView(metric),
+    ambient: AmbientFor(metric).Vector,
+    screen: Screen,
+) ProjectedSample {
+    if (cameraModelForRender(metric, view.projection)) |camera_model| {
+        const model_point = typedModelPointForAmbient(metric, view.camera, ambient, camera_model) orelse return .{};
+        return sampleProjectedModelPoint(
+            metric,
+            view.projection,
+            view.params,
+            view.clip,
+            model_point,
+            screen,
+        );
+    }
+
+    const point_sample = typedSampleAmbientPoint(metric, view.params, view.camera, ambient) orelse return .{};
+    const projected = projectSample(view.projection, point_sample, screen.width, screen.height, screen.zoom);
+    return .{
+        .distance = point_sample.distance,
+        .projected = projected,
+        .status = sampleStatus(point_sample.distance, view.clip, projected),
+    };
+}
+
 fn sampleProjectedAmbientPointForPass(
     view: View,
     pass: SphericalRenderPass,
@@ -1153,6 +1275,19 @@ fn sampleProjectedAmbientPointForPass(
     if (selection.pass != pass) return .{ .distance = selection.near_distance };
 
     return sampleProjectedAmbientPointForPassRaw(view, pass, ambient, screen);
+}
+
+fn typedSampleProjectedAmbientPointForPass(
+    comptime metric: Metric,
+    view: TypedView(metric),
+    pass: SphericalRenderPass,
+    ambient: AmbientFor(metric).Vector,
+    screen: Screen,
+) ProjectedSample {
+    const selection = typedSphericalPassSelection(metric, view, ambient) orelse return .{};
+    if (selection.pass != pass) return .{ .distance = selection.near_distance };
+
+    return typedSampleProjectedAmbientPointForPassRaw(metric, view, pass, ambient, screen);
 }
 
 fn sampleProjectedAmbientPointForPassRaw(
@@ -1215,8 +1350,81 @@ fn sampleProjectedAmbientPointForPassRaw(
     };
 }
 
+fn typedSampleProjectedAmbientPointForPassRaw(
+    comptime metric: Metric,
+    view: TypedView(metric),
+    pass: SphericalRenderPass,
+    ambient: AmbientFor(metric).Vector,
+    screen: Screen,
+) ProjectedSample {
+    const model = cameraModelForRender(metric, view.projection);
+
+    if (pass == .near) {
+        if (model) |camera_model| {
+            const model_point = typedModelPointForAmbient(metric, view.camera, ambient, camera_model) orelse return .{};
+            return sampleProjectedModelPoint(
+                metric,
+                view.projection,
+                view.params,
+                view.clip,
+                model_point,
+                screen,
+            );
+        }
+
+        const near_sample = typedSampleAmbientPoint(metric, view.params, view.camera, ambient) orelse return .{};
+        const projected = projectSample(view.projection, near_sample, screen.width, screen.height, screen.zoom);
+        return .{
+            .distance = near_sample.distance,
+            .projected = projected,
+            .status = sampleStatus(near_sample.distance, view.clip, projected),
+        };
+    }
+
+    const far_camera = typedAntipodalSphericalPassCamera(view.camera);
+    if (model) |camera_model| {
+        const model_point = typedModelPointForAmbient(metric, far_camera, ambient, camera_model) orelse return .{};
+        const far_sample = sampleProjectedModelPoint(
+            metric,
+            view.projection,
+            view.params,
+            .{ .near = 0.0, .far = hemisphereDistance(view.params) },
+            model_point,
+            screen,
+        );
+        if (far_sample.projected == null) return far_sample;
+        const mapped_distance = maxSphericalDistance(view.params) - far_sample.distance;
+        return .{
+            .distance = mapped_distance,
+            .projected = far_sample.projected,
+            .status = sampleStatus(mapped_distance, view.clip, far_sample.projected),
+        };
+    }
+
+    const far_pass_sample = typedSampleAmbientPoint(metric, view.params, far_camera, ambient) orelse return .{};
+    const mapped_distance = maxSphericalDistance(view.params) - far_pass_sample.distance;
+    const projected = projectSample(view.projection, far_pass_sample, screen.width, screen.height, screen.zoom);
+    return .{
+        .distance = mapped_distance,
+        .projected = projected,
+        .status = sampleStatus(mapped_distance, view.clip, projected),
+    };
+}
+
 fn sphericalPassSelection(view: View, ambient: Vec4) ?SphericalPassSelection {
     const near_sample = sampleAmbientPoint(view.metric, view.params, view.camera, ambient) orelse return null;
+    return .{
+        .pass = if (near_sample.z_dir >= 0.0) .near else .far,
+        .near_distance = near_sample.distance,
+    };
+}
+
+fn typedSphericalPassSelection(
+    comptime metric: Metric,
+    view: TypedView(metric),
+    ambient: AmbientFor(metric).Vector,
+) ?SphericalPassSelection {
+    const near_sample = typedSampleAmbientPoint(metric, view.params, view.camera, ambient) orelse return null;
     return .{
         .pass = if (near_sample.z_dir >= 0.0) .near else .far,
         .near_distance = near_sample.distance,
@@ -1231,6 +1439,21 @@ fn sampleProjectedAmbientPoint(view: View, ambient: Vec4, screen: Screen) Projec
     const near = sampleProjectedAmbientPointForPass(view, .near, ambient, screen);
     if (near.status != .hidden or near.projected != null) return near;
     return sampleProjectedAmbientPointForPass(view, .far, ambient, screen);
+}
+
+fn typedSampleProjectedAmbientPoint(
+    comptime metric: Metric,
+    view: TypedView(metric),
+    ambient: AmbientFor(metric).Vector,
+    screen: Screen,
+) ProjectedSample {
+    if (metric != .spherical or !sphericalUsesMultipass(view.projection)) {
+        return typedSampleProjectedAmbientPointSinglePass(metric, view, ambient, screen);
+    }
+
+    const near = typedSampleProjectedAmbientPointForPass(metric, view, .near, ambient, screen);
+    if (near.status != .hidden or near.projected != null) return near;
+    return typedSampleProjectedAmbientPointForPass(metric, view, .far, ambient, screen);
 }
 
 fn cameraModelForRender(metric: Metric, projection_mode: projection.DirectionProjection) ?CameraModel {
@@ -1459,6 +1682,29 @@ fn relativeCoords(metric: Metric, camera: Camera, ambient: Vec4) RelativeCoords 
         .x = metricDot(metric, point, camera.right),
         .y = metricDot(metric, point, camera.up),
         .z = metricDot(metric, point, camera.forward),
+    };
+}
+
+fn typedRelativeCoords(
+    comptime metric: Metric,
+    camera: TypedCamera(metric),
+    ambient: AmbientFor(metric).Vector,
+) RelativeCoords {
+    const Ambient = AmbientFor(metric);
+    var point = ambient;
+    if (metric == .elliptic and Ambient.dot(camera.position, point) < 0.0) {
+        point = Ambient.scale(point, -1.0);
+    }
+
+    const inner = Ambient.dot(camera.position, point);
+    return .{
+        .w = switch (metric) {
+            .hyperbolic => -inner,
+            .elliptic, .spherical => inner,
+        },
+        .x = Ambient.dot(point, camera.right),
+        .y = Ambient.dot(point, camera.up),
+        .z = Ambient.dot(point, camera.forward),
     };
 }
 
@@ -1752,6 +1998,30 @@ fn sampleAmbientPoint(metric: Metric, params: Params, camera: Camera, ambient: V
     };
 }
 
+fn typedSampleAmbientPoint(
+    comptime metric: Metric,
+    params: Params,
+    camera: TypedCamera(metric),
+    ambient: AmbientFor(metric).Vector,
+) ?Sample {
+    const relative = typedRelativeCoords(metric, camera, ambient);
+    const spatial_norm = relativeSpatialLength(relative);
+    if (spatial_norm <= 1e-6) return null;
+
+    const distance = switch (metric) {
+        .hyperbolic => params.radius * std.math.acosh(@max(relative.w, 1.0)),
+        .elliptic => params.radius * std.math.acos(std.math.clamp(relative.w, -1.0, 1.0)),
+        .spherical => params.radius * std.math.acos(std.math.clamp(relative.w, -1.0, 1.0)),
+    };
+
+    return .{
+        .distance = distance,
+        .x_dir = relative.x / spatial_norm,
+        .y_dir = relative.y / spatial_norm,
+        .z_dir = relative.z / spatial_norm,
+    };
+}
+
 pub fn samplePoint(metric: Metric, params: Params, camera: Camera, chart: anytype) ?Sample {
     const ambient = embedPoint(metric, params, chart) orelse return null;
     return sampleAmbientPoint(metric, params, camera, ambient);
@@ -1768,6 +2038,21 @@ fn modelPointForAmbient(metric: Metric, camera: Camera, ambient: Vec4, model: Ca
         // Devlog #3 uses the conformal charts internally, matching Poincare
         // for hyperbolic space and stereographic for spherical space.
         // https://www.youtube.com/watch?v=pXWRYpdYc7Q
+        .conformal => 1.0 + relative.w,
+    };
+    if (@abs(denom) <= 1e-6) return null;
+    return vec3(relative.x / denom, relative.y / denom, relative.z / denom);
+}
+
+fn typedModelPointForAmbient(
+    comptime metric: Metric,
+    camera: TypedCamera(metric),
+    ambient: AmbientFor(metric).Vector,
+    model: CameraModel,
+) ?Vec3 {
+    const relative = typedRelativeCoords(metric, camera, ambient);
+    const denom = switch (model) {
+        .linear => relative.w,
         .conformal => 1.0 + relative.w,
     };
     if (@abs(denom) <= 1e-6) return null;
@@ -1984,6 +2269,43 @@ test "typed spherical view stays in sync with erased view operations" {
     try std.testing.expectApproxEqAbs(typed_orientation.x_heading, erased_orientation.x_heading, 1e-5);
     try std.testing.expectApproxEqAbs(typed_orientation.z_heading, erased_orientation.z_heading, 1e-5);
     try std.testing.expectApproxEqAbs(typed_orientation.pitch, erased_orientation.pitch, 1e-5);
+}
+
+test "typed spherical view matches erased sampling queries" {
+    const params = Params{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal };
+    const clip = DistanceClip{ .near = 0.08, .far = std.math.inf(f32) };
+    const screen = Screen{ .width = 96, .height = 54, .zoom = 1.0 };
+    const chart = vec3(0.12, -0.07, 0.18);
+
+    const typed = try SphericalView.init(params, .stereographic, clip, .{ 0.0, 0.0, -0.82 }, .{ 0.0, 0.0, 0.0 });
+    const erased = try View.init(.spherical, params, .stereographic, clip, .{ 0.0, 0.0, -0.82 }, .{ 0.0, 0.0, 0.0 });
+
+    const typed_sample = typed.sampleProjectedPoint(chart, screen);
+    const erased_sample = erased.sampleProjectedPoint(chart, screen);
+    try std.testing.expectEqual(erased_sample.status, typed_sample.status);
+    try std.testing.expectApproxEqAbs(erased_sample.distance, typed_sample.distance, 1e-5);
+    try std.testing.expectApproxEqAbs(erased_sample.render_depth, typed_sample.render_depth, 1e-5);
+    try std.testing.expectApproxEqAbs(erased_sample.projected.?[0], typed_sample.projected.?[0], 1e-4);
+    try std.testing.expectApproxEqAbs(erased_sample.projected.?[1], typed_sample.projected.?[1], 1e-4);
+
+    const typed_model = typed.cameraModelPoint(chart, .conformal).?;
+    const erased_model = erased.cameraModelPoint(chart, .conformal).?;
+    inline for (vec3Coords(typed_model), vec3Coords(erased_model)) |lhs, rhs| {
+        try std.testing.expectApproxEqAbs(lhs, rhs, 1e-5);
+    }
+
+    const typed_ambient = typed.sceneAmbientPoint(chart).?;
+    const erased_ambient = erased.sceneAmbientPoint(chart).?;
+    try std.testing.expectEqual(
+        erased.sphericalSelectedPassForAmbient(erased_ambient).?,
+        typed.sphericalSelectedPassForAmbient(typed_ambient).?,
+    );
+    const typed_far = typed.sampleProjectedAmbientForSphericalPass(.far, typed_ambient, screen);
+    const erased_far = erased.sampleProjectedAmbientForSphericalPass(.far, erased_ambient, screen);
+    try std.testing.expectEqual(erased_far.status, typed_far.status);
+    try std.testing.expectApproxEqAbs(erased_far.distance, typed_far.distance, 1e-5);
+    try std.testing.expectApproxEqAbs(erased_far.projected.?[0], typed_far.projected.?[0], 1e-4);
+    try std.testing.expectApproxEqAbs(erased_far.projected.?[1], typed_far.projected.?[1], 1e-4);
 }
 
 test "adjustRadius preserves a valid camera" {
