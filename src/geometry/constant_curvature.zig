@@ -2,36 +2,21 @@ const std = @import("std");
 const projection = @import("../render/projection.zig");
 const curved_projection = @import("../render/curved_projection.zig");
 const curved_ambient = @import("curved_ambient.zig");
-const hpga = @import("../flavours/hpga.zig");
-const epga = @import("../flavours/epga.zig");
+const curved_charts = @import("curved_charts.zig");
+const curved_sampling = @import("curved_sampling.zig");
+const curved_surface = @import("curved_surface.zig");
+const curved_tangent = @import("curved_tangent.zig");
+const curved_types = @import("curved_types.zig");
 
-pub const Metric = enum { hyperbolic, elliptic, spherical };
-
-pub const ChartModel = enum {
-    projective,
-    conformal,
-};
-
-pub const Params = struct {
-    // Constant-curvature radius `R`.
-    // Hyperbolic curvature is `-1 / R^2`; elliptic/spherical curvature is `+1 / R^2`.
-    radius: f32 = 1.0,
-    angular_zoom: f32,
-    chart_model: ChartModel = .projective,
-};
-
-pub const CameraModel = curved_projection.CameraModel;
-pub const DistanceClip = curved_projection.DistanceClip;
-pub const Screen = curved_projection.Screen;
-
-pub const WalkOrientation = struct {
-    x_heading: f32,
-    z_heading: f32,
-    pitch: f32,
-};
-
-pub const Sample = curved_projection.Sample;
-pub const SampleStatus = curved_projection.SampleStatus;
+pub const Metric = curved_types.Metric;
+pub const ChartModel = curved_types.ChartModel;
+pub const Params = curved_types.Params;
+pub const CameraModel = curved_types.CameraModel;
+pub const DistanceClip = curved_types.DistanceClip;
+pub const Screen = curved_types.Screen;
+pub const WalkOrientation = curved_types.WalkOrientation;
+pub const Sample = curved_types.Sample;
+pub const SampleStatus = curved_types.SampleStatus;
 
 const RelativeCoords = struct {
     w: f32,
@@ -40,48 +25,53 @@ const RelativeCoords = struct {
     z: f32,
 };
 
-pub const ProjectedSample = curved_projection.ProjectedSample;
+pub const ProjectedSample = curved_types.ProjectedSample;
 
 pub const CameraError = error{
     InvalidChartPoint,
     DegenerateDirection,
 };
 
-const Flat3 = curved_ambient.Flat3;
+const Flat3 = curved_types.Flat3;
 
-pub const Vec3 = Flat3.Vector;
+pub const Vec3 = curved_types.Vec3;
 pub const projectSample = curved_projection.projectSample;
 pub const shouldBreakProjectedSegment = curved_projection.shouldBreakProjectedSegment;
 
 const projectConformalModelPoint = curved_projection.projectConformalModelPoint;
 const sampleStatus = curved_projection.sampleStatus;
 const shouldBreakProjectionSegment = curved_projection.shouldBreakProjectionSegment;
+const sphericalUsesMultipass = curved_sampling.sphericalUsesMultipass;
 
-pub fn AmbientFor(comptime metric: Metric) type {
-    return switch (metric) {
-        .hyperbolic => curved_ambient.Hyper,
-        .elliptic, .spherical => curved_ambient.Round,
-    };
-}
+pub const AmbientFor = curved_types.AmbientFor;
+pub const TypedCamera = curved_types.TypedCamera;
+pub const TypedWalkBasis = curved_types.TypedWalkBasis;
+pub const vec3 = curved_charts.vec3;
+pub const vec3x = curved_charts.vec3x;
+pub const vec3y = curved_charts.vec3y;
+pub const vec3z = curved_charts.vec3z;
+pub const vec3Coords = curved_charts.vec3Coords;
+pub const flatLerp3 = curved_charts.flatLerp3;
+pub const flatBilerpQuad = curved_charts.flatBilerpQuad;
+pub const chartCoordsTyped = curved_charts.chartCoords;
+pub const sphericalAmbientFromLocalPoint = curved_charts.sphericalAmbientFromLocalPoint;
+pub const sphericalAmbientFromGroundHeightPoint = curved_surface.sphericalAmbientFromGroundHeightPoint;
+pub const ambientFromTypedTangentBasisPoint = curved_surface.ambientFromTypedTangentBasisPoint;
 
-pub fn TypedCamera(comptime metric: Metric) type {
-    const Ambient = AmbientFor(metric);
-    return struct {
-        position: Ambient.Vector,
-        right: Ambient.Vector,
-        up: Ambient.Vector,
-        forward: Ambient.Vector,
-    };
-}
-
-pub fn TypedWalkBasis(comptime metric: Metric) type {
-    const Ambient = AmbientFor(metric);
-    return struct {
-        forward: Ambient.Vector,
-        right: Ambient.Vector,
-        up: Ambient.Vector,
-    };
-}
+const coerceVec3 = curved_charts.coerceVec3;
+const typedEmbedPoint = curved_charts.embedPoint;
+const typedChartCoords = curved_charts.chartCoords;
+const typedGeodesicAmbientPoint = curved_charts.geodesicAmbientPoint;
+const maxSphericalDistance = curved_charts.maxSphericalDistance;
+const hemisphereDistance = curved_charts.hemisphereDistance;
+const typedZero = curved_tangent.zero;
+const typedBasisVector = curved_tangent.basisVector;
+const typedTryNormalizeTangent = curved_tangent.tryNormalizeTangent;
+const typedProjectToTangent = curved_tangent.projectToTangent;
+const typedOrthonormalCandidate = curved_tangent.orthonormalCandidate;
+const typedReorthonormalize = curved_tangent.reorthonormalize;
+const typedNormalizeAmbient = curved_tangent.normalizeAmbient;
+const typedWorldUpAt = curved_tangent.worldUpAt;
 
 fn TypedHeadingBasis(comptime metric: Metric) type {
     const Ambient = AmbientFor(metric);
@@ -247,20 +237,36 @@ pub fn TypedView(comptime metric: Metric) type {
 
         pub fn sampleProjectedPoint(self: Self, chart: anytype, screen: Screen) ProjectedSample {
             const ambient = self.sceneAmbientPoint(chart) orelse return .{};
-            return typedSampleProjectedAmbientPoint(metric, self, ambient, screen);
+            return curved_sampling.sampleProjectedAmbientPoint(
+                metric,
+                self.params,
+                self.projection,
+                self.clip,
+                self.camera,
+                ambient,
+                screen,
+            );
         }
 
         pub fn sampleAmbient(self: Self, ambient_input: Ambient.Vector) ?Sample {
-            return typedSampleAmbientPoint(metric, self.params, self.camera, self.signedAmbient(ambient_input));
+            return curved_sampling.sampleAmbientPoint(metric, self.params, self.camera, self.signedAmbient(ambient_input));
         }
 
         pub fn samplePoint(self: Self, chart: anytype) ?Sample {
             const ambient = self.sceneAmbientPoint(chart) orelse return null;
-            return typedSampleAmbientPoint(metric, self.params, self.camera, ambient);
+            return curved_sampling.sampleAmbientPoint(metric, self.params, self.camera, ambient);
         }
 
         pub fn sampleProjectedAmbient(self: Self, ambient_input: Ambient.Vector, screen: Screen) ProjectedSample {
-            return typedSampleProjectedAmbientPoint(metric, self, self.signedAmbient(ambient_input), screen);
+            return curved_sampling.sampleProjectedAmbientPoint(
+                metric,
+                self.params,
+                self.projection,
+                self.clip,
+                self.camera,
+                self.signedAmbient(ambient_input),
+                screen,
+            );
         }
 
         pub fn sampleProjectedPointForSphericalPass(self: Self, pass: SphericalRenderPass, chart: anytype, screen: Screen) ProjectedSample {
@@ -277,7 +283,16 @@ pub fn TypedView(comptime metric: Metric) type {
             std.debug.assert(metric == .spherical);
             std.debug.assert(sphericalUsesMultipass(self.projection));
 
-            return typedSampleProjectedAmbientPointForPass(metric, self, pass, self.signedAmbient(ambient_input), screen);
+            return curved_sampling.sampleProjectedAmbientPointForPass(
+                metric,
+                self.params,
+                self.projection,
+                self.clip,
+                self.camera,
+                pass,
+                self.signedAmbient(ambient_input),
+                screen,
+            );
         }
 
         pub fn sampleProjectedAmbientForSphericalPassRaw(
@@ -289,14 +304,28 @@ pub fn TypedView(comptime metric: Metric) type {
             std.debug.assert(metric == .spherical);
             std.debug.assert(sphericalUsesMultipass(self.projection));
 
-            return typedSampleProjectedAmbientPointForPassRaw(metric, self, pass, self.signedAmbient(ambient_input), screen);
+            return curved_sampling.sampleProjectedAmbientPointForPassRaw(
+                metric,
+                self.params,
+                self.projection,
+                self.clip,
+                self.camera,
+                pass,
+                self.signedAmbient(ambient_input),
+                screen,
+            );
         }
 
         pub fn sphericalSelectedPassForAmbient(self: Self, ambient_input: Ambient.Vector) ?SphericalRenderPass {
             std.debug.assert(metric == .spherical);
             std.debug.assert(sphericalUsesMultipass(self.projection));
 
-            return (typedSphericalPassSelection(metric, self, self.signedAmbient(ambient_input)) orelse return null).pass;
+            return curved_sampling.sphericalSelectedPassForAmbient(
+                metric,
+                self.params,
+                self.camera,
+                self.signedAmbient(ambient_input),
+            );
         }
 
         pub fn sphericalRenderPass(self: Self, pass: SphericalRenderPass) Self {
@@ -310,7 +339,12 @@ pub fn TypedView(comptime metric: Metric) type {
             };
 
             if (pass == .far) {
-                render_view.camera = typedAntipodalSphericalPassCamera(render_view.camera);
+                render_view.camera = .{
+                    .position = Ambient.scale(render_view.camera.position, -1.0),
+                    .right = render_view.camera.right,
+                    .up = render_view.camera.up,
+                    .forward = Ambient.scale(render_view.camera.forward, -1.0),
+                };
             }
             return render_view;
         }
@@ -324,7 +358,12 @@ pub fn TypedView(comptime metric: Metric) type {
         }
 
         pub fn cameraModelPointForAmbient(self: Self, ambient_input: Ambient.Vector, model: CameraModel) ?Vec3 {
-            return typedModelPointForAmbient(metric, self.camera, self.signedAmbient(ambient_input), model);
+            return curved_sampling.modelPointForTypedAmbientWithCamera(
+                metric,
+                self.camera,
+                self.signedAmbient(ambient_input),
+                model,
+            );
         }
 
         pub fn cameraModelPoint(self: Self, chart: anytype, model: CameraModel) ?Vec3 {
@@ -351,190 +390,9 @@ pub const HyperView = TypedView(.hyperbolic);
 pub const EllipticView = TypedView(.elliptic);
 pub const SphericalView = TypedView(.spherical);
 
-pub const SphericalRenderPass = enum { near, far };
+pub const SphericalRenderPass = curved_sampling.SphericalRenderPass;
 
 const spherical_chart_min_denom: f32 = 0.25;
-
-const SphericalPassSelection = struct {
-    pass: SphericalRenderPass,
-    near_distance: f32,
-};
-
-pub fn vec3(x: f32, y: f32, z: f32) Vec3 {
-    return Vec3.init(.{ x, y, z });
-}
-
-pub fn vec3x(v: Vec3) f32 {
-    return v.coeffNamed("e1");
-}
-
-pub fn vec3y(v: Vec3) f32 {
-    return v.coeffNamed("e2");
-}
-
-pub fn vec3z(v: Vec3) f32 {
-    return v.coeffNamed("e3");
-}
-
-pub fn vec3Coords(v: Vec3) [3]f32 {
-    return .{ vec3x(v), vec3y(v), vec3z(v) };
-}
-
-fn coerceVec3(value: anytype) Vec3 {
-    return if (@TypeOf(value) == Vec3) value else Vec3.init(value);
-}
-
-fn typedEmbedPoint(
-    comptime metric: Metric,
-    params: Params,
-    chart_input: anytype,
-) ?AmbientFor(metric).Vector {
-    const Ambient = AmbientFor(metric);
-    const chart = coerceVec3(chart_input);
-    const scale = chartScale(params);
-    const scaled = vec3(vec3x(chart) / scale, vec3y(chart) / scale, vec3z(chart) / scale);
-    const r2 = scaled.scalarProduct(scaled);
-
-    return switch (metric) {
-        .hyperbolic => switch (params.chart_model) {
-            .projective => {
-                const point = hpga.Point.proper(vec3x(scaled), vec3y(scaled), vec3z(scaled)) orelse return null;
-                return Ambient.fromCoords(hpga.ambientCoords(point));
-            },
-            .conformal => {
-                if (r2 >= 1.0) return null;
-                const denom = 1.0 - r2;
-                return Ambient.fromCoords(.{
-                    (1.0 + r2) / denom,
-                    2.0 * vec3x(scaled) / denom,
-                    2.0 * vec3y(scaled) / denom,
-                    2.0 * vec3z(scaled) / denom,
-                });
-            },
-        },
-        .elliptic, .spherical => switch (params.chart_model) {
-            .projective => Ambient.fromCoords(epga.ambientCoords(epga.Point.proper(vec3x(scaled), vec3y(scaled), vec3z(scaled)))),
-            .conformal => {
-                const denom = 1.0 + r2;
-                return Ambient.fromCoords(.{
-                    (1.0 - r2) / denom,
-                    2.0 * vec3x(scaled) / denom,
-                    2.0 * vec3y(scaled) / denom,
-                    2.0 * vec3z(scaled) / denom,
-                });
-            },
-        },
-    };
-}
-
-fn typedChartCoords(
-    comptime metric: Metric,
-    params: Params,
-    ambient: AmbientFor(metric).Vector,
-) Vec3 {
-    const Ambient = AmbientFor(metric);
-    var point = ambient;
-    if (metric == .elliptic and Ambient.w(point) < 0.0) {
-        point = Ambient.scale(point, -1.0);
-    }
-
-    const scale = chartScale(params);
-    return switch (params.chart_model) {
-        .projective => {
-            const inv_w = scale / safeDivDenom(Ambient.w(point));
-            return vec3(
-                Ambient.x(point) * inv_w,
-                Ambient.y(point) * inv_w,
-                Ambient.z(point) * inv_w,
-            );
-        },
-        .conformal => {
-            const inv = scale / safeDivDenom(1.0 + Ambient.w(point));
-            return vec3(
-                Ambient.x(point) * inv,
-                Ambient.y(point) * inv,
-                Ambient.z(point) * inv,
-            );
-        },
-    };
-}
-
-pub fn chartCoordsTyped(
-    comptime metric: Metric,
-    params: Params,
-    ambient: AmbientFor(metric).Vector,
-) Vec3 {
-    return typedChartCoords(metric, params, ambient);
-}
-
-fn typedZero(comptime metric: Metric) AmbientFor(metric).Vector {
-    const Ambient = AmbientFor(metric);
-    return Ambient.scale(Ambient.identity(), 0.0);
-}
-
-fn typedBasisVector(comptime metric: Metric, coords: [4]f32) AmbientFor(metric).Vector {
-    return AmbientFor(metric).fromCoords(coords);
-}
-
-fn typedTryNormalizeTangent(comptime metric: Metric, v: AmbientFor(metric).Vector) ?AmbientFor(metric).Vector {
-    const Ambient = AmbientFor(metric);
-    if (!Ambient.isFinite(v)) return null;
-    const n2 = Ambient.dot(v, v);
-    if (!std.math.isFinite(n2) or n2 <= 1e-6) return null;
-    return Ambient.scale(v, 1.0 / @sqrt(n2));
-}
-
-fn typedProjectToTangent(
-    comptime metric: Metric,
-    position: AmbientFor(metric).Vector,
-    candidate: AmbientFor(metric).Vector,
-) AmbientFor(metric).Vector {
-    const Ambient = AmbientFor(metric);
-    if (!Ambient.isFinite(position) or !Ambient.isFinite(candidate)) return typedZero(metric);
-    const denom = Ambient.dot(position, position);
-    if (!std.math.isFinite(denom) or @abs(denom) <= 1e-6) return typedZero(metric);
-    const along = Ambient.dot(candidate, position) / denom;
-    if (!std.math.isFinite(along)) return typedZero(metric);
-    return Ambient.sub(candidate, Ambient.scale(position, along));
-}
-
-fn typedOrthonormalCandidate(
-    comptime metric: Metric,
-    position: AmbientFor(metric).Vector,
-    candidate: AmbientFor(metric).Vector,
-    refs: []const AmbientFor(metric).Vector,
-) ?AmbientFor(metric).Vector {
-    const Ambient = AmbientFor(metric);
-    var v = typedProjectToTangent(metric, position, candidate);
-    for (refs) |r| {
-        v = Ambient.sub(v, Ambient.scale(r, Ambient.dot(v, r)));
-    }
-    return typedTryNormalizeTangent(metric, v);
-}
-
-fn typedReorthonormalize(comptime metric: Metric, camera: *TypedCamera(metric)) void {
-    camera.forward = typedOrthonormalCandidate(metric, camera.position, camera.forward, &.{}) orelse camera.forward;
-    camera.right = typedOrthonormalCandidate(metric, camera.position, camera.right, &.{camera.forward}) orelse camera.right;
-    camera.up = typedOrthonormalCandidate(metric, camera.position, camera.up, &.{ camera.forward, camera.right }) orelse camera.up;
-}
-
-fn typedNormalizeAmbient(comptime metric: Metric, ambient: AmbientFor(metric).Vector) AmbientFor(metric).Vector {
-    const Ambient = AmbientFor(metric);
-    if (!Ambient.isFinite(ambient)) return Ambient.identity();
-    const norm2 = Ambient.dot(ambient, ambient);
-    const inv = switch (metric) {
-        .hyperbolic => inv: {
-            if (!std.math.isFinite(norm2) or -norm2 <= 1e-6) return Ambient.identity();
-            break :inv 1.0 / @sqrt(-norm2);
-        },
-        .elliptic, .spherical => inv: {
-            if (!std.math.isFinite(norm2) or norm2 <= 1e-6) return Ambient.identity();
-            break :inv 1.0 / @sqrt(norm2);
-        },
-    };
-    const normalized = Ambient.scale(ambient, inv);
-    return if (Ambient.isFinite(normalized)) normalized else Ambient.identity();
-}
 
 fn typedRotatePair(
     comptime metric: Metric,
@@ -559,11 +417,6 @@ fn typedYaw(comptime metric: Metric, camera: *TypedCamera(metric), angle: f32) v
 
 fn typedPitch(comptime metric: Metric, camera: *TypedCamera(metric), angle: f32) void {
     typedRotatePair(metric, camera, &camera.forward, &camera.up, angle);
-}
-
-fn typedWorldUpAt(comptime metric: Metric, position: AmbientFor(metric).Vector) ?AmbientFor(metric).Vector {
-    return typedOrthonormalCandidate(metric, position, typedBasisVector(metric, .{ 0.0, 0.0, 1.0, 0.0 }), &.{}) orelse
-        typedOrthonormalCandidate(metric, position, typedBasisVector(metric, .{ 0.0, 0.0, 0.0, 1.0 }), &.{});
 }
 
 fn typedWorldUpDirection(comptime metric: Metric, camera: TypedCamera(metric)) ?AmbientFor(metric).Vector {
@@ -736,47 +589,6 @@ fn typedTransportedTangent(
     );
 }
 
-fn typedGeodesicAmbientPoint(
-    comptime metric: Metric,
-    a: AmbientFor(metric).Vector,
-    b_input: AmbientFor(metric).Vector,
-    t: f32,
-) ?AmbientFor(metric).Vector {
-    const Ambient = AmbientFor(metric);
-    var b = b_input;
-
-    return switch (metric) {
-        .hyperbolic => {
-            const cosh_omega = @max(-Ambient.dot(a, b), 1.0);
-            const omega = std.math.acosh(cosh_omega);
-            if (omega <= 1e-5) return a;
-
-            const inv_denom = 1.0 / std.math.sinh(omega);
-            const p = Ambient.add(
-                Ambient.scale(a, std.math.sinh((1.0 - t) * omega) * inv_denom),
-                Ambient.scale(b, std.math.sinh(t * omega) * inv_denom),
-            );
-            return typedNormalizeAmbient(metric, p);
-        },
-        .elliptic, .spherical => {
-            if (metric == .elliptic and Ambient.dot(a, b) < 0.0) {
-                b = Ambient.scale(b, -1.0);
-            }
-
-            const cos_omega = std.math.clamp(Ambient.dot(a, b), -1.0, 1.0);
-            const omega = std.math.acos(cos_omega);
-            if (omega <= 1e-5) return a;
-
-            const inv_denom = 1.0 / @sin(omega);
-            const p = Ambient.add(
-                Ambient.scale(a, @sin((1.0 - t) * omega) * inv_denom),
-                Ambient.scale(b, @sin(t * omega) * inv_denom),
-            );
-            return typedNormalizeAmbient(metric, p);
-        },
-    };
-}
-
 fn typedGeodesicDirection(
     comptime metric: Metric,
     eye: AmbientFor(metric).Vector,
@@ -861,422 +673,12 @@ fn typedMoveAlongDirection(
     typedReorthonormalize(metric, camera);
 }
 
-fn sphericalUsesMultipass(projection_mode: projection.DirectionProjection) bool {
-    return switch (projection_mode) {
-        .wrapped => false,
-        .gnomonic, .stereographic, .orthographic => true,
-    };
-}
-
-pub fn flatLerp3(a_input: anytype, b_input: anytype, t: f32) Vec3 {
-    const a = coerceVec3(a_input);
-    const b = coerceVec3(b_input);
-    return a.scale(1.0 - t).add(b.scale(t));
-}
-
-pub fn flatBilerpQuad(a: anytype, b: anytype, c: anytype, d: anytype, u: f32, v: f32) Vec3 {
-    const ab = flatLerp3(a, b, u);
-    const dc = flatLerp3(d, c, u);
-    return flatLerp3(ab, dc, v);
-}
-
 fn flatVector(point: Vec3) Flat3.Vector {
     return point;
 }
 
-fn chartScale(params: Params) f32 {
-    return params.radius * switch (params.chart_model) {
-        .projective => @as(f32, 1.0),
-        .conformal => @as(f32, 2.0),
-    };
-}
-
-fn safeDivDenom(value: f32) f32 {
-    if (!std.math.isFinite(value)) return 1e-6;
-    if (@abs(value) > 1e-6) return value;
-    return if (value < 0.0) -1e-6 else 1e-6;
-}
-
-fn maxSphericalDistance(params: Params) f32 {
-    return @as(f32, std.math.pi) * params.radius;
-}
-
-fn hemisphereDistance(params: Params) f32 {
-    return maxSphericalDistance(params) * 0.5;
-}
-
-pub fn sphericalAmbientFromLocalPoint(params: Params, local_input: anytype) AmbientFor(.spherical).Vector {
-    const Round = AmbientFor(.spherical);
-    const local = coerceVec3(local_input);
-    const local_radius = local.magnitude();
-    if (local_radius <= 1e-6) return Round.identity();
-
-    const theta = local_radius / params.radius;
-    const spatial_scale = @sin(theta) / local_radius;
-    return Round.fromCoords(.{
-        @cos(theta),
-        vec3x(local) * spatial_scale,
-        vec3y(local) * spatial_scale,
-        vec3z(local) * spatial_scale,
-    });
-}
-
-pub fn sphericalAmbientFromGroundHeightPoint(params: Params, local_input: anytype) AmbientFor(.spherical).Vector {
-    const Round = AmbientFor(.spherical);
-    const local = coerceVec3(local_input);
-    const base = ambientFromTypedTangentBasisPoint(
-        .spherical,
-        params,
-        Round.identity(),
-        Round.fromCoords(.{ 0.0, 1.0, 0.0, 0.0 }),
-        Round.fromCoords(.{ 0.0, 0.0, 0.0, 1.0 }),
-        vec3x(local),
-        vec3z(local),
-    ) orelse return Round.identity();
-    if (@abs(vec3y(local)) <= 1e-6) return base;
-
-    const up = typedWorldUpAt(.spherical, base) orelse return base;
-    const normalized_height = vec3y(local) / params.radius;
-    return typedNormalizeAmbient(
-        .spherical,
-        Round.add(
-            Round.scale(base, @cos(normalized_height)),
-            Round.scale(up, @sin(normalized_height)),
-        ),
-    );
-}
-
-pub fn ambientFromTypedTangentBasisPoint(
-    comptime metric: Metric,
-    params: Params,
-    origin: AmbientFor(metric).Vector,
-    right: AmbientFor(metric).Vector,
-    forward: AmbientFor(metric).Vector,
-    lateral: f32,
-    forward_distance: f32,
-) ?AmbientFor(metric).Vector {
-    const Ambient = AmbientFor(metric);
-    if (!Ambient.isFinite(origin) or !Ambient.isFinite(right) or !Ambient.isFinite(forward)) return origin;
-    if (!std.math.isFinite(lateral) or !std.math.isFinite(forward_distance)) return origin;
-
-    const tangent = Ambient.add(
-        Ambient.scale(right, lateral),
-        Ambient.scale(forward, forward_distance),
-    );
-    const tangent_norm2 = Ambient.dot(tangent, tangent);
-    if (!std.math.isFinite(tangent_norm2) or tangent_norm2 <= 1e-6) return origin;
-
-    const tangent_norm = @sqrt(tangent_norm2);
-    const normalized_distance = tangent_norm / params.radius;
-    if (!std.math.isFinite(normalized_distance)) return origin;
-    const position = switch (metric) {
-        .hyperbolic => Ambient.add(
-            Ambient.scale(origin, std.math.cosh(normalized_distance)),
-            Ambient.scale(tangent, std.math.sinh(normalized_distance) / tangent_norm),
-        ),
-        .elliptic, .spherical => Ambient.add(
-            Ambient.scale(origin, @cos(normalized_distance)),
-            Ambient.scale(tangent, @sin(normalized_distance) / tangent_norm),
-        ),
-    };
-    return typedNormalizeAmbient(metric, position);
-}
-
-fn typedAntipodalSphericalPassCamera(camera: TypedCamera(.spherical)) TypedCamera(.spherical) {
-    return .{
-        .position = curved_ambient.Round.scale(camera.position, -1.0),
-        .right = camera.right,
-        .up = camera.up,
-        .forward = curved_ambient.Round.scale(camera.forward, -1.0),
-    };
-}
-
-fn typedSampleProjectedAmbientPointSinglePass(
-    comptime metric: Metric,
-    view: TypedView(metric),
-    ambient: AmbientFor(metric).Vector,
-    screen: Screen,
-) ProjectedSample {
-    if (cameraModelForRender(metric, view.projection)) |camera_model| {
-        const model_point = typedModelPointForAmbient(metric, view.camera, ambient, camera_model) orelse return .{};
-        return sampleProjectedModelPoint(
-            metric,
-            view.projection,
-            view.params,
-            view.clip,
-            model_point,
-            screen,
-        );
-    }
-
-    const point_sample = typedSampleAmbientPoint(metric, view.params, view.camera, ambient) orelse return .{};
-    const projected = projectSample(view.projection, point_sample, screen.width, screen.height, screen.zoom);
-    return .{
-        .distance = point_sample.distance,
-        .projected = projected,
-        .status = sampleStatus(point_sample.distance, view.clip, projected),
-    };
-}
-
-fn typedSampleProjectedAmbientPointForPass(
-    comptime metric: Metric,
-    view: TypedView(metric),
-    pass: SphericalRenderPass,
-    ambient: AmbientFor(metric).Vector,
-    screen: Screen,
-) ProjectedSample {
-    const selection = typedSphericalPassSelection(metric, view, ambient) orelse return .{};
-    if (selection.pass != pass) return .{ .distance = selection.near_distance };
-
-    return typedSampleProjectedAmbientPointForPassRaw(metric, view, pass, ambient, screen);
-}
-
-fn typedSampleProjectedAmbientPointForPassRaw(
-    comptime metric: Metric,
-    view: TypedView(metric),
-    pass: SphericalRenderPass,
-    ambient: AmbientFor(metric).Vector,
-    screen: Screen,
-) ProjectedSample {
-    const model = cameraModelForRender(metric, view.projection);
-
-    if (pass == .near) {
-        if (model) |camera_model| {
-            const model_point = typedModelPointForAmbient(metric, view.camera, ambient, camera_model) orelse return .{};
-            return sampleProjectedModelPoint(
-                metric,
-                view.projection,
-                view.params,
-                view.clip,
-                model_point,
-                screen,
-            );
-        }
-
-        const near_sample = typedSampleAmbientPoint(metric, view.params, view.camera, ambient) orelse return .{};
-        const projected = projectSample(view.projection, near_sample, screen.width, screen.height, screen.zoom);
-        return .{
-            .distance = near_sample.distance,
-            .projected = projected,
-            .status = sampleStatus(near_sample.distance, view.clip, projected),
-        };
-    }
-
-    const far_camera = typedAntipodalSphericalPassCamera(view.camera);
-    if (model) |camera_model| {
-        const model_point = typedModelPointForAmbient(metric, far_camera, ambient, camera_model) orelse return .{};
-        const far_sample = sampleProjectedModelPoint(
-            metric,
-            view.projection,
-            view.params,
-            .{ .near = 0.0, .far = hemisphereDistance(view.params) },
-            model_point,
-            screen,
-        );
-        if (far_sample.projected == null) return far_sample;
-        const mapped_distance = maxSphericalDistance(view.params) - far_sample.distance;
-        return .{
-            .distance = mapped_distance,
-            .projected = far_sample.projected,
-            .status = sampleStatus(mapped_distance, view.clip, far_sample.projected),
-        };
-    }
-
-    const far_pass_sample = typedSampleAmbientPoint(metric, view.params, far_camera, ambient) orelse return .{};
-    const mapped_distance = maxSphericalDistance(view.params) - far_pass_sample.distance;
-    const projected = projectSample(view.projection, far_pass_sample, screen.width, screen.height, screen.zoom);
-    return .{
-        .distance = mapped_distance,
-        .projected = projected,
-        .status = sampleStatus(mapped_distance, view.clip, projected),
-    };
-}
-
-fn typedSphericalPassSelection(
-    comptime metric: Metric,
-    view: TypedView(metric),
-    ambient: AmbientFor(metric).Vector,
-) ?SphericalPassSelection {
-    const near_sample = typedSampleAmbientPoint(metric, view.params, view.camera, ambient) orelse return null;
-    return .{
-        .pass = if (near_sample.z_dir >= 0.0) .near else .far,
-        .near_distance = near_sample.distance,
-    };
-}
-
-fn typedSampleProjectedAmbientPoint(
-    comptime metric: Metric,
-    view: TypedView(metric),
-    ambient: AmbientFor(metric).Vector,
-    screen: Screen,
-) ProjectedSample {
-    if (metric != .spherical or !sphericalUsesMultipass(view.projection)) {
-        return typedSampleProjectedAmbientPointSinglePass(metric, view, ambient, screen);
-    }
-
-    const near = typedSampleProjectedAmbientPointForPass(metric, view, .near, ambient, screen);
-    if (near.status != .hidden or near.projected != null) return near;
-    return typedSampleProjectedAmbientPointForPass(metric, view, .far, ambient, screen);
-}
-
-fn cameraModelForRender(metric: Metric, projection_mode: projection.DirectionProjection) ?CameraModel {
-    return switch (projection_mode) {
-        // Hyperbolica devlog #4 identifies the camera-relative linear models:
-        // Beltrami-Klein for hyperbolic space and gnomonic for spherical
-        // space. The same devlog then switches spherical rendering to a
-        // two-pass stereographic compromise for full-sphere coverage.
-        // https://www.youtube.com/watch?v=rqSLuOR3dwY
-        .gnomonic => .linear,
-        .wrapped, .orthographic => if (metric == .hyperbolic) .linear else null,
-        .stereographic => .conformal,
-    };
-}
-
-// Normalized homogeneous points for the projective models:
-// - hyperbolic `H^3`: unit hyperboloid / Klein chart
-// - elliptic `E^3`: unit 3-sphere / projective chart
-// See Gunn, "Geometry in the 3-Sphere from a Clifford Perspective"
-// https://arxiv.org/abs/1310.2713
-// and Gunn, "Geometry in the Hyperbolic Plane and Beyond"
-// https://arxiv.org/pdf/1602.08562
-// The initial viewing ray is the tangent of the geodesic from the eye point to
-// the target point, obtained by removing the eye component with the ambient
-// metric of the model. Same references as above.
-fn typedRelativeCoords(
-    comptime metric: Metric,
-    camera: TypedCamera(metric),
-    ambient: AmbientFor(metric).Vector,
-) RelativeCoords {
-    const Ambient = AmbientFor(metric);
-    var point = ambient;
-    if (metric == .elliptic and Ambient.dot(camera.position, point) < 0.0) {
-        point = Ambient.scale(point, -1.0);
-    }
-
-    const inner = Ambient.dot(camera.position, point);
-    return .{
-        .w = switch (metric) {
-            .hyperbolic => -inner,
-            .elliptic, .spherical => inner,
-        },
-        .x = Ambient.dot(point, camera.right),
-        .y = Ambient.dot(point, camera.up),
-        .z = Ambient.dot(point, camera.forward),
-    };
-}
-
-fn relativeSpatialLength(relative: RelativeCoords) f32 {
-    return vec3(relative.x, relative.y, relative.z).magnitude();
-}
-
-fn modelRadius(point: Vec3) f32 {
-    return point.magnitude();
-}
-
-fn sampleModelPoint(metric: Metric, projection_mode: projection.DirectionProjection, params: Params, model_point: Vec3) ?Sample {
-    const radius = modelRadius(model_point);
-    const distance = switch (cameraModelForRender(metric, projection_mode) orelse return null) {
-        .linear => linear_distance: switch (metric) {
-            .hyperbolic => {
-                if (radius >= 1.0 - 1e-5) return null;
-                break :linear_distance params.radius * std.math.atanh(radius);
-            },
-            .elliptic, .spherical => break :linear_distance params.radius * std.math.atan(radius),
-        },
-        .conformal => conformal_distance: switch (metric) {
-            .hyperbolic => {
-                if (radius >= 1.0 - 1e-5) return null;
-                break :conformal_distance params.radius * 2.0 * std.math.atanh(radius);
-            },
-            .elliptic, .spherical => break :conformal_distance params.radius * 2.0 * std.math.atan(radius),
-        },
-    };
-
-    const spatial_norm = @max(radius, 1e-6);
-    return .{
-        .distance = distance,
-        .x_dir = vec3x(model_point) / spatial_norm,
-        .y_dir = vec3y(model_point) / spatial_norm,
-        .z_dir = vec3z(model_point) / spatial_norm,
-    };
-}
-
-pub fn sampleProjectedModelPoint(
-    metric: Metric,
-    projection_mode: projection.DirectionProjection,
-    params: Params,
-    clip: DistanceClip,
-    model_point: Vec3,
-    screen: Screen,
-) ProjectedSample {
-    const point_sample = sampleModelPoint(metric, projection_mode, params, model_point) orelse return .{};
-    const projected = switch (cameraModelForRender(metric, projection_mode) orelse return .{}) {
-        .linear => projection.projectDirectionWith(
-            projection_mode,
-            vec3x(model_point),
-            vec3y(model_point),
-            vec3z(model_point),
-            screen.width,
-            screen.height,
-            screen.zoom,
-        ),
-        .conformal => projectConformalModelPoint(model_point, screen.width, screen.height, screen.zoom),
-    };
-    return .{
-        .distance = point_sample.distance,
-        .render_depth = vec3z(model_point),
-        .projected = projected,
-        .status = sampleStatus(point_sample.distance, clip, projected),
-    };
-}
-
-fn typedSampleAmbientPoint(
-    comptime metric: Metric,
-    params: Params,
-    camera: TypedCamera(metric),
-    ambient: AmbientFor(metric).Vector,
-) ?Sample {
-    const relative = typedRelativeCoords(metric, camera, ambient);
-    const spatial_norm = relativeSpatialLength(relative);
-    if (spatial_norm <= 1e-6) return null;
-
-    const distance = switch (metric) {
-        .hyperbolic => params.radius * std.math.acosh(@max(relative.w, 1.0)),
-        .elliptic => params.radius * std.math.acos(std.math.clamp(relative.w, -1.0, 1.0)),
-        .spherical => params.radius * std.math.acos(std.math.clamp(relative.w, -1.0, 1.0)),
-    };
-
-    return .{
-        .distance = distance,
-        .x_dir = relative.x / spatial_norm,
-        .y_dir = relative.y / spatial_norm,
-        .z_dir = relative.z / spatial_norm,
-    };
-}
-
-fn typedModelPointForAmbient(
-    comptime metric: Metric,
-    camera: TypedCamera(metric),
-    ambient: AmbientFor(metric).Vector,
-    model: CameraModel,
-) ?Vec3 {
-    const relative = typedRelativeCoords(metric, camera, ambient);
-    const denom = switch (model) {
-        .linear => relative.w,
-        .conformal => 1.0 + relative.w,
-    };
-    if (@abs(denom) <= 1e-6) return null;
-    return vec3(relative.x / denom, relative.y / denom, relative.z / denom);
-}
-
-pub fn modelPointForTypedAmbientWithCamera(
-    comptime metric: Metric,
-    camera: TypedCamera(metric),
-    ambient: AmbientFor(metric).Vector,
-    model: CameraModel,
-) ?Vec3 {
-    return typedModelPointForAmbient(metric, camera, ambient, model);
-}
+pub const sampleProjectedModelPoint = curved_sampling.sampleProjectedModelPoint;
+pub const modelPointForTypedAmbientWithCamera = curved_sampling.modelPointForTypedAmbientWithCamera;
 
 fn edgeHasProjectionBreak(view: anytype, a_chart: Vec3, b_chart: Vec3, screen: Screen, steps: usize) bool {
     var prev_point: ?[2]f32 = null;
