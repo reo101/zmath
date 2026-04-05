@@ -1,6 +1,7 @@
 const std = @import("std");
 
 pub const ga = @import("../ga.zig");
+const family = @import("family.zig");
 
 pub const MetricSignature = ga.MetricSignature;
 
@@ -18,13 +19,18 @@ const basis_spans = ga.BasisIndexSpans.init(.{
 });
 
 const naming_options = ga.SignedBladeNamingOptions.withBasisSpans(basis_spans);
-const algebra = ga.AlgebraWithNamingOptions(sig, naming_options);
+const default_family = family.withBasisSpans(sig, basis_spans);
+pub const Algebra = default_family.Algebra;
 
-pub const h = algebra.Instantiate(f64);
+pub fn Instantiate(comptime T: type) type {
+    return default_family.Instantiate(T);
+}
 
-const Vector = algebra.Vector(f64);
-const Bivector = algebra.Bivector(f64);
-const Rotor = algebra.Rotor(f64);
+pub const h = Instantiate(f64);
+
+const Vector = Algebra.Vector(f64);
+const Bivector = Algebra.Bivector(f64);
+const Rotor = Algebra.Rotor(f64);
 
 fn namedBasisIndex(comptime named_index: usize) usize {
     return comptime ga.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
@@ -190,6 +196,12 @@ test "sta signature has expected metric classes and dimension" {
     inline for (1..4) |i| {
         try std.testing.expectEqual(.negative, sig.basisSquareClass(namedBasisIndex(i)));
     }
+}
+
+test "sta facade exposes canonical algebra family surface" {
+    const H32 = Instantiate(f32);
+    try std.testing.expectEqual(@as(f32, 1.0), H32.Basis.e(0).gp(H32.Basis.e(0)).scalarCoeff());
+    try std.testing.expectEqual(@as(f32, -1.0), H32.Basis.e(1).gp(H32.Basis.e(1)).scalarCoeff());
 }
 
 test "sta basis vectors square to minkowski signs" {
