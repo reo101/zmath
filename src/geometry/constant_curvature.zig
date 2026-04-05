@@ -2,6 +2,7 @@ const std = @import("std");
 const projection = @import("../render/projection.zig");
 const curved_projection = @import("../render/curved_projection.zig");
 const curved_ambient = @import("curved_ambient.zig");
+const curved_camera = @import("curved_camera.zig");
 const curved_charts = @import("curved_charts.zig");
 const curved_sampling = @import("curved_sampling.zig");
 const curved_surface = @import("curved_surface.zig");
@@ -18,19 +19,9 @@ pub const WalkOrientation = curved_types.WalkOrientation;
 pub const Sample = curved_types.Sample;
 pub const SampleStatus = curved_types.SampleStatus;
 
-const RelativeCoords = struct {
-    w: f32,
-    x: f32,
-    y: f32,
-    z: f32,
-};
-
 pub const ProjectedSample = curved_types.ProjectedSample;
 
-pub const CameraError = error{
-    InvalidChartPoint,
-    DegenerateDirection,
-};
+pub const CameraError = curved_camera.CameraError;
 
 const Flat3 = curved_types.Flat3;
 
@@ -64,23 +55,23 @@ const typedChartCoords = curved_charts.chartCoords;
 const typedGeodesicAmbientPoint = curved_charts.geodesicAmbientPoint;
 const maxSphericalDistance = curved_charts.maxSphericalDistance;
 const hemisphereDistance = curved_charts.hemisphereDistance;
-const typedZero = curved_tangent.zero;
-const typedBasisVector = curved_tangent.basisVector;
 const typedTryNormalizeTangent = curved_tangent.tryNormalizeTangent;
-const typedProjectToTangent = curved_tangent.projectToTangent;
-const typedOrthonormalCandidate = curved_tangent.orthonormalCandidate;
 const typedReorthonormalize = curved_tangent.reorthonormalize;
 const typedNormalizeAmbient = curved_tangent.normalizeAmbient;
 const typedWorldUpAt = curved_tangent.worldUpAt;
-
-fn TypedHeadingBasis(comptime metric: Metric) type {
-    const Ambient = AmbientFor(metric);
-    return struct {
-        east: Ambient.Vector,
-        north: Ambient.Vector,
-        up: Ambient.Vector,
-    };
-}
+const typedYaw = curved_camera.turnYaw;
+const typedPitch = curved_camera.turnPitch;
+const typedWorldUpDirection = curved_camera.worldUpDirection;
+const typedWorldHeadingDirection = curved_camera.worldHeadingDirection;
+const typedCurrentWalkOrientation = curved_camera.currentWalkOrientation;
+const typedWalkBasis = curved_camera.walkBasis;
+const typedWalkSurfaceBasis = curved_camera.walkSurfaceBasis;
+const typedOrientFromHeadingPitch = curved_camera.orientFromHeadingPitch;
+const typedTurnSurfaceYaw = curved_camera.turnSurfaceYaw;
+const typedSyncSurfacePitch = curved_camera.syncSurfacePitch;
+const typedGeodesicDirection = curved_camera.geodesicDirection;
+const typedInitCamera = curved_camera.initCamera;
+const typedMoveAlongDirection = curved_camera.moveAlongDirection;
 
 pub fn TypedView(comptime metric: Metric) type {
     const Ambient = AmbientFor(metric);
@@ -393,286 +384,6 @@ pub const SphericalView = TypedView(.spherical);
 pub const SphericalRenderPass = curved_sampling.SphericalRenderPass;
 
 const spherical_chart_min_denom: f32 = 0.25;
-
-fn typedRotatePair(
-    comptime metric: Metric,
-    camera: *TypedCamera(metric),
-    first: *AmbientFor(metric).Vector,
-    second: *AmbientFor(metric).Vector,
-    angle: f32,
-) void {
-    const Ambient = AmbientFor(metric);
-    const c = @cos(angle);
-    const s = @sin(angle);
-    const old_first = first.*;
-    const old_second = second.*;
-    first.* = Ambient.add(Ambient.scale(old_first, c), Ambient.scale(old_second, s));
-    second.* = Ambient.sub(Ambient.scale(old_second, c), Ambient.scale(old_first, s));
-    typedReorthonormalize(metric, camera);
-}
-
-fn typedYaw(comptime metric: Metric, camera: *TypedCamera(metric), angle: f32) void {
-    typedRotatePair(metric, camera, &camera.forward, &camera.right, angle);
-}
-
-fn typedPitch(comptime metric: Metric, camera: *TypedCamera(metric), angle: f32) void {
-    typedRotatePair(metric, camera, &camera.forward, &camera.up, angle);
-}
-
-fn typedWorldUpDirection(comptime metric: Metric, camera: TypedCamera(metric)) ?AmbientFor(metric).Vector {
-    return typedWorldUpAt(metric, camera.position);
-}
-
-fn typedHeadingBasis(comptime metric: Metric, camera: TypedCamera(metric)) ?TypedHeadingBasis(metric) {
-    const up = typedWorldUpDirection(metric, camera) orelse return null;
-    const east = typedOrthonormalCandidate(metric, camera.position, typedBasisVector(metric, .{ 0.0, 1.0, 0.0, 0.0 }), &.{up}) orelse
-        typedOrthonormalCandidate(metric, camera.position, typedBasisVector(metric, .{ 0.0, 0.0, 0.0, 1.0 }), &.{up}) orelse
-        typedOrthonormalCandidate(metric, camera.position, typedBasisVector(metric, .{ 1.0, 0.0, 0.0, 0.0 }), &.{up}) orelse
-        return null;
-    const north = typedOrthonormalCandidate(metric, camera.position, typedBasisVector(metric, .{ 0.0, 0.0, 0.0, 1.0 }), &.{ up, east }) orelse
-        typedOrthonormalCandidate(metric, camera.position, typedBasisVector(metric, .{ 1.0, 0.0, 0.0, 0.0 }), &.{ up, east }) orelse
-        typedOrthonormalCandidate(metric, camera.position, typedBasisVector(metric, .{ 0.0, 1.0, 0.0, 0.0 }), &.{ up, east }) orelse
-        return null;
-
-    return .{
-        .east = east,
-        .north = north,
-        .up = up,
-    };
-}
-
-fn typedWorldHeadingDirection(
-    comptime metric: Metric,
-    camera: TypedCamera(metric),
-    x_heading: f32,
-    z_heading: f32,
-) ?AmbientFor(metric).Vector {
-    const Ambient = AmbientFor(metric);
-    const basis = typedHeadingBasis(metric, camera) orelse return null;
-    return typedTryNormalizeTangent(metric, Ambient.add(
-        Ambient.scale(basis.east, x_heading),
-        Ambient.scale(basis.north, z_heading),
-    ));
-}
-
-fn typedCurrentWalkOrientation(comptime metric: Metric, camera: TypedCamera(metric)) ?WalkOrientation {
-    const Ambient = AmbientFor(metric);
-    const basis = typedHeadingBasis(metric, camera) orelse return null;
-    const pitch_angle = std.math.asin(std.math.clamp(Ambient.dot(camera.forward, basis.up), -1.0, 1.0));
-
-    const forward_ground = typedOrthonormalCandidate(metric, camera.position, camera.forward, &.{basis.up}) orelse fallback_ground: {
-        const up_sign: f32 = if (pitch_angle >= 0.0) -1.0 else 1.0;
-        break :fallback_ground typedOrthonormalCandidate(metric, camera.position, Ambient.scale(camera.up, up_sign), &.{basis.up}) orelse return null;
-    };
-
-    const x_heading = Ambient.dot(forward_ground, basis.east);
-    const z_heading = Ambient.dot(forward_ground, basis.north);
-    const heading_len = @sqrt(x_heading * x_heading + z_heading * z_heading);
-    if (heading_len <= 1e-6) return null;
-
-    return .{
-        .x_heading = x_heading / heading_len,
-        .z_heading = z_heading / heading_len,
-        .pitch = pitch_angle,
-    };
-}
-
-fn typedWalkBasis(comptime metric: Metric, camera: TypedCamera(metric)) ?TypedWalkBasis(metric) {
-    const orientation = typedCurrentWalkOrientation(metric, camera) orelse return null;
-    const basis = typedHeadingBasis(metric, camera) orelse return null;
-    return .{
-        .forward = typedWorldHeadingDirection(metric, camera, orientation.x_heading, orientation.z_heading) orelse return null,
-        .right = typedWorldHeadingDirection(metric, camera, orientation.z_heading, -orientation.x_heading) orelse return null,
-        .up = basis.up,
-    };
-}
-
-fn typedWalkSurfaceBasis(comptime metric: Metric, camera: TypedCamera(metric), pitch_angle: f32) ?TypedWalkBasis(metric) {
-    const Ambient = AmbientFor(metric);
-    const up = typedWorldUpDirection(metric, camera) orelse return null;
-    const forward = typedOrthonormalCandidate(metric, camera.position, camera.forward, &.{up}) orelse
-        fallback_forward: {
-            const up_sign: f32 = if (pitch_angle >= 0.0) -1.0 else 1.0;
-            break :fallback_forward typedOrthonormalCandidate(metric, camera.position, Ambient.scale(camera.up, up_sign), &.{up});
-        } orelse
-        return null;
-    const right = typedOrthonormalCandidate(metric, camera.position, camera.right, &.{ up, forward }) orelse
-        typedOrthonormalCandidate(metric, camera.position, camera.up, &.{ up, forward }) orelse
-        return null;
-    return .{
-        .forward = forward,
-        .right = right,
-        .up = up,
-    };
-}
-
-fn typedOrientFromHeadingPitch(
-    comptime metric: Metric,
-    camera: *TypedCamera(metric),
-    x_heading: f32,
-    z_heading: f32,
-    pitch_angle: f32,
-) void {
-    const Ambient = AmbientFor(metric);
-    const basis = typedHeadingBasis(metric, camera.*) orelse return;
-    const horizontal_forward = typedWorldHeadingDirection(metric, camera.*, x_heading, z_heading) orelse return;
-    const horizontal_right = typedWorldHeadingDirection(metric, camera.*, z_heading, -x_heading) orelse return;
-
-    camera.forward = Ambient.add(
-        Ambient.scale(horizontal_forward, @cos(pitch_angle)),
-        Ambient.scale(basis.up, @sin(pitch_angle)),
-    );
-    camera.forward = typedTryNormalizeTangent(metric, typedProjectToTangent(metric, camera.position, camera.forward)) orelse return;
-    camera.right = typedOrthonormalCandidate(metric, camera.position, horizontal_right, &.{camera.forward}) orelse return;
-    camera.up = typedOrthonormalCandidate(metric, camera.position, basis.up, &.{ camera.forward, camera.right }) orelse return;
-    typedReorthonormalize(metric, camera);
-}
-
-fn typedTurnSurfaceYaw(
-    comptime metric: Metric,
-    camera: *TypedCamera(metric),
-    angle: f32,
-    pitch_angle: f32,
-) void {
-    const Ambient = AmbientFor(metric);
-    const basis = typedWalkSurfaceBasis(metric, camera.*, pitch_angle) orelse {
-        typedYaw(metric, camera, angle);
-        return;
-    };
-
-    const c = @cos(angle);
-    const s = @sin(angle);
-    const horizontal_forward = Ambient.add(
-        Ambient.scale(basis.forward, c),
-        Ambient.scale(basis.right, s),
-    );
-    const horizontal_right = Ambient.sub(
-        Ambient.scale(basis.right, c),
-        Ambient.scale(basis.forward, s),
-    );
-
-    camera.forward = Ambient.add(
-        Ambient.scale(horizontal_forward, @cos(pitch_angle)),
-        Ambient.scale(basis.up, @sin(pitch_angle)),
-    );
-    camera.forward = typedTryNormalizeTangent(metric, typedProjectToTangent(metric, camera.position, camera.forward)) orelse return;
-    camera.right = typedOrthonormalCandidate(metric, camera.position, horizontal_right, &.{ camera.forward, basis.up }) orelse return;
-    camera.up = typedOrthonormalCandidate(metric, camera.position, basis.up, &.{ camera.forward, camera.right }) orelse return;
-    typedReorthonormalize(metric, camera);
-}
-
-fn typedSyncSurfacePitch(comptime metric: Metric, camera: *TypedCamera(metric), pitch_angle: f32) void {
-    const Ambient = AmbientFor(metric);
-    const basis = typedWalkSurfaceBasis(metric, camera.*, pitch_angle) orelse return;
-
-    camera.forward = Ambient.add(
-        Ambient.scale(basis.forward, @cos(pitch_angle)),
-        Ambient.scale(basis.up, @sin(pitch_angle)),
-    );
-    camera.forward = typedTryNormalizeTangent(metric, typedProjectToTangent(metric, camera.position, camera.forward)) orelse return;
-    camera.right = typedOrthonormalCandidate(metric, camera.position, basis.right, &.{ camera.forward, basis.up }) orelse return;
-    camera.up = typedOrthonormalCandidate(metric, camera.position, basis.up, &.{ camera.forward, camera.right }) orelse return;
-    typedReorthonormalize(metric, camera);
-}
-
-fn typedTransportedTangent(
-    comptime metric: Metric,
-    old_direction: AmbientFor(metric).Vector,
-    new_direction: AmbientFor(metric).Vector,
-    tangent: AmbientFor(metric).Vector,
-) AmbientFor(metric).Vector {
-    const Ambient = AmbientFor(metric);
-    const along = Ambient.dot(tangent, old_direction);
-    return Ambient.add(
-        Ambient.sub(tangent, Ambient.scale(old_direction, along)),
-        Ambient.scale(new_direction, along),
-    );
-}
-
-fn typedGeodesicDirection(
-    comptime metric: Metric,
-    eye: AmbientFor(metric).Vector,
-    target_input: AmbientFor(metric).Vector,
-) ?AmbientFor(metric).Vector {
-    const Ambient = AmbientFor(metric);
-    var target = target_input;
-    if (metric == .elliptic and Ambient.dot(eye, target) < 0.0) {
-        target = Ambient.scale(target, -1.0);
-    }
-
-    const inner = Ambient.dot(eye, target);
-    const tangent = switch (metric) {
-        .hyperbolic => Ambient.add(target, Ambient.scale(eye, inner)),
-        .elliptic, .spherical => Ambient.sub(target, Ambient.scale(eye, inner)),
-    };
-    return typedTryNormalizeTangent(metric, tangent);
-}
-
-fn typedInitCamera(
-    comptime metric: Metric,
-    params: Params,
-    eye_chart_input: anytype,
-    target_chart_input: anytype,
-) CameraError!TypedCamera(metric) {
-    const position = typedEmbedPoint(metric, params, eye_chart_input) orelse return error.InvalidChartPoint;
-    const target = typedEmbedPoint(metric, params, target_chart_input) orelse return error.InvalidChartPoint;
-    const forward = typedGeodesicDirection(metric, position, target) orelse return error.DegenerateDirection;
-    const up = typedOrthonormalCandidate(metric, position, typedBasisVector(metric, .{ 0.0, 0.0, 1.0, 0.0 }), &.{forward}) orelse
-        typedOrthonormalCandidate(metric, position, typedBasisVector(metric, .{ 0.0, 0.0, 0.0, 1.0 }), &.{forward}) orelse
-        return error.DegenerateDirection;
-    const right = typedOrthonormalCandidate(metric, position, typedBasisVector(metric, .{ 0.0, 1.0, 0.0, 0.0 }), &.{ forward, up }) orelse
-        typedOrthonormalCandidate(metric, position, typedBasisVector(metric, .{ 0.0, 0.0, 0.0, 1.0 }), &.{ forward, up }) orelse
-        return error.DegenerateDirection;
-
-    var camera = TypedCamera(metric){
-        .position = position,
-        .right = right,
-        .up = up,
-        .forward = forward,
-    };
-    typedReorthonormalize(metric, &camera);
-    return camera;
-}
-
-fn typedMoveAlongDirection(
-    comptime metric: Metric,
-    camera: *TypedCamera(metric),
-    params: Params,
-    direction: AmbientFor(metric).Vector,
-    distance: f32,
-) void {
-    const Ambient = AmbientFor(metric);
-    const old_position = camera.position;
-    const old_direction = typedTryNormalizeTangent(metric, typedProjectToTangent(metric, old_position, direction)) orelse return;
-    const old_forward = camera.forward;
-    const old_right = camera.right;
-    const old_up = camera.up;
-    const normalized_distance = distance / params.radius;
-    var new_position: Ambient.Vector = undefined;
-    var new_direction: Ambient.Vector = undefined;
-
-    switch (metric) {
-        .hyperbolic => {
-            const c = std.math.cosh(normalized_distance);
-            const s = std.math.sinh(normalized_distance);
-            new_position = Ambient.add(Ambient.scale(old_position, c), Ambient.scale(old_direction, s));
-            new_direction = Ambient.add(Ambient.scale(old_position, s), Ambient.scale(old_direction, c));
-        },
-        .elliptic, .spherical => {
-            const c = @cos(normalized_distance);
-            const s = @sin(normalized_distance);
-            new_position = Ambient.add(Ambient.scale(old_position, c), Ambient.scale(old_direction, s));
-            new_direction = Ambient.add(Ambient.scale(old_direction, c), Ambient.scale(old_position, -s));
-        },
-    }
-
-    camera.position = new_position;
-    camera.forward = typedTransportedTangent(metric, old_direction, new_direction, old_forward);
-    camera.right = typedTransportedTangent(metric, old_direction, new_direction, old_right);
-    camera.up = typedTransportedTangent(metric, old_direction, new_direction, old_up);
-    typedReorthonormalize(metric, camera);
-}
-
 fn flatVector(point: Vec3) Flat3.Vector {
     return point;
 }
