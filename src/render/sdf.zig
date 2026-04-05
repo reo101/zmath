@@ -1,7 +1,7 @@
 const std = @import("std");
 const curved_ambient = @import("../geometry/curved_ambient.zig");
 
-pub const Flat3 = curved_ambient.Flat3;
+const Flat3 = curved_ambient.Flat3;
 pub const Vec3 = Flat3.Vector;
 
 pub fn vec3(x_value: f32, y_value: f32, z_value: f32) Vec3 {
@@ -12,34 +12,34 @@ pub fn splat(value: f32) Vec3 {
     return vec3(value, value, value);
 }
 
-pub fn coords(v: Vec3) [3]f32 {
+fn coords(v: Vec3) [3]f32 {
     return v.coeffsArray();
 }
 
-pub fn x(v: Vec3) f32 {
+fn x(v: Vec3) f32 {
     return coords(v)[0];
 }
 
-pub fn y(v: Vec3) f32 {
+fn y(v: Vec3) f32 {
     return coords(v)[1];
 }
 
-pub fn z(v: Vec3) f32 {
+fn z(v: Vec3) f32 {
     return coords(v)[2];
 }
 
-pub fn normalized(v: Vec3) Vec3 {
+fn normalized(v: Vec3) Vec3 {
     const length = v.magnitude();
     if (length <= 1e-6) return vec3(0.0, 0.0, 1.0);
     return v.scale(1.0 / length);
 }
 
-pub fn abs(v: Vec3) Vec3 {
+fn abs(v: Vec3) Vec3 {
     const c = coords(v);
     return vec3(@abs(c[0]), @abs(c[1]), @abs(c[2]));
 }
 
-pub fn max(a: Vec3, b: Vec3) Vec3 {
+fn max(a: Vec3, b: Vec3) Vec3 {
     const ac = coords(a);
     const bc = coords(b);
     return vec3(
@@ -49,17 +49,7 @@ pub fn max(a: Vec3, b: Vec3) Vec3 {
     );
 }
 
-pub fn min(a: Vec3, b: Vec3) Vec3 {
-    const ac = coords(a);
-    const bc = coords(b);
-    return vec3(
-        @min(ac[0], bc[0]),
-        @min(ac[1], bc[1]),
-        @min(ac[2], bc[2]),
-    );
-}
-
-pub fn maxComponent(v: Vec3) f32 {
+fn maxComponent(v: Vec3) f32 {
     const c = coords(v);
     return @max(c[0], @max(c[1], c[2]));
 }

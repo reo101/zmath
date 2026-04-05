@@ -2293,8 +2293,7 @@ test "spherical chart wrap preserves the rendered view" {
 }
 
 test "spherical stereographic view renders the far hemisphere via antipodal pass" {
-    var view = try View.init(
-        .spherical,
+    var view = try SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .stereographic,
         .{ .near = 0.08, .far = std.math.inf(f32) },
@@ -2303,13 +2302,9 @@ test "spherical stereographic view renders the far hemisphere via antipodal pass
     );
     const screen = Screen{ .width = 80, .height = 40, .zoom = view.params.angular_zoom };
 
-    const far_ambient = normalizeAmbient(
+    const far_ambient = typedNormalizeAmbient(
         .spherical,
-        add4(
-            .spherical,
-            scale4(.spherical, view.camera.position, -1.0),
-            scale4(.spherical, view.camera.right, 0.18),
-        ),
+        view.camera.position.scale(-1.0).add(view.camera.right.scale(0.18)),
     );
     const far_chart = view.chartCoords(far_ambient);
 
@@ -2323,8 +2318,7 @@ test "spherical stereographic view renders the far hemisphere via antipodal pass
 }
 
 test "spherical stereographic near pass uses the conformal camera model" {
-    var view = try View.init(
-        .spherical,
+    var view = try SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .stereographic,
         .{ .near = 0.08, .far = std.math.inf(f32) },
@@ -2332,13 +2326,9 @@ test "spherical stereographic near pass uses the conformal camera model" {
         .{ 0.0, 0.0, 0.0 },
     );
     const screen = Screen{ .width = 80, .height = 40, .zoom = view.params.angular_zoom };
-    const ambient = normalizeAmbient(
+    const ambient = typedNormalizeAmbient(
         .spherical,
-        add4(
-            .spherical,
-            scale4(.spherical, view.camera.position, 0.84),
-            scale4(.spherical, view.camera.forward, 0.41),
-        ),
+        view.camera.position.scale(0.84).add(view.camera.forward.scale(0.41)),
     );
 
     const model_point = view.sphericalRenderPass(.near).cameraModelPointForAmbient(ambient, .conformal).?;
@@ -2352,8 +2342,7 @@ test "spherical stereographic near pass uses the conformal camera model" {
 }
 
 test "spherical stereographic far pass uses the antipodal conformal camera model" {
-    var view = try View.init(
-        .spherical,
+    var view = try SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .stereographic,
         .{ .near = 0.08, .far = std.math.inf(f32) },
@@ -2361,13 +2350,9 @@ test "spherical stereographic far pass uses the antipodal conformal camera model
         .{ 0.0, 0.0, 0.0 },
     );
     const screen = Screen{ .width = 80, .height = 40, .zoom = view.params.angular_zoom };
-    const ambient = normalizeAmbient(
+    const ambient = typedNormalizeAmbient(
         .spherical,
-        add4(
-            .spherical,
-            scale4(.spherical, view.camera.position, -0.84),
-            scale4(.spherical, view.camera.right, 0.41),
-        ),
+        view.camera.position.scale(-0.84).add(view.camera.right.scale(0.41)),
     );
 
     const model_point = view.sphericalRenderPass(.far).cameraModelPointForAmbient(ambient, .conformal).?;
@@ -2381,8 +2366,7 @@ test "spherical stereographic far pass uses the antipodal conformal camera model
 }
 
 test "spherical full-sphere stereographic sampling does not expose a pass far clip" {
-    var view = try View.init(
-        .spherical,
+    var view = try SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .stereographic,
         .{ .near = 0.08, .far = std.math.inf(f32) },
@@ -2391,13 +2375,9 @@ test "spherical full-sphere stereographic sampling does not expose a pass far cl
     );
     const screen = Screen{ .width = 80, .height = 40, .zoom = view.params.angular_zoom };
 
-    const far_ambient = normalizeAmbient(
+    const far_ambient = typedNormalizeAmbient(
         .spherical,
-        add4(
-            .spherical,
-            scale4(.spherical, view.camera.position, -1.0),
-            scale4(.spherical, view.camera.right, 0.12),
-        ),
+        view.camera.position.scale(-1.0).add(view.camera.right.scale(0.12)),
     );
     const far_chart = view.chartCoords(far_ambient);
     const sample = view.sampleProjectedPoint(far_chart, screen);
@@ -2407,8 +2387,7 @@ test "spherical full-sphere stereographic sampling does not expose a pass far cl
 }
 
 test "spherical stereographic pass split follows viewing hemisphere rather than geodesic distance" {
-    var view = try View.init(
-        .spherical,
+    var view = try SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .stereographic,
         .{ .near = 0.08, .far = std.math.inf(f32) },
@@ -2416,23 +2395,15 @@ test "spherical stereographic pass split follows viewing hemisphere rather than 
         .{ 0.0, 0.0, 0.0 },
     );
     const screen = Screen{ .width = 80, .height = 40, .zoom = view.params.angular_zoom };
-    const behind_tangent = tryNormalizeTangent(
+    const behind_tangent = typedTryNormalizeTangent(
         .spherical,
-        add4(
-            .spherical,
-            scale4(.spherical, view.camera.forward, -0.93),
-            scale4(.spherical, view.camera.right, 0.37),
-        ),
+        view.camera.forward.scale(-0.93).add(view.camera.right.scale(0.37)),
     ).?;
     const distance = view.params.radius * 0.68;
     const theta = distance / view.params.radius;
-    const ambient = normalizeAmbient(
+    const ambient = typedNormalizeAmbient(
         .spherical,
-        add4(
-            .spherical,
-            scale4(.spherical, view.camera.position, @cos(theta)),
-            scale4(.spherical, behind_tangent, @sin(theta)),
-        ),
+        view.camera.position.scale(@cos(theta)).add(behind_tangent.scale(@sin(theta))),
     );
 
     try std.testing.expect(distance < hemisphereDistance(view.params));
@@ -2453,8 +2424,7 @@ test "spherical stereographic pass split follows viewing hemisphere rather than 
 }
 
 test "spherical gnomonic view renders the far hemisphere via antipodal pass" {
-    var view = try View.init(
-        .spherical,
+    var view = try SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .gnomonic,
         .{ .near = 0.08, .far = std.math.inf(f32) },
@@ -2463,13 +2433,9 @@ test "spherical gnomonic view renders the far hemisphere via antipodal pass" {
     );
     const screen = Screen{ .width = 80, .height = 40, .zoom = 0.52 };
 
-    const far_ambient = normalizeAmbient(
+    const far_ambient = typedNormalizeAmbient(
         .spherical,
-        add4(
-            .spherical,
-            scale4(.spherical, view.camera.position, -1.0),
-            scale4(.spherical, view.camera.right, 0.18),
-        ),
+        view.camera.position.scale(-1.0).add(view.camera.right.scale(0.18)),
     );
 
     const near_pass = view.sampleProjectedAmbientForSphericalPass(.near, far_ambient, screen);
@@ -2486,8 +2452,7 @@ test "spherical gnomonic view renders the far hemisphere via antipodal pass" {
 }
 
 test "spherical antipodal pass preserves screen up and right orientation" {
-    var view = try View.init(
-        .spherical,
+    var view = try SphericalView.init(
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         .stereographic,
         .{ .near = 0.08, .far = std.math.inf(f32) },
@@ -2496,54 +2461,10 @@ test "spherical antipodal pass preserves screen up and right orientation" {
     );
     const screen = Screen{ .width = 80, .height = 40, .zoom = view.params.angular_zoom };
 
-    const far_up = chartCoords(
-        .spherical,
-        view.params,
-        normalizeAmbient(
-            .spherical,
-            add4(
-                .spherical,
-                scale4(.spherical, view.camera.position, -1.0),
-                scale4(.spherical, view.camera.up, 0.12),
-            ),
-        ),
-    );
-    const far_down = chartCoords(
-        .spherical,
-        view.params,
-        normalizeAmbient(
-            .spherical,
-            add4(
-                .spherical,
-                scale4(.spherical, view.camera.position, -1.0),
-                scale4(.spherical, view.camera.up, -0.12),
-            ),
-        ),
-    );
-    const far_right = chartCoords(
-        .spherical,
-        view.params,
-        normalizeAmbient(
-            .spherical,
-            add4(
-                .spherical,
-                scale4(.spherical, view.camera.position, -1.0),
-                scale4(.spherical, view.camera.right, 0.12),
-            ),
-        ),
-    );
-    const far_left = chartCoords(
-        .spherical,
-        view.params,
-        normalizeAmbient(
-            .spherical,
-            add4(
-                .spherical,
-                scale4(.spherical, view.camera.position, -1.0),
-                scale4(.spherical, view.camera.right, -0.12),
-            ),
-        ),
-    );
+    const far_up = view.chartCoords(typedNormalizeAmbient(.spherical, view.camera.position.scale(-1.0).add(view.camera.up.scale(0.12))));
+    const far_down = view.chartCoords(typedNormalizeAmbient(.spherical, view.camera.position.scale(-1.0).add(view.camera.up.scale(-0.12))));
+    const far_right = view.chartCoords(typedNormalizeAmbient(.spherical, view.camera.position.scale(-1.0).add(view.camera.right.scale(0.12))));
+    const far_left = view.chartCoords(typedNormalizeAmbient(.spherical, view.camera.position.scale(-1.0).add(view.camera.right.scale(-0.12))));
 
     const up_sample = view.sampleProjectedPoint(far_up, screen);
     const down_sample = view.sampleProjectedPoint(far_down, screen);
