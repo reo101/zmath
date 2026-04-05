@@ -4,11 +4,11 @@ const curved_ambient = @import("../geometry/curved_ambient.zig");
 const Flat3 = curved_ambient.Flat3;
 pub const Vec3 = Flat3.Vector;
 
-pub fn vec3(x_value: f32, y_value: f32, z_value: f32) Vec3 {
+fn vec3(x_value: f32, y_value: f32, z_value: f32) Vec3 {
     return Vec3.init(.{ x_value, y_value, z_value });
 }
 
-pub fn splat(value: f32) Vec3 {
+fn splat(value: f32) Vec3 {
     return vec3(value, value, value);
 }
 

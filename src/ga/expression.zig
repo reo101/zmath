@@ -3,6 +3,7 @@ const blades = @import("blades.zig");
 const blade_parsing = @import("blade_parsing.zig");
 const multivector = @import("multivector.zig");
 const node_storage = @import("../parse/node_storage.zig");
+const pratt = @import("../parse/pratt.zig");
 
 pub const BladeMask = blades.BladeMask;
 
@@ -979,76 +980,76 @@ fn parserParsePrefix(
     };
 }
 
+fn ParserPrattContext(
+    comptime T: type,
+    comptime sig: blades.MetricSignature,
+    comptime Parser: type,
+) type {
+    return struct {
+        const Self = @This();
+        pub const NodeIndex = usize;
+        pub const ParseError = Parser.ParserError;
+
+        parser: *Parser,
+
+        pub fn parsePrefix(self: *Self) ParseError!NodeIndex {
+            return parserParsePrefix(T, sig, self.parser);
+        }
+
+        pub fn currentBindingPower(self: Self) ?pratt.BindingPower {
+            return switch (self.parser.current) {
+                .inverse => .{ .left = 9, .right = 10 },
+                .star, .slash, .wedge, .dot, .left_contraction, .right_contraction => .{ .left = 5, .right = 6 },
+                .join => .{ .left = 4, .right = 5 },
+                .plus, .minus => .{ .left = 3, .right = 4 },
+                .number, .blade, .placeholder, .lparen => .{ .left = 7, .right = 8 },
+                else => null,
+            };
+        }
+
+        pub fn parseInfix(self: *Self, lhs: NodeIndex, bp: pratt.BindingPower) ParseError!NodeIndex {
+            const current_token = self.parser.current;
+
+            return switch (current_token) {
+                .inverse => blk: {
+                    try parserAdvance(T, sig, self.parser);
+                    break :blk parserBuildInverse(T, sig, self.parser, lhs);
+                },
+                .star, .slash, .wedge, .dot, .left_contraction, .right_contraction, .join, .plus, .minus => blk: {
+                    try parserAdvance(T, sig, self.parser);
+                    const rhs = try pratt.parseExpression(Self, self, bp.right);
+                    break :blk switch (current_token) {
+                        .star => parserBuildGp(T, sig, self.parser, lhs, rhs),
+                        .slash => parserBuildGp(T, sig, self.parser, lhs, try parserBuildInverse(T, sig, self.parser, rhs)),
+                        .wedge => parserBuildWedge(T, sig, self.parser, lhs, rhs),
+                        .dot => parserBuildDot(T, sig, self.parser, lhs, rhs),
+                        .left_contraction => parserBuildLeftContraction(T, sig, self.parser, lhs, rhs),
+                        .right_contraction => parserBuildRightContraction(T, sig, self.parser, lhs, rhs),
+                        .join => parserBuildJoin(T, sig, self.parser, lhs, rhs),
+                        .plus => parserBuildAdd(T, sig, self.parser, lhs, rhs),
+                        .minus => parserBuildSub(T, sig, self.parser, lhs, rhs),
+                        else => unreachable,
+                    };
+                },
+                .number, .blade, .placeholder, .lparen => blk: {
+                    const rhs = try pratt.parseExpression(Self, self, bp.right);
+                    break :blk parserBuildGp(T, sig, self.parser, lhs, rhs);
+                },
+                else => error.UnexpectedToken,
+            };
+        }
+    };
+}
+
 fn parserParseExpression(
     comptime T: type,
     comptime sig: blades.MetricSignature,
     self: anytype,
     min_bp: u8,
 ) @TypeOf(self.*).ParserError!usize {
-    var lhs = try parserParsePrefix(T, sig, self);
-
-    while (true) {
-        const current_token = self.current;
-        switch (current_token) {
-            .inverse => {
-                const left_bp: u8 = 9;
-                if (left_bp < min_bp) break;
-                try parserAdvance(T, sig, self);
-                lhs = try parserBuildInverse(T, sig, self, lhs);
-            },
-            .star, .slash, .wedge, .dot, .left_contraction, .right_contraction => |tag| {
-                _ = tag;
-                const left_bp: u8 = 5;
-                const right_bp: u8 = 6;
-                if (left_bp < min_bp) break;
-                try parserAdvance(T, sig, self);
-                const rhs = try parserParseExpression(T, sig, self, right_bp);
-                lhs = switch (current_token) {
-                    .star => try parserBuildGp(T, sig, self, lhs, rhs),
-                    .slash => try parserBuildGp(T, sig, self, lhs, try parserBuildInverse(T, sig, self, rhs)),
-                    .wedge => try parserBuildWedge(T, sig, self, lhs, rhs),
-                    .dot => try parserBuildDot(T, sig, self, lhs, rhs),
-                    .left_contraction => try parserBuildLeftContraction(T, sig, self, lhs, rhs),
-                    .right_contraction => try parserBuildRightContraction(T, sig, self, lhs, rhs),
-                    else => unreachable,
-                };
-            },
-            .join => {
-                const left_bp: u8 = 4;
-                const right_bp: u8 = 5;
-                if (left_bp < min_bp) break;
-                try parserAdvance(T, sig, self);
-                const rhs = try parserParseExpression(T, sig, self, right_bp);
-                lhs = try parserBuildJoin(T, sig, self, lhs, rhs);
-            },
-            .plus => {
-                const left_bp: u8 = 3;
-                const right_bp: u8 = 4;
-                if (left_bp < min_bp) break;
-                try parserAdvance(T, sig, self);
-                const rhs = try parserParseExpression(T, sig, self, right_bp);
-                lhs = try parserBuildAdd(T, sig, self, lhs, rhs);
-            },
-            .minus => {
-                const left_bp: u8 = 3;
-                const right_bp: u8 = 4;
-                if (left_bp < min_bp) break;
-                try parserAdvance(T, sig, self);
-                const rhs = try parserParseExpression(T, sig, self, right_bp);
-                lhs = try parserBuildSub(T, sig, self, lhs, rhs);
-            },
-            .number, .blade, .placeholder, .lparen => {
-                const left_bp: u8 = 7;
-                const right_bp: u8 = 8;
-                if (left_bp < min_bp) break;
-                const rhs = try parserParseExpression(T, sig, self, right_bp);
-                lhs = try parserBuildGp(T, sig, self, lhs, rhs);
-            },
-            else => break,
-        }
-    }
-
-    return lhs;
+    const Context = ParserPrattContext(T, sig, @TypeOf(self.*));
+    var context = Context{ .parser = self };
+    return pratt.parseExpression(Context, &context, min_bp);
 }
 
 const CompilerStorageCaps = struct {

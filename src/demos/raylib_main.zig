@@ -637,14 +637,18 @@ const EuclideanSdfScene = struct {
 
     fn sample(self: *const EuclideanSdfScene, point: sdf.Vec3) sdf.Sample {
         return .{
-            .distance = sdf.box(self.worldToCubeLocal(point), sdf.splat(self.cube_half_extent)),
+            .distance = sdf.box(self.worldToCubeLocal(point), sdf.Vec3.init(.{
+                self.cube_half_extent,
+                self.cube_half_extent,
+                self.cube_half_extent,
+            })),
             .material = 1,
         };
     }
 };
 
 fn sdfVec3FromVector(v: demo.H.Vector) sdf.Vec3 {
-    return sdf.vec3(v.coeffNamed("e1"), v.coeffNamed("e2"), v.coeffNamed("e3"));
+    return sdf.Vec3.init(.{ v.coeffNamed("e1"), v.coeffNamed("e2"), v.coeffNamed("e3") });
 }
 
 fn vectorFromSdfVec3(v: sdf.Vec3) demo.H.Vector {
@@ -670,7 +674,7 @@ fn sampleEuclideanSdfScene(scene: *const EuclideanSdfScene, point: sdf.Vec3) sdf
 
 fn normalizeSdfVec3(v: sdf.Vec3) sdf.Vec3 {
     const length = v.magnitude();
-    if (length <= 1e-6) return sdf.vec3(0.0, 0.0, 1.0);
+    if (length <= 1e-6) return sdf.Vec3.init(.{ 0.0, 0.0, 1.0 });
     return v.scale(1.0 / length);
 }
 
