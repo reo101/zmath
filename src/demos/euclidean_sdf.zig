@@ -5,6 +5,12 @@ const sdf = zmath.render.sdf;
 pub const demo_core = @import("core.zig");
 const demo = demo_core;
 
+fn normalizeSdfVec3(v: sdf.Vec3) sdf.Vec3 {
+    const length = v.magnitude();
+    if (length <= 1e-6) return sdf.vec3(0.0, 0.0, 1.0);
+    return v.scale(1.0 / length);
+}
+
 pub const Scene = struct {
     projection_mode: projection.EuclideanProjection,
     zoom: f32,
@@ -31,9 +37,9 @@ pub const Scene = struct {
             .up = sdfVec3FromVector(scene.up),
             .forward = sdfVec3FromVector(scene.forward),
             .cube_half_extent = scene.cube_scale,
-            .local_row_x = sdf.vec3(sdf.x(axis_x), sdf.x(axis_y), sdf.x(axis_z)),
-            .local_row_y = sdf.vec3(sdf.y(axis_x), sdf.y(axis_y), sdf.y(axis_z)),
-            .local_row_z = sdf.vec3(sdf.z(axis_x), sdf.z(axis_y), sdf.z(axis_z)),
+            .local_row_x = sdf.vec3(axis_x.named().e1, axis_y.named().e1, axis_z.named().e1),
+            .local_row_y = sdf.vec3(axis_x.named().e2, axis_y.named().e2, axis_z.named().e2),
+            .local_row_z = sdf.vec3(axis_x.named().e3, axis_y.named().e3, axis_z.named().e3),
             .bound_radius = scene.cube_scale * @sqrt(3.0),
         };
     }
@@ -47,10 +53,10 @@ pub const Scene = struct {
     }
 
     pub fn cubeLocalToWorldDirection(self: Scene, local: sdf.Vec3) sdf.Vec3 {
-        return sdf.normalized(sdf.vec3(
-            sdf.x(self.local_row_x) * sdf.x(local) + sdf.x(self.local_row_y) * sdf.y(local) + sdf.x(self.local_row_z) * sdf.z(local),
-            sdf.y(self.local_row_x) * sdf.x(local) + sdf.y(self.local_row_y) * sdf.y(local) + sdf.y(self.local_row_z) * sdf.z(local),
-            sdf.z(self.local_row_x) * sdf.x(local) + sdf.z(self.local_row_y) * sdf.y(local) + sdf.z(self.local_row_z) * sdf.z(local),
+        return normalizeSdfVec3(sdf.vec3(
+            self.local_row_x.named().e1 * local.named().e1 + self.local_row_y.named().e1 * local.named().e2 + self.local_row_z.named().e1 * local.named().e3,
+            self.local_row_x.named().e2 * local.named().e1 + self.local_row_y.named().e2 * local.named().e2 + self.local_row_z.named().e2 * local.named().e3,
+            self.local_row_x.named().e3 * local.named().e1 + self.local_row_y.named().e3 * local.named().e2 + self.local_row_z.named().e3 * local.named().e3,
         ));
     }
 
@@ -87,7 +93,7 @@ pub const Scene = struct {
                 const origin = self.eye.sub(self.forward.scale(depth_offset));
                 return .{
                     .origin = origin,
-                    .direction = sdf.normalized(plane_point.sub(origin)),
+                    .direction = normalizeSdfVec3(plane_point.sub(origin)),
                 };
             },
             .isometric => .{
@@ -149,24 +155,32 @@ pub fn raySphereInterval(ray: sdf.Ray, radius: f32) ?RayInterval {
 }
 
 pub fn boxLocalNormal(point: sdf.Vec3, half_extent: f32) sdf.Vec3 {
-    const abs_point = sdf.abs(point);
+    const abs_point = sdf.vec3(
+        @abs(point.named().e1),
+        @abs(point.named().e2),
+        @abs(point.named().e3),
+    );
     const delta = abs_point.sub(sdf.splat(half_extent));
-    const outside = sdf.max(delta, sdf.splat(0.0));
+    const outside = sdf.vec3(
+        @max(delta.named().e1, 0.0),
+        @max(delta.named().e2, 0.0),
+        @max(delta.named().e3, 0.0),
+    );
     if (outside.scalarProduct(outside) > 1e-8) {
-        return sdf.normalized(sdf.vec3(
-            signedUnit(sdf.x(point)) * sdf.x(outside),
-            signedUnit(sdf.y(point)) * sdf.y(outside),
-            signedUnit(sdf.z(point)) * sdf.z(outside),
+        return normalizeSdfVec3(sdf.vec3(
+            signedUnit(point.named().e1) * outside.named().e1,
+            signedUnit(point.named().e2) * outside.named().e2,
+            signedUnit(point.named().e3) * outside.named().e3,
         ));
     }
 
-    if (sdf.x(abs_point) >= sdf.y(abs_point) and sdf.x(abs_point) >= sdf.z(abs_point)) {
-        return sdf.vec3(signedUnit(sdf.x(point)), 0.0, 0.0);
+    if (abs_point.named().e1 >= abs_point.named().e2 and abs_point.named().e1 >= abs_point.named().e3) {
+        return sdf.vec3(signedUnit(point.named().e1), 0.0, 0.0);
     }
-    if (sdf.y(abs_point) >= sdf.z(abs_point)) {
-        return sdf.vec3(0.0, signedUnit(sdf.y(point)), 0.0);
+    if (abs_point.named().e2 >= abs_point.named().e3) {
+        return sdf.vec3(0.0, signedUnit(point.named().e2), 0.0);
     }
-    return sdf.vec3(0.0, 0.0, signedUnit(sdf.z(point)));
+    return sdf.vec3(0.0, 0.0, signedUnit(point.named().e3));
 }
 
 fn signedUnit(value: f32) f32 {
@@ -187,7 +201,7 @@ test "bounding sphere interval rejects clear misses" {
 
 test "box local normal picks dominant face inside box shell" {
     const normal = boxLocalNormal(sdf.vec3(0.99, 0.10, 0.20), 1.0);
-    try std.testing.expectApproxEqAbs(@as(f32, 1.0), sdf.x(normal), 1e-6);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.0), sdf.y(normal), 1e-6);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.0), sdf.z(normal), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), normal.named().e1, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), normal.named().e2, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), normal.named().e3, 1e-6);
 }

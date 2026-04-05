@@ -648,7 +648,7 @@ fn sdfVec3FromVector(v: demo.H.Vector) sdf.Vec3 {
 }
 
 fn vectorFromSdfVec3(v: sdf.Vec3) demo.H.Vector {
-    return demo.H.Vector.init(.{ sdf.x(v), sdf.y(v), sdf.z(v) });
+    return demo.H.Vector.init(.{ v.named().e1, v.named().e2, v.named().e3 });
 }
 
 fn euclideanSdfScene(scene: demo.EuclideanScene) EuclideanSdfScene {
@@ -666,6 +666,12 @@ fn euclideanSdfScene(scene: demo.EuclideanScene) EuclideanSdfScene {
 
 fn sampleEuclideanSdfScene(scene: *const EuclideanSdfScene, point: sdf.Vec3) sdf.Sample {
     return scene.sample(point);
+}
+
+fn normalizeSdfVec3(v: sdf.Vec3) sdf.Vec3 {
+    const length = v.magnitude();
+    if (length <= 1e-6) return sdf.vec3(0.0, 0.0, 1.0);
+    return v.scale(1.0 / length);
 }
 
 fn euclideanSdfRay(scene: EuclideanSdfScene, sample_x: usize, sample_y: usize) sdf.Ray {
@@ -686,7 +692,7 @@ fn euclideanSdfRay(scene: EuclideanSdfScene, sample_x: usize, sample_y: usize) s
             const origin = scene.eye.sub(scene.forward.scale(depth_offset));
             return .{
                 .origin = origin,
-                .direction = sdf.normalized(plane_point.sub(origin)),
+                .direction = normalizeSdfVec3(plane_point.sub(origin)),
             };
         },
         .isometric => .{
@@ -697,12 +703,12 @@ fn euclideanSdfRay(scene: EuclideanSdfScene, sample_x: usize, sample_y: usize) s
 }
 
 fn cubeFaceIndexFromLocalNormal(normal: sdf.Vec3) usize {
-    const ax = @abs(sdf.x(normal));
-    const ay = @abs(sdf.y(normal));
-    const az = @abs(sdf.z(normal));
-    if (ax >= ay and ax >= az) return if (sdf.x(normal) >= 0.0) 0 else 1;
-    if (ay >= az) return if (sdf.y(normal) >= 0.0) 2 else 3;
-    return if (sdf.z(normal) >= 0.0) 4 else 5;
+    const ax = @abs(normal.named().e1);
+    const ay = @abs(normal.named().e2);
+    const az = @abs(normal.named().e3);
+    if (ax >= ay and ax >= az) return if (normal.named().e1 >= 0.0) 0 else 1;
+    if (ay >= az) return if (normal.named().e2 >= 0.0) 2 else 3;
+    return if (normal.named().e3 >= 0.0) 4 else 5;
 }
 
 fn euclideanViewDepth(scene: EuclideanSdfScene, point: sdf.Vec3) f32 {
