@@ -1,16 +1,10 @@
 const std = @import("std");
 
 pub const ga = @import("../ga.zig");
+const family = @import("family.zig");
 
 pub fn EuclideanFamily(comptime dimensions: usize) type {
-    return struct {
-        const family_algebra = ga.Algebra(ga.euclideanSignature(dimensions));
-        pub const Algebra = family_algebra;
-
-        pub fn Instantiate(comptime T: type) type {
-            return family_algebra.Instantiate(T);
-        }
-    };
+    return family.euclidean(dimensions);
 }
 
 const default_family = EuclideanFamily(2);

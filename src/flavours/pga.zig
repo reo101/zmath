@@ -1,6 +1,7 @@
 const std = @import("std");
 
 pub const ga = @import("../ga.zig");
+const family = @import("family.zig");
 
 pub const MetricSignature = ga.MetricSignature;
 
@@ -18,27 +19,17 @@ const basis_spans = ga.BasisIndexSpans.init(.{
 
 const naming_options = ga.SignedBladeNamingOptions.withBasisSpans(basis_spans);
 pub fn EuclideanFamily(comptime euclidean_dimensions: usize) type {
-    return struct {
-        const family_metric_signature: MetricSignature = .{
+    return family.withBasisSpans(
+        .{
             .p = euclidean_dimensions,
             .q = 0,
             .r = 1,
-        };
-        pub const metric_signature = family_metric_signature;
-        pub const dimension = family_metric_signature.dimension();
-        const family_basis_spans = ga.BasisIndexSpans.init(.{
+        },
+        ga.BasisIndexSpans.init(.{
             .positive = .range(1, euclidean_dimensions),
             .degenerate = .singleton(euclidean_dimensions + 1),
-        });
-        const family_naming_options = ga.SignedBladeNamingOptions.withBasisSpans(family_basis_spans);
-        pub const naming_options = family_naming_options;
-        const family_algebra = ga.AlgebraWithNamingOptions(family_metric_signature, family_naming_options);
-        pub const Algebra = family_algebra;
-
-        pub fn Instantiate(comptime T: type) type {
-            return family_algebra.Instantiate(T);
-        }
-    };
+        }),
+    );
 }
 
 const default_family = EuclideanFamily(3);

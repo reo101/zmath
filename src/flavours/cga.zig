@@ -1,5 +1,6 @@
 const std = @import("std");
 const ga = @import("../ga.zig");
+const family = @import("family.zig");
 
 /// CGA signature `Cl(4, 1, 0)`: four positive basis vectors and one negative.
 /// Typically used to model 3D Euclidean space conformally.
@@ -18,27 +19,17 @@ const basis_spans = ga.BasisIndexSpans.init(.{
 
 const naming_options = ga.SignedBladeNamingOptions.withBasisSpans(basis_spans);
 pub fn EuclideanFamily(comptime euclidean_dimensions: usize) type {
-    return struct {
-        const family_metric_signature: ga.MetricSignature = .{
+    return family.withBasisSpans(
+        .{
             .p = euclidean_dimensions + 1,
             .q = 1,
             .r = 0,
-        };
-        pub const metric_signature = family_metric_signature;
-        pub const dimension = family_metric_signature.dimension();
-        const family_basis_spans = ga.BasisIndexSpans.init(.{
+        },
+        ga.BasisIndexSpans.init(.{
             .positive = .range(1, euclidean_dimensions + 1),
             .negative = .singleton(euclidean_dimensions + 2),
-        });
-        const family_naming_options = ga.SignedBladeNamingOptions.withBasisSpans(family_basis_spans);
-        pub const naming_options = family_naming_options;
-        const family_algebra = ga.AlgebraWithNamingOptions(family_metric_signature, family_naming_options);
-        pub const Algebra = family_algebra;
-
-        pub fn Instantiate(comptime T: type) type {
-            return family_algebra.Instantiate(T);
-        }
-    };
+        }),
+    );
 }
 
 const default_family = EuclideanFamily(3);
