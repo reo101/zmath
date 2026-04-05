@@ -24,23 +24,10 @@ pub const CameraModel = curved_projection.CameraModel;
 pub const DistanceClip = curved_projection.DistanceClip;
 pub const Screen = curved_projection.Screen;
 
-const Camera = struct {
-    position: Vec4,
-    right: Vec4,
-    up: Vec4,
-    forward: Vec4,
-};
-
 pub const WalkOrientation = struct {
     x_heading: f32,
     z_heading: f32,
     pitch: f32,
-};
-
-const WalkBasis = struct {
-    forward: Vec4,
-    right: Vec4,
-    up: Vec4,
 };
 
 pub const Sample = curved_projection.Sample;
@@ -63,7 +50,6 @@ pub const CameraError = error{
 const Flat3 = curved_ambient.Flat3;
 
 pub const Vec3 = Flat3.Vector;
-const Vec4 = [4]f32;
 pub const projectSample = curved_projection.projectSample;
 pub const shouldBreakProjectedSegment = curved_projection.shouldBreakProjectedSegment;
 
@@ -106,35 +92,6 @@ fn TypedHeadingBasis(comptime metric: Metric) type {
     };
 }
 
-fn typedCameraFromErased(comptime metric: Metric, camera: Camera) TypedCamera(metric) {
-    const Ambient = AmbientFor(metric);
-    return .{
-        .position = Ambient.fromCoords(camera.position),
-        .right = Ambient.fromCoords(camera.right),
-        .up = Ambient.fromCoords(camera.up),
-        .forward = Ambient.fromCoords(camera.forward),
-    };
-}
-
-fn typedCameraToErased(comptime metric: Metric, camera: TypedCamera(metric)) Camera {
-    const Ambient = AmbientFor(metric);
-    return .{
-        .position = Ambient.toCoords(camera.position),
-        .right = Ambient.toCoords(camera.right),
-        .up = Ambient.toCoords(camera.up),
-        .forward = Ambient.toCoords(camera.forward),
-    };
-}
-
-fn typedWalkBasisToErased(comptime metric: Metric, basis: TypedWalkBasis(metric)) WalkBasis {
-    const Ambient = AmbientFor(metric);
-    return .{
-        .forward = Ambient.toCoords(basis.forward),
-        .right = Ambient.toCoords(basis.right),
-        .up = Ambient.toCoords(basis.up),
-    };
-}
-
 pub fn TypedView(comptime metric: Metric) type {
     const Ambient = AmbientFor(metric);
     const CameraT = TypedCamera(metric);
@@ -162,25 +119,6 @@ pub fn TypedView(comptime metric: Metric) type {
                 .clip = clip,
                 .camera = try typedInitCamera(metric, params, coerceVec3(eye_chart), coerceVec3(target_chart)),
                 .scene_sign = 1.0,
-            };
-        }
-
-        fn fromErased(view: View) Self {
-            std.debug.assert(viewMetric(view) == metric);
-            return .{
-                .params = viewParams(view),
-                .projection = viewProjection(view),
-                .clip = viewClip(view),
-                .camera = typedCameraFromErased(metric, viewCamera(view)),
-                .scene_sign = viewSceneSign(view),
-            };
-        }
-
-        fn erased(self: Self) View {
-            return switch (metric) {
-                .hyperbolic => .{ .hyperbolic = self },
-                .elliptic => .{ .elliptic = self },
-                .spherical => .{ .spherical = self },
             };
         }
 
@@ -413,50 +351,6 @@ pub const HyperView = TypedView(.hyperbolic);
 pub const EllipticView = TypedView(.elliptic);
 pub const SphericalView = TypedView(.spherical);
 
-fn viewMetric(view: View) Metric {
-    return std.meta.activeTag(view);
-}
-
-fn viewParams(view: View) Params {
-    return switch (view) {
-        inline else => |typed| typed.params,
-    };
-}
-
-fn viewProjection(view: View) projection.DirectionProjection {
-    return switch (view) {
-        inline else => |typed| typed.projection,
-    };
-}
-
-fn viewClip(view: View) DistanceClip {
-    return switch (view) {
-        inline else => |typed| typed.clip,
-    };
-}
-
-fn viewSceneSign(view: View) f32 {
-    return switch (view) {
-        inline else => |typed| typed.scene_sign,
-    };
-}
-
-fn viewCamera(view: View) Camera {
-    return switch (view) {
-        .hyperbolic => |typed| typedCameraToErased(.hyperbolic, typed.camera),
-        .elliptic => |typed| typedCameraToErased(.elliptic, typed.camera),
-        .spherical => |typed| typedCameraToErased(.spherical, typed.camera),
-    };
-}
-
-fn projectionModeOf(view: anytype) projection.DirectionProjection {
-    return switch (@TypeOf(view)) {
-        View => viewProjection(view),
-        HyperView, EllipticView, SphericalView => view.projection,
-        else => @compileError("expected a curved view"),
-    };
-}
-
 pub const SphericalRenderPass = enum { near, far };
 
 const spherical_chart_min_denom: f32 = 0.25;
@@ -488,13 +382,6 @@ pub fn vec3Coords(v: Vec3) [3]f32 {
 
 fn coerceVec3(value: anytype) Vec3 {
     return if (@TypeOf(value) == Vec3) value else Vec3.init(value);
-}
-
-fn isFiniteVec4(v: Vec4) bool {
-    inline for (v) |component| {
-        if (!std.math.isFinite(component)) return false;
-    }
-    return true;
 }
 
 fn typedEmbedPoint(
@@ -981,288 +868,6 @@ fn sphericalUsesMultipass(projection_mode: projection.DirectionProjection) bool 
     };
 }
 
-const View = union(Metric) {
-    hyperbolic: HyperView,
-    elliptic: EllipticView,
-    spherical: SphericalView,
-
-    pub fn init(
-        metric: Metric,
-        params: Params,
-        projection_mode: projection.DirectionProjection,
-        clip: DistanceClip,
-        eye_chart: anytype,
-        target_chart: anytype,
-    ) CameraError!View {
-        return switch (metric) {
-            .hyperbolic => .{ .hyperbolic = try HyperView.init(params, projection_mode, clip, eye_chart, target_chart) },
-            .elliptic => .{ .elliptic = try EllipticView.init(params, projection_mode, clip, eye_chart, target_chart) },
-            .spherical => .{ .spherical = try SphericalView.init(params, projection_mode, clip, eye_chart, target_chart) },
-        };
-    }
-
-    pub fn turnYaw(self: *View, angle: f32) void {
-        switch (self.*) {
-            inline else => |*typed| typed.turnYaw(angle),
-        }
-    }
-
-    pub fn turnWalkYaw(self: *View, angle: f32) void {
-        switch (self.*) {
-            inline else => |*typed| typed.turnWalkYaw(angle),
-        }
-    }
-
-    pub fn turnSurfaceYaw(self: *View, angle: f32, pitch_angle: f32) void {
-        switch (self.*) {
-            inline else => |*typed| typed.turnSurfaceYaw(angle, pitch_angle),
-        }
-    }
-
-    pub fn syncSurfacePitch(self: *View, pitch_angle: f32) void {
-        switch (self.*) {
-            inline else => |*typed| typed.syncSurfacePitch(pitch_angle),
-        }
-    }
-
-    pub fn turnPitch(self: *View, angle: f32) void {
-        switch (self.*) {
-            inline else => |*typed| typed.turnPitch(angle),
-        }
-    }
-
-    pub fn moveAlong(self: *View, direction: Vec4, distance: f32) void {
-        switch (self.*) {
-            .hyperbolic => |*typed| typed.moveAlong(curved_ambient.Hyper.fromCoords(direction), distance),
-            .elliptic => |*typed| typed.moveAlong(curved_ambient.Round.fromCoords(direction), distance),
-            .spherical => |*typed| typed.moveAlong(curved_ambient.Round.fromCoords(direction), distance),
-        }
-    }
-
-    pub fn moveForwardBy(self: *View, distance: f32) void {
-        switch (self.*) {
-            inline else => |*typed| typed.moveForwardBy(distance),
-        }
-    }
-
-    pub fn moveRightBy(self: *View, distance: f32) void {
-        switch (self.*) {
-            inline else => |*typed| typed.moveRightBy(distance),
-        }
-    }
-
-    pub fn headingDirection(self: View, x_heading: f32, z_heading: f32) ?Vec4 {
-        return switch (self) {
-            .hyperbolic => |typed| curved_ambient.Hyper.toCoords(typed.headingDirection(x_heading, z_heading) orelse return null),
-            .elliptic => |typed| curved_ambient.Round.toCoords(typed.headingDirection(x_heading, z_heading) orelse return null),
-            .spherical => |typed| curved_ambient.Round.toCoords(typed.headingDirection(x_heading, z_heading) orelse return null),
-        };
-    }
-
-    pub fn walkOrientation(self: View) ?WalkOrientation {
-        return switch (self) {
-            inline else => |typed| typed.walkOrientation(),
-        };
-    }
-
-    pub fn walkBasis(self: View) ?WalkBasis {
-        return switch (self) {
-            .hyperbolic => |typed| typedWalkBasisToErased(.hyperbolic, typed.walkBasis() orelse return null),
-            .elliptic => |typed| typedWalkBasisToErased(.elliptic, typed.walkBasis() orelse return null),
-            .spherical => |typed| typedWalkBasisToErased(.spherical, typed.walkBasis() orelse return null),
-        };
-    }
-
-    pub fn walkSurfaceUp(self: View) ?Vec4 {
-        return switch (self) {
-            .hyperbolic => |typed| curved_ambient.Hyper.toCoords(typed.walkSurfaceUp() orelse return null),
-            .elliptic => |typed| curved_ambient.Round.toCoords(typed.walkSurfaceUp() orelse return null),
-            .spherical => |typed| curved_ambient.Round.toCoords(typed.walkSurfaceUp() orelse return null),
-        };
-    }
-
-    pub fn walkSurfaceBasis(self: View, pitch_angle: f32) ?WalkBasis {
-        return switch (self) {
-            .hyperbolic => |typed| typedWalkBasisToErased(.hyperbolic, typed.walkSurfaceBasis(pitch_angle) orelse return null),
-            .elliptic => |typed| typedWalkBasisToErased(.elliptic, typed.walkSurfaceBasis(pitch_angle) orelse return null),
-            .spherical => |typed| typedWalkBasisToErased(.spherical, typed.walkSurfaceBasis(pitch_angle) orelse return null),
-        };
-    }
-
-    pub fn syncHeadingPitch(self: *View, x_heading: f32, z_heading: f32, pitch_angle: f32) void {
-        switch (self.*) {
-            inline else => |*typed| typed.syncHeadingPitch(x_heading, z_heading, pitch_angle),
-        }
-    }
-
-    pub fn wrapSphericalChart(self: *View) void {
-        switch (self.*) {
-            .spherical => |*typed| typed.wrapSphericalChart(),
-            inline else => {},
-        }
-    }
-
-    pub fn adjustRadius(self: *View, radius: f32, look_ahead: f32) CameraError!void {
-        switch (self.*) {
-            inline else => |*typed| try typed.adjustRadius(radius, look_ahead),
-        }
-    }
-
-    pub fn shadeFarDistance(self: View) f32 {
-        return switch (self) {
-            inline else => |typed| typed.shadeFarDistance(),
-        };
-    }
-
-    pub fn embedPoint(self: View, chart: anytype) ?Vec4 {
-        return switch (self) {
-            .hyperbolic => |typed| curved_ambient.Hyper.toCoords(typed.embedPoint(chart) orelse return null),
-            .elliptic => |typed| curved_ambient.Round.toCoords(typed.embedPoint(chart) orelse return null),
-            .spherical => |typed| curved_ambient.Round.toCoords(typed.embedPoint(chart) orelse return null),
-        };
-    }
-
-    pub fn chartCoords(self: View, ambient: Vec4) Vec3 {
-        return switch (self) {
-            .hyperbolic => |typed| typed.chartCoords(curved_ambient.Hyper.fromCoords(ambient)),
-            .elliptic => |typed| typed.chartCoords(curved_ambient.Round.fromCoords(ambient)),
-            .spherical => |typed| typed.chartCoords(curved_ambient.Round.fromCoords(ambient)),
-        };
-    }
-
-    pub fn geodesicChartPoint(self: View, a_chart: anytype, b_chart: anytype, t: f32) ?Vec3 {
-        return switch (self) {
-            inline else => |typed| typed.geodesicChartPoint(a_chart, b_chart, t),
-        };
-    }
-
-    pub fn sceneAmbientPoint(self: View, chart: anytype) ?Vec4 {
-        return switch (self) {
-            .hyperbolic => |typed| curved_ambient.Hyper.toCoords(typed.sceneAmbientPoint(chart) orelse return null),
-            .elliptic => |typed| curved_ambient.Round.toCoords(typed.sceneAmbientPoint(chart) orelse return null),
-            .spherical => |typed| curved_ambient.Round.toCoords(typed.sceneAmbientPoint(chart) orelse return null),
-        };
-    }
-
-    pub fn signedAmbient(self: View, ambient_input: Vec4) Vec4 {
-        return switch (self) {
-            .hyperbolic => |typed| curved_ambient.Hyper.toCoords(typed.signedAmbient(curved_ambient.Hyper.fromCoords(ambient_input))),
-            .elliptic => |typed| curved_ambient.Round.toCoords(typed.signedAmbient(curved_ambient.Round.fromCoords(ambient_input))),
-            .spherical => |typed| curved_ambient.Round.toCoords(typed.signedAmbient(curved_ambient.Round.fromCoords(ambient_input))),
-        };
-    }
-
-    pub fn sampleProjectedPoint(self: View, chart: anytype, screen: Screen) ProjectedSample {
-        return switch (self) {
-            inline else => |typed| typed.sampleProjectedPoint(chart, screen),
-        };
-    }
-
-    pub fn sampleAmbient(self: View, ambient_input: Vec4) ?Sample {
-        return switch (self) {
-            .hyperbolic => |typed| typed.sampleAmbient(curved_ambient.Hyper.fromCoords(ambient_input)),
-            .elliptic => |typed| typed.sampleAmbient(curved_ambient.Round.fromCoords(ambient_input)),
-            .spherical => |typed| typed.sampleAmbient(curved_ambient.Round.fromCoords(ambient_input)),
-        };
-    }
-
-    pub fn samplePoint(self: View, chart: anytype) ?Sample {
-        return switch (self) {
-            inline else => |typed| typed.samplePoint(chart),
-        };
-    }
-
-    pub fn sampleProjectedAmbient(self: View, ambient_input: Vec4, screen: Screen) ProjectedSample {
-        return switch (self) {
-            .hyperbolic => |typed| typed.sampleProjectedAmbient(curved_ambient.Hyper.fromCoords(ambient_input), screen),
-            .elliptic => |typed| typed.sampleProjectedAmbient(curved_ambient.Round.fromCoords(ambient_input), screen),
-            .spherical => |typed| typed.sampleProjectedAmbient(curved_ambient.Round.fromCoords(ambient_input), screen),
-        };
-    }
-
-    pub fn sampleProjectedPointForSphericalPass(self: View, pass: SphericalRenderPass, chart: anytype, screen: Screen) ProjectedSample {
-        return switch (self) {
-            .spherical => |typed| typed.sampleProjectedPointForSphericalPass(pass, chart, screen),
-            else => unreachable,
-        };
-    }
-
-    pub fn sampleProjectedAmbientForSphericalPass(self: View, pass: SphericalRenderPass, ambient_input: Vec4, screen: Screen) ProjectedSample {
-        return switch (self) {
-            .spherical => |typed| typed.sampleProjectedAmbientForSphericalPass(pass, curved_ambient.Round.fromCoords(ambient_input), screen),
-            else => unreachable,
-        };
-    }
-
-    pub fn sampleProjectedAmbientForSphericalPassRaw(self: View, pass: SphericalRenderPass, ambient_input: Vec4, screen: Screen) ProjectedSample {
-        return switch (self) {
-            .spherical => |typed| typed.sampleProjectedAmbientForSphericalPassRaw(pass, curved_ambient.Round.fromCoords(ambient_input), screen),
-            else => unreachable,
-        };
-    }
-
-    pub fn sphericalSelectedPassForAmbient(self: View, ambient_input: Vec4) ?SphericalRenderPass {
-        return switch (self) {
-            .spherical => |typed| typed.sphericalSelectedPassForAmbient(curved_ambient.Round.fromCoords(ambient_input)),
-            else => unreachable,
-        };
-    }
-
-    pub fn sphericalRenderPass(self: View, pass: SphericalRenderPass) View {
-        return switch (self) {
-            .spherical => |typed| .{ .spherical = typed.sphericalRenderPass(pass) },
-            else => unreachable,
-        };
-    }
-
-    pub fn mapSphericalRenderDistance(self: View, pass: SphericalRenderPass, pass_distance: f32) f32 {
-        return switch (self) {
-            .spherical => |typed| typed.mapSphericalRenderDistance(pass, pass_distance),
-            else => unreachable,
-        };
-    }
-
-    pub fn cameraModelPointForAmbient(self: View, ambient_input: Vec4, model: CameraModel) ?Vec3 {
-        return switch (self) {
-            .hyperbolic => |typed| typed.cameraModelPointForAmbient(curved_ambient.Hyper.fromCoords(ambient_input), model),
-            .elliptic => |typed| typed.cameraModelPointForAmbient(curved_ambient.Round.fromCoords(ambient_input), model),
-            .spherical => |typed| typed.cameraModelPointForAmbient(curved_ambient.Round.fromCoords(ambient_input), model),
-        };
-    }
-
-    pub fn cameraModelPoint(self: View, chart: anytype, model: CameraModel) ?Vec3 {
-        return switch (self) {
-            inline else => |typed| typed.cameraModelPoint(chart, model),
-        };
-    }
-
-    pub fn projectPoint(self: View, chart: Vec3, canvas_width: usize, canvas_height: usize) ?[2]f32 {
-        return switch (self) {
-            inline else => |typed| typed.projectPoint(chart, canvas_width, canvas_height),
-        };
-    }
-};
-
-fn coordsFromFlatVector(v: Flat3.Vector) Vec3 {
-    return v;
-}
-
-fn ambientAdd(metric: Metric, a: Vec4, b: Vec4) Vec4 {
-    return add4(metric, a, b);
-}
-
-fn ambientSub(metric: Metric, a: Vec4, b: Vec4) Vec4 {
-    return sub4(metric, a, b);
-}
-
-fn ambientScale(metric: Metric, v: Vec4, s: f32) Vec4 {
-    return scale4(metric, v, s);
-}
-
-fn ambientDot(metric: Metric, a: Vec4, b: Vec4) f32 {
-    return metricDot(metric, a, b);
-}
-
 pub fn flatLerp3(a_input: anytype, b_input: anytype, t: f32) Vec3 {
     const a = coerceVec3(a_input);
     const b = coerceVec3(b_input);
@@ -1273,45 +878,6 @@ pub fn flatBilerpQuad(a: anytype, b: anytype, c: anytype, d: anytype, u: f32, v:
     const ab = flatLerp3(a, b, u);
     const dc = flatLerp3(d, c, u);
     return flatLerp3(ab, dc, v);
-}
-
-fn add4(metric: Metric, a: Vec4, b: Vec4) Vec4 {
-    return switch (metric) {
-        .hyperbolic => curved_ambient.Hyper.toCoords(curved_ambient.Hyper.add(
-            curved_ambient.Hyper.fromCoords(a),
-            curved_ambient.Hyper.fromCoords(b),
-        )),
-        .elliptic, .spherical => curved_ambient.Round.toCoords(curved_ambient.Round.add(
-            curved_ambient.Round.fromCoords(a),
-            curved_ambient.Round.fromCoords(b),
-        )),
-    };
-}
-
-fn sub4(metric: Metric, a: Vec4, b: Vec4) Vec4 {
-    return switch (metric) {
-        .hyperbolic => curved_ambient.Hyper.toCoords(curved_ambient.Hyper.sub(
-            curved_ambient.Hyper.fromCoords(a),
-            curved_ambient.Hyper.fromCoords(b),
-        )),
-        .elliptic, .spherical => curved_ambient.Round.toCoords(curved_ambient.Round.sub(
-            curved_ambient.Round.fromCoords(a),
-            curved_ambient.Round.fromCoords(b),
-        )),
-    };
-}
-
-fn scale4(metric: Metric, v: Vec4, s: f32) Vec4 {
-    return switch (metric) {
-        .hyperbolic => curved_ambient.Hyper.toCoords(curved_ambient.Hyper.scale(
-            curved_ambient.Hyper.fromCoords(v),
-            s,
-        )),
-        .elliptic, .spherical => curved_ambient.Round.toCoords(curved_ambient.Round.scale(
-            curved_ambient.Round.fromCoords(v),
-            s,
-        )),
-    };
 }
 
 fn flatVector(point: Vec3) Flat3.Vector {
@@ -1378,30 +944,6 @@ pub fn sphericalAmbientFromGroundHeightPoint(params: Params, local_input: anytyp
             Round.scale(up, @sin(normalized_height)),
         ),
     );
-}
-
-fn ambientFromTangentBasisPoint(
-    metric: Metric,
-    params: Params,
-    origin: Vec4,
-    right: Vec4,
-    forward: Vec4,
-    lateral: f32,
-    forward_distance: f32,
-) ?Vec4 {
-    return switch (metric) {
-        inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
-            ambientFromTypedTangentBasisPoint(
-                metric_tag,
-                params,
-                AmbientFor(metric_tag).fromCoords(origin),
-                AmbientFor(metric_tag).fromCoords(right),
-                AmbientFor(metric_tag).fromCoords(forward),
-                lateral,
-                forward_distance,
-            ) orelse return null,
-        ),
-    };
 }
 
 pub fn ambientFromTypedTangentBasisPoint(
@@ -1590,43 +1132,6 @@ fn cameraModelForRender(metric: Metric, projection_mode: projection.DirectionPro
     };
 }
 
-fn metricDot(metric: Metric, a: Vec4, b: Vec4) f32 {
-    return switch (metric) {
-        .hyperbolic => curved_ambient.Hyper.dot(
-            curved_ambient.Hyper.fromCoords(a),
-            curved_ambient.Hyper.fromCoords(b),
-        ),
-        .elliptic, .spherical => curved_ambient.Round.dot(
-            curved_ambient.Round.fromCoords(a),
-            curved_ambient.Round.fromCoords(b),
-        ),
-    };
-}
-
-fn tryNormalizeTangent(metric: Metric, v: Vec4) ?Vec4 {
-    if (!isFiniteVec4(v)) return null;
-    const n2 = metricDot(metric, v, v);
-    if (!std.math.isFinite(n2) or n2 <= 1e-6) return null;
-    return scale4(metric, v, 1.0 / @sqrt(n2));
-}
-
-fn projectToTangent(metric: Metric, position: Vec4, candidate: Vec4) Vec4 {
-    if (!isFiniteVec4(position) or !isFiniteVec4(candidate)) return .{ 0.0, 0.0, 0.0, 0.0 };
-    const denom = metricDot(metric, position, position);
-    if (!std.math.isFinite(denom) or @abs(denom) <= 1e-6) return .{ 0.0, 0.0, 0.0, 0.0 };
-    const along = metricDot(metric, candidate, position) / denom;
-    if (!std.math.isFinite(along)) return .{ 0.0, 0.0, 0.0, 0.0 };
-    return sub4(metric, candidate, scale4(metric, position, along));
-}
-
-fn orthonormalCandidate(metric: Metric, position: Vec4, candidate: Vec4, refs: []const Vec4) ?Vec4 {
-    var v = projectToTangent(metric, position, candidate);
-    for (refs) |r| {
-        v = sub4(metric, v, scale4(metric, r, metricDot(metric, v, r)));
-    }
-    return tryNormalizeTangent(metric, v);
-}
-
 // Normalized homogeneous points for the projective models:
 // - hyperbolic `H^3`: unit hyperboloid / Klein chart
 // - elliptic `E^3`: unit 3-sphere / projective chart
@@ -1634,71 +1139,9 @@ fn orthonormalCandidate(metric: Metric, position: Vec4, candidate: Vec4, refs: [
 // https://arxiv.org/abs/1310.2713
 // and Gunn, "Geometry in the Hyperbolic Plane and Beyond"
 // https://arxiv.org/pdf/1602.08562
-fn embedPoint(metric: Metric, params: Params, chart_input: anytype) ?Vec4 {
-    return switch (metric) {
-        inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
-            typedEmbedPoint(metric_tag, params, chart_input) orelse return null,
-        ),
-    };
-}
-
-fn chartCoords(metric: Metric, params: Params, ambient: Vec4) Vec3 {
-    return switch (metric) {
-        inline else => |metric_tag| typedChartCoords(
-            metric_tag,
-            params,
-            AmbientFor(metric_tag).fromCoords(ambient),
-        ),
-    };
-}
-
-fn normalizeAmbient(metric: Metric, ambient: Vec4) Vec4 {
-    return switch (metric) {
-        inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
-            typedNormalizeAmbient(metric_tag, AmbientFor(metric_tag).fromCoords(ambient)),
-        ),
-    };
-}
-
-fn geodesicAmbientPoint(metric: Metric, a: Vec4, b_input: Vec4, t: f32) ?Vec4 {
-    return switch (metric) {
-        inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
-            typedGeodesicAmbientPoint(
-                metric_tag,
-                AmbientFor(metric_tag).fromCoords(a),
-                AmbientFor(metric_tag).fromCoords(b_input),
-                t,
-            ) orelse return null,
-        ),
-    };
-}
-
-// Intrinsic geodesic interpolation in the ambient constant-curvature models.
-// References:
-// https://arxiv.org/abs/1310.2713
-// https://arxiv.org/pdf/1602.08562
-fn geodesicChartPoint(metric: Metric, params: Params, a_chart: anytype, b_chart: anytype, t: f32) ?Vec3 {
-    const a = embedPoint(metric, params, a_chart) orelse return null;
-    const b = embedPoint(metric, params, b_chart) orelse return null;
-    const ambient = geodesicAmbientPoint(metric, a, b, t) orelse return null;
-    return chartCoords(metric, params, ambient);
-}
-
 // The initial viewing ray is the tangent of the geodesic from the eye point to
 // the target point, obtained by removing the eye component with the ambient
 // metric of the model. Same references as above.
-fn geodesicDirection(metric: Metric, eye: Vec4, target: Vec4) ?Vec4 {
-    return switch (metric) {
-        inline else => |metric_tag| AmbientFor(metric_tag).toCoords(
-            typedGeodesicDirection(
-                metric_tag,
-                AmbientFor(metric_tag).fromCoords(eye),
-                AmbientFor(metric_tag).fromCoords(target),
-            ) orelse return null,
-        ),
-    };
-}
-
 fn typedRelativeCoords(
     comptime metric: Metric,
     camera: TypedCamera(metric),
@@ -1787,18 +1230,6 @@ pub fn sampleProjectedModelPoint(
     };
 }
 
-// Geodesic camera transport in the ambient models:
-// - sphere: `(cos s) * P + (sin s) * V`
-// - hyperboloid: `(cosh s) * P + (sinh s) * V`
-// with the companion update for the transported tangent basis.
-// References:
-// https://arxiv.org/abs/1310.2713
-// https://arxiv.org/pdf/1602.08562
-fn worldUpAt(metric: Metric, position: Vec4) ?Vec4 {
-    return orthonormalCandidate(metric, position, .{ 0.0, 0.0, 1.0, 0.0 }, &.{}) orelse
-        orthonormalCandidate(metric, position, .{ 0.0, 0.0, 0.0, 1.0 }, &.{});
-}
-
 fn typedSampleAmbientPoint(
     comptime metric: Metric,
     params: Params,
@@ -1849,7 +1280,7 @@ pub fn modelPointForTypedAmbientWithCamera(
 
 fn edgeHasProjectionBreak(view: anytype, a_chart: Vec3, b_chart: Vec3, screen: Screen, steps: usize) bool {
     var prev_point: ?[2]f32 = null;
-    const projection_mode = projectionModeOf(view);
+    const projection_mode = view.projection;
 
     for (0..steps + 1) |i| {
         const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(steps));
@@ -1895,29 +1326,31 @@ test "hyperbolic and spherical views initialize and sample" {
 }
 
 test "ambient helpers and flat interpolation stay consistent" {
-    const a: Vec4 = .{ 1.0, 2.0, 3.0, 4.0 };
-    const b: Vec4 = .{ 0.5, -1.0, 2.0, -0.25 };
+    const a_round = curved_ambient.Round.fromCoords(.{ 1.0, 2.0, 3.0, 4.0 });
+    const b_round = curved_ambient.Round.fromCoords(.{ 0.5, -1.0, 2.0, -0.25 });
+    const a_hyper = curved_ambient.Hyper.fromCoords(.{ 1.0, 2.0, 3.0, 4.0 });
+    const b_hyper = curved_ambient.Hyper.fromCoords(.{ 0.5, -1.0, 2.0, -0.25 });
 
-    const spherical_sum = ambientAdd(.spherical, a, b);
+    const spherical_sum = curved_ambient.Round.toCoords(curved_ambient.Round.add(a_round, b_round));
     try std.testing.expectApproxEqAbs(1.5, spherical_sum[0], 1e-6);
     try std.testing.expectApproxEqAbs(1.0, spherical_sum[1], 1e-6);
     try std.testing.expectApproxEqAbs(5.0, spherical_sum[2], 1e-6);
     try std.testing.expectApproxEqAbs(3.75, spherical_sum[3], 1e-6);
 
-    const hyper_diff = ambientSub(.hyperbolic, a, b);
+    const hyper_diff = curved_ambient.Hyper.toCoords(curved_ambient.Hyper.sub(a_hyper, b_hyper));
     try std.testing.expectApproxEqAbs(0.5, hyper_diff[0], 1e-6);
     try std.testing.expectApproxEqAbs(3.0, hyper_diff[1], 1e-6);
     try std.testing.expectApproxEqAbs(1.0, hyper_diff[2], 1e-6);
     try std.testing.expectApproxEqAbs(4.25, hyper_diff[3], 1e-6);
 
-    const scaled = ambientScale(.spherical, a, 0.25);
+    const scaled = curved_ambient.Round.toCoords(curved_ambient.Round.scale(a_round, 0.25));
     try std.testing.expectApproxEqAbs(0.25, scaled[0], 1e-6);
     try std.testing.expectApproxEqAbs(0.5, scaled[1], 1e-6);
     try std.testing.expectApproxEqAbs(0.75, scaled[2], 1e-6);
     try std.testing.expectApproxEqAbs(1.0, scaled[3], 1e-6);
 
-    try std.testing.expectApproxEqAbs(3.5, ambientDot(.spherical, a, b), 1e-6);
-    try std.testing.expectApproxEqAbs(2.5, ambientDot(.hyperbolic, a, b), 1e-6);
+    try std.testing.expectApproxEqAbs(3.5, curved_ambient.Round.dot(a_round, b_round), 1e-6);
+    try std.testing.expectApproxEqAbs(2.5, curved_ambient.Hyper.dot(a_hyper, b_hyper), 1e-6);
 
     const lerped = flatLerp3(.{ 0.0, 0.0, 0.0 }, .{ 2.0, 4.0, 6.0 }, 0.25);
     try std.testing.expectApproxEqAbs(0.5, lerped[0], 1e-6);
@@ -1950,129 +1383,6 @@ test "typed hyperbolic view uses GA ambient vector carriers" {
     try std.testing.expect(@TypeOf(view.camera.position) == curved_ambient.Hyper.Vector);
     try std.testing.expect(@TypeOf(view.camera.forward) == curved_ambient.Hyper.Vector);
     try std.testing.expect(view.walkSurfaceUp() != null);
-}
-
-test "typed spherical view stays in sync with erased view operations" {
-    const params = Params{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal };
-    const clip = DistanceClip{ .near = 0.08, .far = std.math.inf(f32) };
-    var typed = try SphericalView.init(params, .wrapped, clip, .{ 0.0, 0.0, -0.82 }, .{ 0.0, 0.0, 0.0 });
-    var erased = try View.init(.spherical, params, .wrapped, clip, .{ 0.0, 0.0, -0.82 }, .{ 0.0, 0.0, 0.0 });
-    const typed_from_erased = erased.typed(.spherical);
-    inline for (curved_ambient.Round.toCoords(typed_from_erased.camera.position), curved_ambient.Round.toCoords(typed.camera.position)) |lhs, rhs| {
-        try std.testing.expectApproxEqAbs(lhs, rhs, 1e-6);
-    }
-
-    typed.syncHeadingPitch(0.42, 0.9075241, 0.55);
-    erased.syncHeadingPitch(0.42, 0.9075241, 0.55);
-    typed.turnSurfaceYaw(0.2, 0.55);
-    erased.turnSurfaceYaw(0.2, 0.55);
-    const typed_forward = typed.headingDirection(0.42, 0.9075241).?;
-    const erased_forward = erased.headingDirection(0.42, 0.9075241).?;
-    typed.moveAlong(typed_forward, 0.10);
-    erased.moveAlong(erased_forward, 0.10);
-
-    const typed_erased = typed.erased();
-    inline for (typed_erased.camera.position, erased.camera.position) |lhs, rhs| {
-        try std.testing.expectApproxEqAbs(lhs, rhs, 1e-5);
-    }
-    inline for (typed_erased.camera.forward, erased.camera.forward) |lhs, rhs| {
-        try std.testing.expectApproxEqAbs(lhs, rhs, 1e-5);
-    }
-
-    const typed_orientation = typed.walkOrientation().?;
-    const erased_orientation = erased.walkOrientation().?;
-    try std.testing.expectApproxEqAbs(typed_orientation.x_heading, erased_orientation.x_heading, 1e-5);
-    try std.testing.expectApproxEqAbs(typed_orientation.z_heading, erased_orientation.z_heading, 1e-5);
-    try std.testing.expectApproxEqAbs(typed_orientation.pitch, erased_orientation.pitch, 1e-5);
-}
-
-test "typed spherical view matches erased sampling queries" {
-    const params = Params{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal };
-    const clip = DistanceClip{ .near = 0.08, .far = std.math.inf(f32) };
-    const screen = Screen{ .width = 96, .height = 54, .zoom = 1.0 };
-    const chart = vec3(0.12, -0.07, 0.18);
-
-    const typed = try SphericalView.init(params, .stereographic, clip, .{ 0.0, 0.0, -0.82 }, .{ 0.0, 0.0, 0.0 });
-    const erased = try View.init(.spherical, params, .stereographic, clip, .{ 0.0, 0.0, -0.82 }, .{ 0.0, 0.0, 0.0 });
-
-    const typed_sample = typed.sampleProjectedPoint(chart, screen);
-    const erased_sample = erased.sampleProjectedPoint(chart, screen);
-    try std.testing.expectEqual(erased_sample.status, typed_sample.status);
-    try std.testing.expectApproxEqAbs(erased_sample.distance, typed_sample.distance, 1e-5);
-    try std.testing.expectApproxEqAbs(erased_sample.render_depth, typed_sample.render_depth, 1e-5);
-    try std.testing.expectApproxEqAbs(erased_sample.projected.?[0], typed_sample.projected.?[0], 1e-4);
-    try std.testing.expectApproxEqAbs(erased_sample.projected.?[1], typed_sample.projected.?[1], 1e-4);
-
-    const typed_model = typed.cameraModelPoint(chart, .conformal).?;
-    const erased_model = erased.cameraModelPoint(chart, .conformal).?;
-    inline for (vec3Coords(typed_model), vec3Coords(erased_model)) |lhs, rhs| {
-        try std.testing.expectApproxEqAbs(lhs, rhs, 1e-5);
-    }
-
-    const typed_ambient = typed.sceneAmbientPoint(chart).?;
-    const erased_ambient = erased.sceneAmbientPoint(chart).?;
-    try std.testing.expectEqual(
-        erased.sphericalSelectedPassForAmbient(erased_ambient).?,
-        typed.sphericalSelectedPassForAmbient(typed_ambient).?,
-    );
-    const typed_far = typed.sampleProjectedAmbientForSphericalPass(.far, typed_ambient, screen);
-    const erased_far = erased.sampleProjectedAmbientForSphericalPass(.far, erased_ambient, screen);
-    try std.testing.expectEqual(erased_far.status, typed_far.status);
-    try std.testing.expectApproxEqAbs(erased_far.distance, typed_far.distance, 1e-5);
-    try std.testing.expectApproxEqAbs(erased_far.projected.?[0], typed_far.projected.?[0], 1e-4);
-    try std.testing.expectApproxEqAbs(erased_far.projected.?[1], typed_far.projected.?[1], 1e-4);
-}
-
-test "typed curved views initialize like erased views" {
-    const params = Params{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal };
-    const clip = DistanceClip{ .near = 0.08, .far = std.math.inf(f32) };
-
-    const typed_hyper = try HyperView.init(params, .gnomonic, clip, .{ 0.0, 0.0, -0.22 }, .{ 0.0, 0.0, 0.0 });
-    const erased_hyper = try View.init(.hyperbolic, params, .gnomonic, clip, .{ 0.0, 0.0, -0.22 }, .{ 0.0, 0.0, 0.0 });
-    const typed_round = try SphericalView.init(params, .stereographic, clip, .{ 0.0, 0.0, -0.82 }, .{ 0.0, 0.0, 0.0 });
-    const erased_round = try View.init(.spherical, params, .stereographic, clip, .{ 0.0, 0.0, -0.82 }, .{ 0.0, 0.0, 0.0 });
-
-    const typed_hyper_erased = typed_hyper.erased();
-    const typed_round_erased = typed_round.erased();
-    inline for (&.{ typed_hyper_erased.camera.position, typed_hyper_erased.camera.right, typed_hyper_erased.camera.up, typed_hyper_erased.camera.forward }, &.{ erased_hyper.camera.position, erased_hyper.camera.right, erased_hyper.camera.up, erased_hyper.camera.forward }) |expected, actual| {
-        inline for (expected, 0..) |coord, i| {
-            try std.testing.expectApproxEqAbs(coord, actual[i], 1e-6);
-        }
-    }
-    inline for (&.{ typed_round_erased.camera.position, typed_round_erased.camera.right, typed_round_erased.camera.up, typed_round_erased.camera.forward }, &.{ erased_round.camera.position, erased_round.camera.right, erased_round.camera.up, erased_round.camera.forward }) |expected, actual| {
-        inline for (expected, 0..) |coord, i| {
-            try std.testing.expectApproxEqAbs(coord, actual[i], 1e-6);
-        }
-    }
-}
-
-test "typed adjustRadius matches erased adjustment" {
-    var typed = try SphericalView.init(
-        .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
-        .wrapped,
-        .{ .near = 0.08, .far = std.math.inf(f32) },
-        .{ 0.0, 0.0, -0.82 },
-        .{ 0.0, 0.0, 0.0 },
-    );
-    var erased = try View.init(
-        .spherical,
-        .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
-        .wrapped,
-        .{ .near = 0.08, .far = std.math.inf(f32) },
-        .{ 0.0, 0.0, -0.82 },
-        .{ 0.0, 0.0, 0.0 },
-    );
-
-    try typed.adjustRadius(1.15, 0.18);
-    try erased.adjustRadius(1.15, 0.18);
-
-    const typed_erased = typed.erased();
-    try std.testing.expectApproxEqAbs(typed_erased.params.radius, erased.params.radius, 1e-6);
-    inline for (&.{ typed_erased.camera.position, typed_erased.camera.right, typed_erased.camera.up, typed_erased.camera.forward }, &.{ erased.camera.position, erased.camera.right, erased.camera.up, erased.camera.forward }) |expected, actual| {
-        inline for (expected, 0..) |coord, i| {
-            try std.testing.expectApproxEqAbs(coord, actual[i], 1e-5);
-        }
-    }
 }
 
 test "adjustRadius preserves a valid camera" {
@@ -2214,14 +1524,14 @@ test "surface pitch keeps spherical walk pitch tied to the surface normal" {
 
 test "tangent normalization rejects non-finite inputs" {
     const nan = std.math.nan(f32);
-    try std.testing.expectEqual(@as(?Vec4, null), tryNormalizeTangent(.spherical, .{ nan, 0.0, 0.0, 0.0 }));
-    try std.testing.expectEqual(@as(?Vec4, null), tryNormalizeTangent(.hyperbolic, .{ 1.0, nan, 0.0, 0.0 }));
+    try std.testing.expect(typedTryNormalizeTangent(.spherical, curved_ambient.Round.fromCoords(.{ nan, 0.0, 0.0, 0.0 })) == null);
+    try std.testing.expect(typedTryNormalizeTangent(.hyperbolic, curved_ambient.Hyper.fromCoords(.{ 1.0, nan, 0.0, 0.0 })) == null);
 }
 
 test "ambient normalization falls back to the model identity on non-finite input" {
     const nan = std.math.nan(f32);
-    const hyper = normalizeAmbient(.hyperbolic, .{ nan, 0.0, 0.0, 0.0 });
-    const round = normalizeAmbient(.spherical, .{ 0.0, nan, 0.0, 0.0 });
+    const hyper = curved_ambient.Hyper.toCoords(typedNormalizeAmbient(.hyperbolic, curved_ambient.Hyper.fromCoords(.{ nan, 0.0, 0.0, 0.0 })));
+    const round = curved_ambient.Round.toCoords(typedNormalizeAmbient(.spherical, curved_ambient.Round.fromCoords(.{ 0.0, nan, 0.0, 0.0 })));
 
     try std.testing.expectEqualSlices(f32, &.{ 1.0, 0.0, 0.0, 0.0 }, &hyper);
     try std.testing.expectEqualSlices(f32, &.{ 1.0, 0.0, 0.0, 0.0 }, &round);
@@ -2229,11 +1539,11 @@ test "ambient normalization falls back to the model identity on non-finite input
 
 test "ambient tangent-basis point builder rejects non-finite travel inputs" {
     const nan = std.math.nan(f32);
-    const origin: Vec4 = .{ 1.0, 0.0, 0.0, 0.0 };
-    const right: Vec4 = .{ 0.0, 1.0, 0.0, 0.0 };
-    const forward: Vec4 = .{ 0.0, 0.0, 0.0, 1.0 };
+    const origin = curved_ambient.Round.fromCoords(.{ 1.0, 0.0, 0.0, 0.0 });
+    const right = curved_ambient.Round.fromCoords(.{ 0.0, 1.0, 0.0, 0.0 });
+    const forward = curved_ambient.Round.fromCoords(.{ 0.0, 0.0, 0.0, 1.0 });
 
-    const point = ambientFromTangentBasisPoint(
+    const point = ambientFromTypedTangentBasisPoint(
         .spherical,
         .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
         origin,
@@ -2243,7 +1553,7 @@ test "ambient tangent-basis point builder rejects non-finite travel inputs" {
         0.25,
     ).?;
 
-    try std.testing.expectEqualSlices(f32, &origin, &point);
+    try std.testing.expectEqualSlices(f32, &curved_ambient.Round.toCoords(origin), &curved_ambient.Round.toCoords(point));
 }
 
 test "spherical walk orientation survives forward transport" {
@@ -2511,7 +1821,7 @@ test "conformal chart roundtrips for hyperbolic and spherical spaces" {
         .chart_model = .conformal,
     };
     const hyper_chart = vec3(0.10, -0.04, 0.08);
-    const hyper_roundtrip = chartCoords(.hyperbolic, hyper_params, embedPoint(.hyperbolic, hyper_params, hyper_chart).?);
+    const hyper_roundtrip = typedChartCoords(.hyperbolic, hyper_params, typedEmbedPoint(.hyperbolic, hyper_params, hyper_chart).?);
     inline for (hyper_chart, 0..) |expected, i| {
         try std.testing.expectApproxEqAbs(expected, hyper_roundtrip[i], 1e-5);
     }
@@ -2522,63 +1832,9 @@ test "conformal chart roundtrips for hyperbolic and spherical spaces" {
         .chart_model = .conformal,
     };
     const spherical_chart = vec3(0.35, -0.12, 0.28);
-    const spherical_roundtrip = chartCoords(.spherical, spherical_params, embedPoint(.spherical, spherical_params, spherical_chart).?);
+    const spherical_roundtrip = typedChartCoords(.spherical, spherical_params, typedEmbedPoint(.spherical, spherical_params, spherical_chart).?);
     inline for (spherical_chart, 0..) |expected, i| {
         try std.testing.expectApproxEqAbs(expected, spherical_roundtrip[i], 1e-5);
-    }
-}
-
-test "typed embed and chart helpers match erased wrappers" {
-    const params = Params{
-        .radius = 1.48,
-        .angular_zoom = 1.0,
-        .chart_model = .conformal,
-    };
-    const chart = vec3(0.12, -0.07, 0.15);
-    const typed_view = try SphericalView.init(
-        params,
-        .stereographic,
-        .{ .near = 0.08, .far = std.math.inf(f32) },
-        .{ 0.0, 0.0, -0.82 },
-        .{ 0.0, 0.0, 0.0 },
-    );
-    const erased_view = typed_view.erased();
-
-    const typed_ambient = typed_view.embedPoint(chart).?;
-    const erased_ambient = erased_view.embedPoint(chart).?;
-    const typed_ambient_coords = curved_ambient.Round.toCoords(typed_ambient);
-    inline for (typed_ambient_coords, 0..) |expected, i| {
-        try std.testing.expectApproxEqAbs(expected, erased_ambient[i], 1e-6);
-    }
-
-    const typed_chart = typed_view.chartCoords(typed_ambient);
-    const erased_chart = erased_view.chartCoords(erased_ambient);
-    inline for (typed_chart, 0..) |expected, i| {
-        try std.testing.expectApproxEqAbs(expected, erased_chart[i], 1e-6);
-    }
-}
-
-test "typed geodesic chart helper matches erased wrapper" {
-    const params = Params{
-        .radius = 0.32,
-        .angular_zoom = 0.72,
-        .chart_model = .conformal,
-    };
-    const typed_view = try HyperView.init(
-        params,
-        .gnomonic,
-        .{ .near = 0.08, .far = 1.55 },
-        .{ 0.0, 0.0, -params.radius * 0.78 },
-        .{ 0.0, 0.0, 0.0 },
-    );
-    const erased_view = typed_view.erased();
-    const a = vec3(-0.12, -0.03, 0.08);
-    const b = vec3(0.15, 0.09, 0.02);
-
-    const typed_point = typed_view.geodesicChartPoint(a, b, 0.35).?;
-    const erased_point = erased_view.geodesicChartPoint(a, b, 0.35).?;
-    inline for (typed_point, 0..) |expected, i| {
-        try std.testing.expectApproxEqAbs(expected, erased_point[i], 1e-6);
     }
 }
 
@@ -2621,49 +1877,50 @@ test "spherical ground-height mapping matches the radial map on horizontal and v
 }
 
 test "spherical ground-height mapping lifts from the wrapped footprint along local up" {
+    const Round = AmbientFor(.spherical);
     const params = Params{
         .radius = 1.48,
         .angular_zoom = 1.0,
         .chart_model = .conformal,
     };
     const local = vec3(0.31, 0.27, -0.22);
-    const base = ambientFromTangentBasisPoint(
+    const base = ambientFromTypedTangentBasisPoint(
         .spherical,
         params,
-        .{ 1.0, 0.0, 0.0, 0.0 },
-        .{ 0.0, 1.0, 0.0, 0.0 },
-        .{ 0.0, 0.0, 0.0, 1.0 },
+        Round.identity(),
+        Round.fromCoords(.{ 0.0, 1.0, 0.0, 0.0 }),
+        Round.fromCoords(.{ 0.0, 0.0, 0.0, 1.0 }),
         vec3x(local),
         vec3z(local),
     ).?;
-    const up = worldUpAt(.spherical, base).?;
+    const up = typedWorldUpAt(.spherical, base).?;
     const ambient = sphericalAmbientFromGroundHeightPoint(params, local);
-    const ambient_coords = AmbientFor(.spherical).toCoords(ambient);
-    const direction = geodesicDirection(.spherical, base, ambient_coords).?;
-    const height_distance = params.radius * std.math.acos(std.math.clamp(metricDot(.spherical, base, ambient_coords), -1.0, 1.0));
+    const direction = typedGeodesicDirection(.spherical, base, ambient).?;
+    const height_distance = params.radius * std.math.acos(std.math.clamp(Round.dot(base, ambient), -1.0, 1.0));
 
     try std.testing.expectApproxEqAbs(vec3y(local), height_distance, 1e-5);
-    try std.testing.expectApproxEqAbs(1.0, metricDot(.spherical, direction, up), 1e-5);
+    try std.testing.expectApproxEqAbs(1.0, Round.dot(direction, up), 1e-5);
 }
 
 test "ambient from tangent basis point matches spherical horizontal ground mapping at the origin" {
+    const Round = AmbientFor(.spherical);
     const params = Params{
         .radius = 1.48,
         .angular_zoom = 1.0,
         .chart_model = .conformal,
     };
     const local = vec3(0.31, 0.0, -0.22);
-    const ambient = ambientFromTangentBasisPoint(
+    const ambient = ambientFromTypedTangentBasisPoint(
         .spherical,
         params,
-        .{ 1.0, 0.0, 0.0, 0.0 },
-        .{ 0.0, 1.0, 0.0, 0.0 },
-        .{ 0.0, 0.0, 0.0, 1.0 },
+        Round.identity(),
+        Round.fromCoords(.{ 0.0, 1.0, 0.0, 0.0 }),
+        Round.fromCoords(.{ 0.0, 0.0, 0.0, 1.0 }),
         vec3x(local),
         vec3z(local),
     ).?;
     const expected = sphericalAmbientFromGroundHeightPoint(params, local);
-    inline for (AmbientFor(.spherical).toCoords(expected), ambient) |coord, actual| {
+    inline for (AmbientFor(.spherical).toCoords(expected), AmbientFor(.spherical).toCoords(ambient)) |coord, actual| {
         try std.testing.expectApproxEqAbs(coord, actual, 1e-5);
     }
 }
