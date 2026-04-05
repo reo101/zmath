@@ -32,12 +32,6 @@ pub const isSignedBlade = blade_parsing.isSignedBlade;
 pub const isMultivectorType = multivector.isMultivectorType;
 pub const ensureMultivector = multivector.ensureMultivector;
 
-pub const norm = rotors.norm;
-pub const normSquared = rotors.normSquared;
-pub const normalize = rotors.normalize;
-pub const normalized = rotors.normalized;
-pub const normalizedRotor = rotors.normalizedRotor;
-
 /// Parses a signed blade name into a canonical spec.
 pub fn parseSignedBlade(
     comptime name: []const u8,
@@ -75,23 +69,6 @@ pub fn expectNamedBasisIndex(
 ) usize {
     return resolveNamedBasisIndex(named_index, dimension, options, true);
 }
-
-pub const Multivector = multivector.Multivector;
-pub const Basis = multivector.Basis;
-pub const FullMultivector = multivector.FullMultivector;
-pub const KVector = multivector.KVector;
-pub const EvenMultivector = multivector.EvenMultivector;
-pub const OddMultivector = multivector.OddMultivector;
-pub const Scalar = multivector.Scalar;
-pub const Vector = multivector.Vector;
-pub const Bivector = multivector.Bivector;
-pub const Trivector = multivector.Trivector;
-pub const Pseudoscalar = multivector.Pseudoscalar;
-pub const Rotor = multivector.Rotor;
-pub const basisBlade = multivector.basisBlade;
-pub const basisVector = multivector.basisVector;
-pub const signedBlade = multivector.signedBlade;
-pub const signedBladeWithOptions = multivector.signedBladeWithOptions;
 
 /// Returns a signature-baked algebra namespace for a fixed `Cl(p, q, r)`.
 pub fn Algebra(comptime sig: MetricSignature) type {
