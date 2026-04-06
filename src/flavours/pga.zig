@@ -24,20 +24,20 @@ pub const h = bindings.h;
 
 pub const Point = struct {
     pub fn init(x: f32, y: f32, z: f32) h.Full {
-        // PGA points are trivectors: x*e234 + y*e314 + z*e124 + e123
-        // e4 is the degenerate basis vector (e0)
-        return h.exprAs(h.Full, "{x}*e234 + {y}*e314 + {z}*e124 + e123", .{ .x = x, .y = y, .z = z });
+        // PGA points are trivectors: x*e230 + y*e310 + z*e120 + e123
+        // `e0` is the degenerate homogeneous basis vector.
+        return h.exprAs(h.Full, "{x}*e_2_3_0 + {y}*e_3_1_0 + {z}*e_1_2_0 + e123", .{ .x = x, .y = y, .z = z });
     }
 
     pub fn direction(x: f32, y: f32, z: f32) h.Full {
-        return h.exprAs(h.Full, "{x}*e234 + {y}*e314 + {z}*e124", .{ .x = x, .y = y, .z = z });
+        return h.exprAs(h.Full, "{x}*e_2_3_0 + {y}*e_3_1_0 + {z}*e_1_2_0", .{ .x = x, .y = y, .z = z });
     }
 };
 
 pub const Plane = struct {
     pub fn init(a: f32, b: f32, c: f32, d: f32) h.Full {
-        // Plane: a*e1 + b*e2 + c*e3 + d*e4
-        return h.exprAs(h.Full, "{a}*e1 + {b}*e2 + {c}*e3 + {d}*e4", .{ .a = a, .b = b, .c = c, .d = d });
+        // Plane: a*e1 + b*e2 + c*e3 + d*e0
+        return h.exprAs(h.Full, "{a}*e1 + {b}*e2 + {c}*e3 + {d}*e0", .{ .a = a, .b = b, .c = c, .d = d });
     }
 };
 
@@ -51,10 +51,10 @@ pub fn toMatrix4x4(mv: anytype) [4][4]f32 {
     ga.multivector.ensureMultivector(@TypeOf(mv));
     const E = h.Basis;
     const basis_vectors = [_]h.Vector{
-        E.e(1),
-        E.e(2),
-        E.e(3),
-        E.e(0),
+        E.e(1).gradePart(1),
+        E.e(2).gradePart(1),
+        E.e(3).gradePart(1),
+        E.e(0).gradePart(1),
     };
 
     var mat: [4][4]f32 = undefined;
@@ -64,7 +64,7 @@ pub fn toMatrix4x4(mv: anytype) [4][4]f32 {
         mat[0][j] = @floatCast(v_prime.coeffNamed("e1"));
         mat[1][j] = @floatCast(v_prime.coeffNamed("e2"));
         mat[2][j] = @floatCast(v_prime.coeffNamed("e3"));
-        mat[3][j] = @floatCast(v_prime.coeffNamed("e0"));
+        mat[3][j] = @floatCast(v_prime.coeffNamedWithOptions("e0", bindings.naming_options));
     }
     return mat;
 }
@@ -105,13 +105,14 @@ test "geometric product with degenerate vector produces dual-like elements" {
 
     // e1 * e0 should give a bivector e10 with coefficient +1 (or -1 depending on order)
     const e1e0 = e1.gp(e0);
-    // The result lives on the blade mask e1^e0.
-    const e1e0_mask = E.blade(&.{ 1, 0 });
-    try std.testing.expect(e1e0.coeff(e1e0_mask) != 0.0);
+    try std.testing.expect(e1e0.coeffNamedWithOptions("e_1_0", bindings.naming_options) != 0.0);
 
     // e0 * e1 should give the opposite sign
     const e0e1 = e0.gp(e1);
-    try std.testing.expectEqual(-e1e0.coeff(e1e0_mask), e0e1.coeff(e1e0_mask));
+    try std.testing.expectEqual(
+        -e1e0.coeffNamedWithOptions("e_1_0", bindings.naming_options),
+        e0e1.coeffNamedWithOptions("e_1_0", bindings.naming_options),
+    );
 }
 
 test "ideal point (pure e0 multivector) has zero scalar product with itself" {
@@ -139,8 +140,7 @@ test "euclidean point representation and join" {
     const line = p.outerProduct(q);
 
     // The line should have a non-zero e12 component (the direction part)
-    const e12_mask = E.blade(&.{ 1, 2 });
-    try std.testing.expect(line.coeff(e12_mask) != 0.0);
+    try std.testing.expect(line.coeffNamedWithOptions("e12", bindings.naming_options) != 0.0);
 
     // The line should also have moment components involving e0
     _ = e3; // e3 unused here but available for 3D tests
@@ -148,8 +148,7 @@ test "euclidean point representation and join" {
 
 test "fullSignedBladeFromIndicesWithSignature respects degenerate square" {
     // Repeated degenerate index should give zero
-    const degenerate_index = namedBasisIndex(0);
-    const result = ga.multivector.fullSignedBladeFromIndicesWithSignature(f64, metric_signature, &.{ degenerate_index, degenerate_index });
+    const result = ga.multivector.fullSignedBladeFromIndicesWithSignature(f64, metric_signature, &.{ dimension, dimension });
     // e0*e0 = 0, so the scalar part must be zero
     try std.testing.expectEqual(@as(f64, 0.0), result.scalarCoeff());
 }
@@ -167,14 +166,12 @@ test "pga signed blade parser accepts e0 alias for degenerate basis" {
 
 test "Point.init correctly constructs trivectors" {
     const p = Point.init(1, 2, 3);
-    const E = h.Basis;
 
-    // x*e234 + y*e314 + z*e124 + e123
-    // e4 is e0
-    try std.testing.expectEqual(@as(f32, 1), p.coeff(E.mask(2).bitset.unionWith(E.mask(3).bitset).unionWith(E.mask(0).bitset))); // e234 (e230)
-    try std.testing.expectEqual(@as(f32, 2), p.coeff(E.mask(3).bitset.unionWith(E.mask(1).bitset).unionWith(E.mask(0).bitset))); // e314 (e310)
-    try std.testing.expectEqual(@as(f32, 3), p.coeff(E.mask(1).bitset.unionWith(E.mask(2).bitset).unionWith(E.mask(0).bitset))); // e124 (e120)
-    try std.testing.expectEqual(@as(f32, 1), p.coeff(E.mask(1).bitset.unionWith(E.mask(2).bitset).unionWith(E.mask(3).bitset))); // e123
+    // x*e230 + y*e310 + z*e120 + e123
+    try std.testing.expectEqual(@as(f32, 1), p.coeffNamedWithOptions("e_2_3_0", bindings.naming_options));
+    try std.testing.expectEqual(@as(f32, 2), p.coeffNamedWithOptions("e_3_1_0", bindings.naming_options));
+    try std.testing.expectEqual(@as(f32, 3), p.coeffNamedWithOptions("e_1_2_0", bindings.naming_options));
+    try std.testing.expectEqual(@as(f32, 1), p.coeffNamedWithOptions("e123", bindings.naming_options));
 }
 
 test "toMatrix4x4 with identity rotor" {

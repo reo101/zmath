@@ -1062,6 +1062,9 @@ pub fn fullSignedBladeFromIndicesWithSignature(
     var spec = SignedBladeSpec{ .sign = .positive, .mask = BladeMask.init(0) };
     for (indices) |basis_index| {
         std.debug.assert(1 <= basis_index and basis_index <= dimension);
+        if (sig.basisSquareClass(basis_index) == .degenerate and spec.mask.bitset.isSet(basis_index - 1)) {
+            return FullMultivector(T, sig).zero();
+        }
         blade_ops.applyBasisIndexWithSignature(&spec, basis_index, sig);
     }
 
@@ -1558,6 +1561,14 @@ test "basis namespace mask and blade helpers agree" {
     const E4 = Basis(i32, .euclidean(4));
     try std.testing.expectEqual(BladeMask.init(0b0100), E4.mask(3));
     try std.testing.expect(E4.fromIndices(&.{ 4, 1 }).eql(fullSignedBladeFromIndicesWithSignature(i32, .euclidean(4), &.{ 4, 1 })));
+}
+
+test "runtime signed blades zero repeated degenerate factors" {
+    const result = fullSignedBladeFromIndicesWithSignature(f32, .{ .p = 3, .q = 0, .r = 1 }, &.{ 4, 2, 4 });
+
+    inline for (result.coeffs) |coeff| {
+        try std.testing.expectEqual(@as(f32, 0.0), coeff);
+    }
 }
 
 test "large-dimension full multivector geometric product with scalar identity" {
