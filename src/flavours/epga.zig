@@ -2,6 +2,7 @@ const std = @import("std");
 
 pub const ga = @import("../ga.zig");
 const family = @import("../ga/family.zig");
+const projective_helpers = @import("projective_helpers.zig");
 
 /// Elliptic projective algebra signature `Cl(4, 0, 0)`: four positive basis
 /// vectors with homogeneous naming `e0..e3`.
@@ -29,32 +30,21 @@ pub fn InstantiateHelpers(comptime T: type) type {
 
         pub const Point = struct {
             pub fn initHomogeneous(w: T, x: T, y: T, z: T) H.Full {
-                return H.exprAs(
-                    H.Full,
-                    "{w}*e123 + {x}*e320 + {y}*e130 + {z}*e210",
-                    .{ .w = w, .x = x, .y = y, .z = z },
-                );
+                return projective_helpers.initHomogeneousPoint3(H, w, x, y, z);
             }
 
             pub fn init(x: T, y: T, z: T) H.Full {
-                return initHomogeneous(1.0, x, y, z);
+                return projective_helpers.initPoint3(H, x, y, z);
             }
 
             /// Returns a normalized elliptic point on the unit 3-sphere chart.
             pub fn proper(x: T, y: T, z: T) H.Full {
-                const inv = 1.0 / @sqrt(1.0 + x * x + y * y + z * z);
-                return initHomogeneous(inv, x * inv, y * inv, z * inv);
+                return projective_helpers.properEllipticPoint3(H, x, y, z);
             }
         };
 
         pub fn ambientCoords(p: anytype) [4]T {
-            ga.multivector.ensureMultivector(@TypeOf(p));
-            return .{
-                @floatCast(p.coeffNamedWithOptions("e123", naming_options)),
-                @floatCast(p.coeffNamedWithOptions("e320", naming_options)),
-                @floatCast(p.coeffNamedWithOptions("e130", naming_options)),
-                @floatCast(p.coeffNamedWithOptions("e210", naming_options)),
-            };
+            return projective_helpers.ambientCoords3(T, naming_options, p);
         }
     };
 }
