@@ -1,5 +1,18 @@
 const std = @import("std");
-const curved = @import("../geometry/constant_curvature.zig");
+const geometry = @import("../geometry.zig");
+
+const curved = struct {
+    pub const Vec3 = geometry.curved_types.Vec3;
+    pub const CameraModel = geometry.curved_types.CameraModel;
+    pub const SphericalView = geometry.curved_view.SphericalView;
+    pub const TypedCamera = geometry.curved_types.TypedCamera;
+    pub const AmbientFor = geometry.curved_types.AmbientFor;
+    pub const ambientFromTypedTangentBasisPoint = geometry.curved_surface.ambientFromTypedTangentBasisPoint;
+    pub const modelPointForTypedAmbientWithCamera = geometry.curved_sampling.modelPointForTypedAmbientWithCamera;
+    pub const vec3 = geometry.curved_charts.vec3;
+    pub const vec3x = geometry.curved_charts.vec3x;
+    pub const vec3z = geometry.curved_charts.vec3z;
+};
 const Round = curved.AmbientFor(.spherical);
 
 pub const SphericalAmbient = Round.Vector;
