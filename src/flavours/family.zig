@@ -32,6 +32,20 @@ pub fn euclidean(comptime dimensions: usize) type {
     );
 }
 
+pub fn defaultBindings(comptime DefaultFamily: type, comptime DefaultScalar: type) type {
+    return struct {
+        pub const Family = DefaultFamily;
+        pub const default_scalar = DefaultScalar;
+        pub const Algebra = Family.Algebra;
+
+        pub fn Instantiate(comptime T: type) type {
+            return Family.Instantiate(T);
+        }
+
+        pub const h = Instantiate(DefaultScalar);
+    };
+}
+
 test "family builder exposes named algebra metadata" {
     const Family = withBasisSpans(
         .{ .p = 2, .q = 1, .r = 0 },
@@ -53,4 +67,13 @@ test "euclidean family builder matches default euclidean naming" {
 
     try std.testing.expectEqual(@as(usize, 4), euclidean(4).dimension);
     try std.testing.expectEqual(@as(f32, 4.0), v.coeffNamed("e4"));
+}
+
+test "default bindings expose a canonical family surface" {
+    const Bindings = defaultBindings(euclidean(3), f32);
+    const E3 = Bindings.Instantiate(f32);
+    const v = E3.Vector.init(.{ 1, 2, 3 });
+
+    try std.testing.expectEqual(@as(usize, 3), Bindings.Family.dimension);
+    try std.testing.expectEqual(@as(f32, 3.0), v.coeffNamed("e3"));
 }

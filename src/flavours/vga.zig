@@ -8,13 +8,12 @@ pub fn EuclideanFamily(comptime dimensions: usize) type {
 }
 
 const default_family = EuclideanFamily(2);
-pub const Algebra = default_family.Algebra;
-
-pub fn Instantiate(comptime T: type) type {
-    return default_family.Instantiate(T);
-}
-
-pub const h = Instantiate(f64);
+const bindings = family.defaultBindings(default_family, f64);
+pub const Family = bindings.Family;
+pub const default_scalar = bindings.default_scalar;
+pub const Algebra = bindings.Algebra;
+pub const Instantiate = bindings.Instantiate;
+pub const h = bindings.h;
 
 pub const rotors = ga.rotors;
 

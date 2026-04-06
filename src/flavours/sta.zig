@@ -20,13 +20,12 @@ const basis_spans = ga.BasisIndexSpans.init(.{
 
 const naming_options = ga.SignedBladeNamingOptions.withBasisSpans(basis_spans);
 const default_family = family.withBasisSpans(sig, basis_spans);
-pub const Algebra = default_family.Algebra;
-
-pub fn Instantiate(comptime T: type) type {
-    return default_family.Instantiate(T);
-}
-
-pub const h = Instantiate(f64);
+const bindings = family.defaultBindings(default_family, f64);
+pub const Family = bindings.Family;
+pub const default_scalar = bindings.default_scalar;
+pub const Algebra = bindings.Algebra;
+pub const Instantiate = bindings.Instantiate;
+pub const h = bindings.h;
 
 const Vector = Algebra.Vector(f64);
 const Bivector = Algebra.Bivector(f64);
