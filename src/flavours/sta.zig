@@ -13,13 +13,28 @@ pub const metric_signature = sig;
 /// Ambient dimension of the STA algebra (4).
 pub const dimension = sig.dimension();
 
-const basis_spans = ga.BasisIndexSpans.init(.{
-    .positive = .singleton(0),
-    .negative = .range(1, 3),
-});
+fn minkowskiBasisSpans(comptime positive_dimensions: usize, comptime negative_dimensions: usize) ga.BasisIndexSpans {
+    return ga.BasisIndexSpans.init(.{
+        .positive = if (positive_dimensions == 0) null else .range(0, positive_dimensions - 1),
+        .negative = if (negative_dimensions == 0) null else .range(positive_dimensions, positive_dimensions + negative_dimensions - 1),
+    });
+}
+
+const basis_spans = minkowskiBasisSpans(sig.p, sig.q);
 
 const naming_options = ga.SignedBladeNamingOptions.withBasisSpans(basis_spans);
-const default_family = family.withBasisSpans(sig, basis_spans);
+pub fn MinkowskiFamily(comptime positive_dimensions: usize, comptime negative_dimensions: usize) type {
+    return family.withBasisSpans(
+        .{ .p = positive_dimensions, .q = negative_dimensions, .r = 0 },
+        minkowskiBasisSpans(positive_dimensions, negative_dimensions),
+    );
+}
+
+pub fn SpacetimeFamily(comptime time_dimensions: usize, comptime space_dimensions: usize) type {
+    return MinkowskiFamily(time_dimensions, space_dimensions);
+}
+
+const default_family = SpacetimeFamily(1, 3);
 const bindings = family.defaultBindings(default_family, f64);
 pub const Family = bindings.Family;
 pub const default_scalar = bindings.default_scalar;
@@ -201,6 +216,16 @@ test "sta facade exposes canonical algebra family surface" {
     const H32 = Instantiate(f32);
     try std.testing.expectEqual(@as(f32, 1.0), H32.Basis.e(0).gp(H32.Basis.e(0)).scalarCoeff());
     try std.testing.expectEqual(@as(f32, -1.0), H32.Basis.e(1).gp(H32.Basis.e(1)).scalarCoeff());
+}
+
+test "sta exposes configurable Minkowski families" {
+    const M22 = MinkowskiFamily(2, 2).Instantiate(f32);
+
+    try std.testing.expectEqual(@as(usize, 4), MinkowskiFamily(2, 2).dimension);
+    try std.testing.expectEqual(@as(f32, 1.0), M22.Basis.e(0).gp(M22.Basis.e(0)).scalarCoeff());
+    try std.testing.expectEqual(@as(f32, 1.0), M22.Basis.e(1).gp(M22.Basis.e(1)).scalarCoeff());
+    try std.testing.expectEqual(@as(f32, -1.0), M22.Basis.e(2).gp(M22.Basis.e(2)).scalarCoeff());
+    try std.testing.expectEqual(@as(f32, -1.0), M22.Basis.e(3).gp(M22.Basis.e(3)).scalarCoeff());
 }
 
 test "sta basis vectors square to minkowski signs" {
