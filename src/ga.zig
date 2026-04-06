@@ -18,57 +18,9 @@ pub const BladeAlias = blade_parsing.BladeAlias;
 pub const SignedBladeNamingOptions = blade_parsing.SignedBladeNamingOptions;
 pub const euclideanSignature = blades.euclideanSignature;
 
-pub const choose = blades.choose;
-pub const bladeCount = blades.bladeCount;
-pub const bladeGrade = blades.bladeGrade;
-pub const gradeBladeMasks = blades.gradeBladeMasks;
-pub const evenBladeMasks = blades.evenBladeMasks;
-pub const oddBladeMasks = blades.oddBladeMasks;
-pub const basisVectorMask = blades.basisVectorMask;
-pub const basisBladeMask = blades.basisBladeMask;
-pub const writeBladeMask = blades.writeBladeMask;
-
 pub const isSignedBlade = blade_parsing.isSignedBlade;
 pub const isMultivectorType = multivector.isMultivectorType;
 pub const ensureMultivector = multivector.ensureMultivector;
-
-/// Parses a signed blade name into a canonical spec.
-pub fn parseSignedBlade(
-    comptime name: []const u8,
-    comptime dimension: usize,
-    comptime options: ?SignedBladeNamingOptions,
-    comptime panicking: bool,
-) if (panicking) SignedBladeSpec else SignedBladeParseError!SignedBladeSpec {
-    return blade_parsing.parseSignedBlade(name, dimension, options, panicking);
-}
-
-/// Parses a signed blade name, panicking on failure.
-pub fn expectSignedBlade(
-    comptime name: []const u8,
-    comptime dimension: usize,
-    comptime options: ?SignedBladeNamingOptions,
-) SignedBladeSpec {
-    return parseSignedBlade(name, dimension, options, true);
-}
-
-/// Resolves a named basis index into its sequential internal index.
-pub fn resolveNamedBasisIndex(
-    comptime named_index: usize,
-    comptime dimension: usize,
-    comptime options: ?SignedBladeNamingOptions,
-    comptime panicking: bool,
-) if (panicking) usize else SignedBladeParseError!usize {
-    return blade_parsing.resolveNamedBasisIndex(named_index, dimension, options, panicking);
-}
-
-/// Resolves a named basis index, panicking on failure.
-pub fn expectNamedBasisIndex(
-    comptime named_index: usize,
-    comptime dimension: usize,
-    comptime options: ?SignedBladeNamingOptions,
-) usize {
-    return resolveNamedBasisIndex(named_index, dimension, options, true);
-}
 
 /// Returns a signature-baked algebra namespace for a fixed `Cl(p, q, r)`.
 pub fn Algebra(comptime sig: MetricSignature) type {
@@ -263,8 +215,8 @@ pub const writeMultivector = multivector.writeMultivector;
 test "ga facade exposes core and specialized modules" {
     _ = expression;
 
-    try std.testing.expect(choose(5, 2) == blades.choose(5, 2));
-    try std.testing.expect(bladeCount(3) == blades.bladeCount(3));
+    try std.testing.expectEqual(@as(usize, 10), blades.choose(5, 2));
+    try std.testing.expectEqual(@as(usize, 8), blades.bladeCount(3));
     try std.testing.expect(isSignedBlade("e(1,2)", 2, null));
 
     const sig: MetricSignature = .{ .p = 1, .q = 1 };
@@ -298,11 +250,11 @@ test "algebra naming options can expose span-mapped named indices" {
         .basis_spans = spans,
     };
 
-    const parsed = try parseSignedBlade("e0", sig.dimension(), opts, false);
+    const parsed = try blade_parsing.parseSignedBlade("e0", sig.dimension(), opts, false);
     try std.testing.expectEqual(SignedBladeSpec{ .sign = .positive, .mask = .init(0b1000) }, parsed);
 
     const Cl301 = AlgebraWithNamingOptions(sig, opts);
     const E = Cl301.Basis(f64);
     try std.testing.expect(E.signedBlade("e0").eql(E.e(0)));
-    try std.testing.expectError(error.InvalidBasisIndex, parseSignedBlade("e4", sig.dimension(), opts, false));
+    try std.testing.expectError(error.InvalidBasisIndex, blade_parsing.parseSignedBlade("e4", sig.dimension(), opts, false));
 }

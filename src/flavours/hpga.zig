@@ -76,7 +76,7 @@ pub fn ambientCoords(p: anytype) [4]f32 {
 }
 
 fn namedBasisIndex(comptime named_index: usize) usize {
-    return comptime ga.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
+    return comptime ga.blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
 }
 
 test "hpga signature has expected basis classes" {

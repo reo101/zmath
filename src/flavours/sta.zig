@@ -47,7 +47,7 @@ const Bivector = Algebra.Bivector(f64);
 const Rotor = Algebra.Rotor(f64);
 
 fn namedBasisIndex(comptime named_index: usize) usize {
-    return comptime ga.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
+    return comptime ga.blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
 }
 
 /// Spacetime split of a vector `x` into time and space components relative

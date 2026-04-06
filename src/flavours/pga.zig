@@ -60,7 +60,7 @@ pub const Plane = struct {
 };
 
 fn namedBasisIndex(comptime named_index: usize) usize {
-    return comptime ga.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
+    return comptime ga.blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
 }
 
 /// Converts a PGA multivector (intended to be a rotor) to a 4x4 matrix.
@@ -173,14 +173,14 @@ test "fullSignedBladeFromIndicesWithSignature respects degenerate square" {
 }
 
 test "pga signed blade parser accepts e0 alias for degenerate basis" {
-    const parsed = ga.parseSignedBlade("e0", dimension, naming_options, false);
+    const parsed = ga.blade_parsing.parseSignedBlade("e0", dimension, naming_options, false);
     try std.testing.expectEqual(ga.SignedBladeSpec{ .sign = .positive, .mask = .init(0b1000) }, try parsed);
 
     const E = h.Basis;
     try std.testing.expect(E.signedBlade("e0").eql(E.e(0)));
-    try std.testing.expectError(error.InvalidBasisIndex, ga.resolveNamedBasisIndex(4, dimension, naming_options, false));
-    try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBlade("e4", dimension, naming_options, false));
-    try std.testing.expectError(error.InvalidBasisIndex, ga.parseSignedBlade("e14", dimension, naming_options, false));
+    try std.testing.expectError(error.InvalidBasisIndex, ga.blade_parsing.resolveNamedBasisIndex(4, dimension, naming_options, false));
+    try std.testing.expectError(error.InvalidBasisIndex, ga.blade_parsing.parseSignedBlade("e4", dimension, naming_options, false));
+    try std.testing.expectError(error.InvalidBasisIndex, ga.blade_parsing.parseSignedBlade("e14", dimension, naming_options, false));
 }
 
 test "Point.init correctly constructs trivectors" {
