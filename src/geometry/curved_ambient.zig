@@ -33,11 +33,12 @@ fn AmbientFamily(
         }
 
         pub fn toCoords(v: Vector) Coords4 {
+            const n = v.named();
             return .{
-                @floatCast(v.coeffNamedWithOptions("e0", naming_options)),
-                @floatCast(v.coeffNamedWithOptions("e1", naming_options)),
-                @floatCast(v.coeffNamedWithOptions("e2", naming_options)),
-                @floatCast(v.coeffNamedWithOptions("e3", naming_options)),
+                n.e0,
+                n.e1,
+                n.e2,
+                n.e3,
             };
         }
 
@@ -58,23 +59,23 @@ fn AmbientFamily(
         }
 
         pub fn w(v: Vector) f32 {
-            return toCoords(v)[0];
+            return v.named().e0;
         }
 
         pub fn x(v: Vector) f32 {
-            return toCoords(v)[1];
+            return v.named().e1;
         }
 
         pub fn y(v: Vector) f32 {
-            return toCoords(v)[2];
+            return v.named().e2;
         }
 
         pub fn z(v: Vector) f32 {
-            return toCoords(v)[3];
+            return v.named().e3;
         }
 
         pub fn isFinite(v: Vector) bool {
-            inline for (toCoords(v)) |component| {
+            inline for (v.coeffs) |component| {
                 if (!std.math.isFinite(component)) return false;
             }
             return true;
