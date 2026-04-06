@@ -33,13 +33,12 @@ pub fn EuclideanFamily(comptime euclidean_dimensions: usize) type {
 }
 
 const default_family = EuclideanFamily(3);
-pub const Algebra = default_family.Algebra;
-
-pub fn Instantiate(comptime T: type) type {
-    return default_family.Instantiate(T);
-}
-
-pub const h = Instantiate(f32);
+const bindings = family.defaultBindings(default_family, f32);
+pub const Family = bindings.Family;
+pub const default_scalar = bindings.default_scalar;
+pub const Algebra = bindings.Algebra;
+pub const Instantiate = bindings.Instantiate;
+pub const h = bindings.h;
 
 /// Null basis vectors for the origin and infinity.
 /// n_o = 0.5 * (e_minus - e_plus)
