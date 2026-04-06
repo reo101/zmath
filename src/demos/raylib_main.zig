@@ -17,6 +17,7 @@ const curved = struct {
     pub const ProjectedSample = geometry.curved_types.ProjectedSample;
     pub const Vec3 = geometry.curved_types.Vec3;
     pub const AmbientFor = geometry.curved_types.AmbientFor;
+    pub const Coords4 = geometry.curved_ambient.Coords4;
     pub const HyperView = geometry.curved_view.HyperView;
     pub const EllipticView = geometry.curved_view.EllipticView;
     pub const SphericalView = geometry.curved_view.SphericalView;
@@ -571,6 +572,7 @@ fn roundAmbient(v: anytype) Round.Vector {
     const T = @TypeOf(v);
     return switch (T) {
         Round.Vector => v,
+        curved.Coords4 => Round.fromCoords(v),
         [4]f32 => Round.fromCoords(v),
         else => if (comptime @hasDecl(T, "coeffsArray"))
             Round.fromCoords(v.coeffsArray())

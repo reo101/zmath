@@ -122,10 +122,10 @@ test "signedSphericalAmbient respects scene sign" {
 
     const positive_coords = Round.toCoords(positive);
     const negative_coords = Round.toCoords(negative);
-    try std.testing.expectApproxEqAbs(-positive_coords[0], negative_coords[0], 1e-6);
-    try std.testing.expectApproxEqAbs(-positive_coords[1], negative_coords[1], 1e-6);
-    try std.testing.expectApproxEqAbs(-positive_coords[2], negative_coords[2], 1e-6);
-    try std.testing.expectApproxEqAbs(-positive_coords[3], negative_coords[3], 1e-6);
+    try std.testing.expectApproxEqAbs(-positive_coords.w, negative_coords.w, 1e-6);
+    try std.testing.expectApproxEqAbs(-positive_coords.x, negative_coords.x, 1e-6);
+    try std.testing.expectApproxEqAbs(-positive_coords.y, negative_coords.y, 1e-6);
+    try std.testing.expectApproxEqAbs(-positive_coords.z, negative_coords.z, 1e-6);
 }
 
 test "sphericalGroundFieldExtent covers projected field" {

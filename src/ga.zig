@@ -7,26 +7,15 @@ pub const family = @import("ga/family.zig");
 pub const multivector = @import("ga/multivector.zig");
 pub const rotors = @import("ga/rotors.zig");
 
-pub const BladeMask = blades.BladeMask;
-pub const SignedBladeParseError = blade_parsing.SignedBladeParseError;
-pub const SignedBladeSpec = blades.SignedBladeSpec;
-pub const MetricSignature = blades.MetricSignature;
-pub const SignatureClass = blades.SignatureClass;
-pub const BasisIndexSpan = blades.BasisIndexSpan;
-pub const BasisIndexSpans = blades.BasisIndexSpans;
-pub const BladeAlias = blade_parsing.BladeAlias;
-pub const SignedBladeNamingOptions = blade_parsing.SignedBladeNamingOptions;
 pub const euclideanSignature = blades.euclideanSignature;
 
-pub const isSignedBlade = blade_parsing.isSignedBlade;
-
 /// Returns a signature-baked algebra namespace for a fixed `Cl(p, q, r)`.
-pub fn Algebra(comptime sig: MetricSignature) type {
-    return AlgebraWithNamingOptions(sig, SignedBladeNamingOptions.fromSignature(sig));
+pub fn Algebra(comptime sig: blades.MetricSignature) type {
+    return AlgebraWithNamingOptions(sig, blade_parsing.SignedBladeNamingOptions.fromSignature(sig));
 }
 
 /// Returns a signature-baked algebra namespace with naming options.
-pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_options: SignedBladeNamingOptions) type {
+pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime naming_options: blade_parsing.SignedBladeNamingOptions) type {
     return struct {
         pub const Self = @This();
         pub const metric_signature = sig;
@@ -34,7 +23,7 @@ pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_o
         pub const naming = naming_options;
 
         /// Generic multivector type for this algebra.
-        pub fn Multivector(comptime T: type, comptime blade_masks: []const BladeMask) type {
+        pub fn Multivector(comptime T: type, comptime blade_masks: []const blades.BladeMask) type {
             return multivector.MultivectorWithNaming(T, blade_masks, metric_signature, naming);
         }
 
@@ -88,7 +77,7 @@ pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_o
         /// Constructs a unit basis blade from a mask.
         pub fn basisBlade(
             comptime T: type,
-            comptime mask: BladeMask,
+            comptime mask: blades.BladeMask,
         ) Self.Multivector(T, &.{mask}) {
             return Self.Multivector(T, &.{mask}).init(.{1});
         }
@@ -134,7 +123,7 @@ pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_o
                 pub const Basis = Self.Basis(T);
 
                 /// Constructs a unit basis blade from a mask.
-                pub fn basisBlade(comptime mask: BladeMask) Self.Multivector(T, &.{mask}) {
+                pub fn basisBlade(comptime mask: blades.BladeMask) Self.Multivector(T, &.{mask}) {
                     return Self.basisBlade(T, mask);
                 }
 
@@ -212,9 +201,9 @@ test "ga facade exposes core and specialized modules" {
 
     try std.testing.expectEqual(@as(usize, 10), blades.choose(5, 2));
     try std.testing.expectEqual(@as(usize, 8), blades.bladeCount(3));
-    try std.testing.expect(isSignedBlade("e(1,2)", 2, null));
+    try std.testing.expect(blade_parsing.isSignedBlade("e(1,2)", 2, null));
 
-    const sig: MetricSignature = .{ .p = 1, .q = 1 };
+    const sig: blades.MetricSignature = .{ .p = 1, .q = 1 };
     const value = multivector.fullSignedBladeFromIndicesWithSignature(i32, sig, &.{ 2, 2 });
     try std.testing.expectEqual(@as(i32, -1), value.scalarCoeff());
 
@@ -227,7 +216,7 @@ test "ga facade exposes core and specialized modules" {
 }
 
 test "signature-baked algebra namespace drives metric-dependent products" {
-    const Minkowski11: MetricSignature = .{ .p = 1, .q = 1 };
+    const Minkowski11: blades.MetricSignature = .{ .p = 1, .q = 1 };
     const Cl11 = Algebra(Minkowski11);
 
     const e2 = Cl11.Basis(i32).e(2);
@@ -236,17 +225,17 @@ test "signature-baked algebra namespace drives metric-dependent products" {
 }
 
 test "algebra naming options can expose span-mapped named indices" {
-    const sig: MetricSignature = .{ .p = 3, .q = 0, .r = 1 };
-    const spans = comptime BasisIndexSpans.init(.{
+    const sig: blades.MetricSignature = .{ .p = 3, .q = 0, .r = 1 };
+    const spans = comptime blades.BasisIndexSpans.init(.{
         .positive = .range(1, 3),
         .degenerate = .singleton(0),
     });
-    const opts = comptime SignedBladeNamingOptions{
+    const opts = comptime blade_parsing.SignedBladeNamingOptions{
         .basis_spans = spans,
     };
 
     const parsed = try blade_parsing.parseSignedBlade("e0", sig.dimension(), opts, false);
-    try std.testing.expectEqual(SignedBladeSpec{ .sign = .positive, .mask = .init(0b1000) }, parsed);
+    try std.testing.expectEqual(blades.SignedBladeSpec{ .sign = .positive, .mask = .init(0b1000) }, parsed);
 
     const Cl301 = AlgebraWithNamingOptions(sig, opts);
     const E = Cl301.Basis(f64);
