@@ -1,7 +1,21 @@
 const std = @import("std");
 const canvas_api = @import("canvas.zig");
-const curved = @import("../geometry/constant_curvature.zig");
+const geometry = @import("../geometry.zig");
+const curved_projection = @import("curved_projection.zig");
 const ga = @import("../ga.zig");
+
+const curved = struct {
+    pub const Metric = geometry.curved_types.Metric;
+    pub const Vec3 = geometry.curved_types.Vec3;
+    pub const Screen = geometry.curved_types.Screen;
+    pub const SampleStatus = geometry.curved_types.SampleStatus;
+    pub const HyperView = geometry.curved_view.HyperView;
+    pub const EllipticView = geometry.curved_view.EllipticView;
+    pub const SphericalView = geometry.curved_view.SphericalView;
+    pub const vec3 = geometry.curved_charts.vec3;
+    pub const flatBilerpQuad = geometry.curved_charts.flatBilerpQuad;
+    pub const shouldBreakProjectedSegment = curved_projection.shouldBreakProjectedSegment;
+};
 
 const Flat3 = ga.Algebra(ga.euclideanSignature(3)).Instantiate(f32);
 

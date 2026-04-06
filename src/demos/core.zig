@@ -3,8 +3,25 @@ const zmath = @import("zmath");
 const canvas_api = zmath.render.canvas;
 const curved_canvas_renderer = zmath.render.curved_canvas;
 const curved_navigator_renderer = zmath.render.curved_navigator;
+const curved_projection = zmath.render.curved_projection;
 const projection = zmath.render.projection;
-const curved = zmath.geometry.constant_curvature;
+const geometry = zmath.geometry;
+const curved = struct {
+    pub const Metric = geometry.curved_types.Metric;
+    pub const Params = geometry.curved_types.Params;
+    pub const Screen = geometry.curved_types.Screen;
+    pub const SampleStatus = geometry.curved_types.SampleStatus;
+    pub const Vec3 = geometry.curved_types.Vec3;
+    pub const AmbientFor = geometry.curved_types.AmbientFor;
+    pub const HyperView = geometry.curved_view.HyperView;
+    pub const EllipticView = geometry.curved_view.EllipticView;
+    pub const SphericalView = geometry.curved_view.SphericalView;
+    pub const vec3 = geometry.curved_charts.vec3;
+    pub const vec3Coords = geometry.curved_charts.vec3Coords;
+    pub const chartCoordsTyped = geometry.curved_charts.chartCoords;
+    pub const sphericalAmbientFromGroundHeightPoint = geometry.curved_surface.sphericalAmbientFromGroundHeightPoint;
+    pub const shouldBreakProjectedSegment = curved_projection.shouldBreakProjectedSegment;
+};
 const HyperAmbient = curved.AmbientFor(.hyperbolic);
 const RoundAmbient = curved.AmbientFor(.spherical);
 

@@ -4,9 +4,32 @@ const canvas_api = zmath.render.canvas;
 const curved_navigator = zmath.render.curved_navigator;
 const curved_ground = zmath.render.curved_ground;
 const curved_navigator_geometry = zmath.render.curved_navigator_geometry;
+const curved_projection = zmath.render.curved_projection;
 const projection = zmath.render.projection;
 const sdf = zmath.render.sdf;
-const curved = zmath.geometry.constant_curvature;
+const geometry = zmath.geometry;
+const curved = struct {
+    pub const Metric = geometry.curved_types.Metric;
+    pub const Params = geometry.curved_types.Params;
+    pub const DistanceClip = geometry.curved_types.DistanceClip;
+    pub const Screen = geometry.curved_types.Screen;
+    pub const SampleStatus = geometry.curved_types.SampleStatus;
+    pub const ProjectedSample = geometry.curved_types.ProjectedSample;
+    pub const Vec3 = geometry.curved_types.Vec3;
+    pub const AmbientFor = geometry.curved_types.AmbientFor;
+    pub const HyperView = geometry.curved_view.HyperView;
+    pub const EllipticView = geometry.curved_view.EllipticView;
+    pub const SphericalView = geometry.curved_view.SphericalView;
+    pub const SphericalRenderPass = geometry.curved_view.SphericalRenderPass;
+    pub const vec3 = geometry.curved_charts.vec3;
+    pub const vec3x = geometry.curved_charts.vec3x;
+    pub const vec3y = geometry.curved_charts.vec3y;
+    pub const vec3z = geometry.curved_charts.vec3z;
+    pub const flatLerp3 = geometry.curved_charts.flatLerp3;
+    pub const ambientFromTypedTangentBasisPoint = geometry.curved_surface.ambientFromTypedTangentBasisPoint;
+    pub const sampleProjectedModelPoint = geometry.curved_sampling.sampleProjectedModelPoint;
+    pub const shouldBreakProjectedSegment = curved_projection.shouldBreakProjectedSegment;
+};
 const Round = curved.AmbientFor(.spherical);
 const demo = @import("core.zig");
 const euclidean_sdf_renderer = @import("euclidean_sdf.zig");
@@ -621,91 +644,6 @@ fn nativeStrokeColor(fill: rl.Color, avg_depth: f32) rl.Color {
     return colorWithAlpha(mixColor(fill, white, 0.28 - depth_t * 0.10), 255);
 }
 
-const EuclideanSdfScene = struct {
-    projection_mode: projection.EuclideanProjection,
-    zoom: f32,
-    eye: sdf.Vec3,
-    right: sdf.Vec3,
-    up: sdf.Vec3,
-    forward: sdf.Vec3,
-    cube_half_extent: f32,
-    cube_inverse_rotor: demo.H.Rotor,
-
-    fn worldToCubeLocal(self: *const EuclideanSdfScene, point: sdf.Vec3) sdf.Vec3 {
-        return sdfVec3FromVector(zmath.ga.rotors.rotated(vectorFromSdfVec3(point), self.cube_inverse_rotor));
-    }
-
-    fn sample(self: *const EuclideanSdfScene, point: sdf.Vec3) sdf.Sample {
-        return .{
-            .distance = sdf.box(self.worldToCubeLocal(point), sdf.Vec3.init(.{
-                self.cube_half_extent,
-                self.cube_half_extent,
-                self.cube_half_extent,
-            })),
-            .material = 1,
-        };
-    }
-};
-
-fn sdfVec3FromVector(v: demo.H.Vector) sdf.Vec3 {
-    return sdf.Vec3.init(.{ v.coeffNamed("e1"), v.coeffNamed("e2"), v.coeffNamed("e3") });
-}
-
-fn vectorFromSdfVec3(v: sdf.Vec3) demo.H.Vector {
-    return demo.H.Vector.init(.{ v.named().e1, v.named().e2, v.named().e3 });
-}
-
-fn euclideanSdfScene(scene: demo.EuclideanScene) EuclideanSdfScene {
-    return .{
-        .projection_mode = scene.projection_mode,
-        .zoom = scene.zoom,
-        .eye = sdfVec3FromVector(scene.eye),
-        .right = sdfVec3FromVector(scene.right),
-        .up = sdfVec3FromVector(scene.up),
-        .forward = sdfVec3FromVector(scene.forward),
-        .cube_half_extent = scene.cube_scale,
-        .cube_inverse_rotor = scene.cube_rotor.reverse(),
-    };
-}
-
-fn sampleEuclideanSdfScene(scene: *const EuclideanSdfScene, point: sdf.Vec3) sdf.Sample {
-    return scene.sample(point);
-}
-
-fn normalizeSdfVec3(v: sdf.Vec3) sdf.Vec3 {
-    const length = v.magnitude();
-    if (length <= 1e-6) return sdf.Vec3.init(.{ 0.0, 0.0, 1.0 });
-    return v.scale(1.0 / length);
-}
-
-fn euclideanSdfRay(scene: EuclideanSdfScene, sample_x: usize, sample_y: usize) sdf.Ray {
-    const x_canvas = (@as(f32, @floatFromInt(sample_x)) + 0.5) / @as(f32, @floatFromInt(subpixel_x));
-    const y_canvas = (@as(f32, @floatFromInt(sample_y)) + 0.5) / @as(f32, @floatFromInt(subpixel_y));
-    const width_f = @as(f32, @floatFromInt(canvas_width));
-    const height_f = @as(f32, @floatFromInt(canvas_height));
-    const aspect = width_f / (height_f * 2.0);
-    const x_ndc = x_canvas / (width_f * 0.5) - 1.0;
-    const y_ndc = 1.0 - y_canvas / (height_f * 0.5);
-    const depth_offset = projection.euclideanProjectionDepthOffset(scene.projection_mode);
-    const x_plane = x_ndc * aspect * depth_offset / scene.zoom;
-    const y_plane = y_ndc * depth_offset / scene.zoom;
-    const plane_point = scene.eye.add(scene.right.scale(x_plane)).add(scene.up.scale(y_plane));
-
-    return switch (scene.projection_mode) {
-        .perspective => {
-            const origin = scene.eye.sub(scene.forward.scale(depth_offset));
-            return .{
-                .origin = origin,
-                .direction = normalizeSdfVec3(plane_point.sub(origin)),
-            };
-        },
-        .isometric => .{
-            .origin = plane_point.sub(scene.forward.scale(demo.far_clip_z + depth_offset)),
-            .direction = scene.forward,
-        },
-    };
-}
-
 fn cubeFaceIndexFromLocalNormal(normal: sdf.Vec3) usize {
     const ax = @abs(normal.named().e1);
     const ay = @abs(normal.named().e2);
@@ -715,12 +653,12 @@ fn cubeFaceIndexFromLocalNormal(normal: sdf.Vec3) usize {
     return if (normal.named().e3 >= 0.0) 4 else 5;
 }
 
-fn euclideanViewDepth(scene: EuclideanSdfScene, point: sdf.Vec3) f32 {
-    return point.sub(scene.eye).scalarProduct(scene.forward);
-}
-
 fn nativeEuclideanSdfColor(face_index: usize, normal: sdf.Vec3, depth: f32, steps: usize) rl.Color {
-    var fill = nativeFaceColor(face_index, vectorFromSdfVec3(normal), depth);
+    var fill = nativeFaceColor(
+        face_index,
+        demo.H.Vector.init(.{ normal.named().e1, normal.named().e2, normal.named().e3 }),
+        depth,
+    );
     const march_t = std.math.clamp(@as(f32, @floatFromInt(steps)) / 72.0, 0.0, 1.0);
     fill = mixColor(fill, white, 0.06 * (1.0 - march_t));
     fill.a = 255;

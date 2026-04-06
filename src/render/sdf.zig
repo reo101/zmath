@@ -4,54 +4,30 @@ const curved_ambient = @import("../geometry/curved_ambient.zig");
 const Flat3 = curved_ambient.Flat3;
 pub const Vec3 = Flat3.Vector;
 
-fn vec3(x_value: f32, y_value: f32, z_value: f32) Vec3 {
-    return Vec3.init(.{ x_value, y_value, z_value });
-}
-
-fn splat(value: f32) Vec3 {
-    return vec3(value, value, value);
-}
-
-fn coords(v: Vec3) [3]f32 {
-    return v.coeffsArray();
-}
-
-fn x(v: Vec3) f32 {
-    return coords(v)[0];
-}
-
-fn y(v: Vec3) f32 {
-    return coords(v)[1];
-}
-
-fn z(v: Vec3) f32 {
-    return coords(v)[2];
-}
-
-fn normalized(v: Vec3) Vec3 {
+fn normalizeOr(v: Vec3, fallback: Vec3) Vec3 {
     const length = v.magnitude();
-    if (length <= 1e-6) return vec3(0.0, 0.0, 1.0);
+    if (length <= 1e-6) return fallback;
     return v.scale(1.0 / length);
 }
 
-fn abs(v: Vec3) Vec3 {
-    const c = coords(v);
-    return vec3(@abs(c[0]), @abs(c[1]), @abs(c[2]));
+fn absVec(v: Vec3) Vec3 {
+    const n = v.named();
+    return Vec3.init(.{ @abs(n.e1), @abs(n.e2), @abs(n.e3) });
 }
 
-fn max(a: Vec3, b: Vec3) Vec3 {
-    const ac = coords(a);
-    const bc = coords(b);
-    return vec3(
-        @max(ac[0], bc[0]),
-        @max(ac[1], bc[1]),
-        @max(ac[2], bc[2]),
-    );
+fn maxVec(a: Vec3, b: Vec3) Vec3 {
+    const an = a.named();
+    const bn = b.named();
+    return Vec3.init(.{
+        @max(an.e1, bn.e1),
+        @max(an.e2, bn.e2),
+        @max(an.e3, bn.e3),
+    });
 }
 
 fn maxComponent(v: Vec3) f32 {
-    const c = coords(v);
-    return @max(c[0], @max(c[1], c[2]));
+    const n = v.named();
+    return @max(n.e1, @max(n.e2, n.e3));
 }
 
 pub const Ray = struct {
@@ -89,15 +65,16 @@ pub fn sphere(point: Vec3, radius: f32) f32 {
 }
 
 pub fn box(point: Vec3, half_extent: Vec3) f32 {
-    const q = abs(point).sub(half_extent);
-    const outside = max(q, splat(0.0)).magnitude();
+    const q = absVec(point).sub(half_extent);
+    const outside = maxVec(q, Vec3.init(.{ 0.0, 0.0, 0.0 })).magnitude();
     const inside = @min(maxComponent(q), 0.0);
     return outside + inside;
 }
 
 pub fn torus(point: Vec3, major_radius: f32, minor_radius: f32) f32 {
-    const qx = @sqrt(x(point) * x(point) + y(point) * y(point)) - major_radius;
-    return @sqrt(qx * qx + z(point) * z(point)) - minor_radius;
+    const n = point.named();
+    const qx = @sqrt(n.e1 * n.e1 + n.e2 * n.e2) - major_radius;
+    return @sqrt(qx * qx + n.e3 * n.e3) - minor_radius;
 }
 
 pub fn plane(point: Vec3, unit_normal: Vec3, offset: f32) f32 {
@@ -136,19 +113,19 @@ pub fn rotate2(v: [2]f32, angle: f32) [2]f32 {
 pub fn estimateNormal(scene_fn: anytype, point: Vec3, epsilon: f32) Vec3 {
     const e = epsilon;
     const center = scene_fn(point).distance;
-    const nx = center - scene_fn(point.sub(vec3(e, 0.0, 0.0))).distance;
-    const ny = center - scene_fn(point.sub(vec3(0.0, e, 0.0))).distance;
-    const nz = center - scene_fn(point.sub(vec3(0.0, 0.0, e))).distance;
-    return normalized(vec3(nx, ny, nz));
+    const nx = center - scene_fn(point.sub(Vec3.init(.{ e, 0.0, 0.0 }))).distance;
+    const ny = center - scene_fn(point.sub(Vec3.init(.{ 0.0, e, 0.0 }))).distance;
+    const nz = center - scene_fn(point.sub(Vec3.init(.{ 0.0, 0.0, e }))).distance;
+    return normalizeOr(Vec3.init(.{ nx, ny, nz }), Vec3.init(.{ 0.0, 0.0, 1.0 }));
 }
 
 pub fn estimateNormalWith(scene_fn: anytype, ctx: anytype, point: Vec3, epsilon: f32) Vec3 {
     const e = epsilon;
     const center = scene_fn(ctx, point).distance;
-    const nx = center - scene_fn(ctx, point.sub(vec3(e, 0.0, 0.0))).distance;
-    const ny = center - scene_fn(ctx, point.sub(vec3(0.0, e, 0.0))).distance;
-    const nz = center - scene_fn(ctx, point.sub(vec3(0.0, 0.0, e))).distance;
-    return normalized(vec3(nx, ny, nz));
+    const nx = center - scene_fn(ctx, point.sub(Vec3.init(.{ e, 0.0, 0.0 }))).distance;
+    const ny = center - scene_fn(ctx, point.sub(Vec3.init(.{ 0.0, e, 0.0 }))).distance;
+    const nz = center - scene_fn(ctx, point.sub(Vec3.init(.{ 0.0, 0.0, e }))).distance;
+    return normalizeOr(Vec3.init(.{ nx, ny, nz }), Vec3.init(.{ 0.0, 0.0, 1.0 }));
 }
 
 pub fn raymarch(scene_fn: anytype, ray: Ray, options: MarchOptions) ?Hit {
@@ -194,17 +171,17 @@ pub fn raymarchWith(scene_fn: anytype, ctx: anytype, ray: Ray, options: MarchOpt
 }
 
 test "sphere sdf is negative inside and zero on surface" {
-    try std.testing.expectApproxEqAbs(@as(f32, -1.5), sphere(vec3(0.0, 0.0, 0.0), 1.5), 1e-6);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.0), sphere(vec3(0.0, 0.0, 1.5), 1.5), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, -1.5), sphere(Vec3.init(.{ 0.0, 0.0, 0.0 }), 1.5), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), sphere(Vec3.init(.{ 0.0, 0.0, 1.5 }), 1.5), 1e-6);
 }
 
 test "box sdf matches exact axis-aligned box distance" {
-    try std.testing.expectApproxEqAbs(@as(f32, 0.0), box(vec3(1.0, 0.25, -0.5), splat(1.0)), 1e-6);
-    try std.testing.expectApproxEqAbs(@as(f32, 1.0), box(vec3(2.0, 0.0, 0.0), splat(1.0)), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), box(Vec3.init(.{ 1.0, 0.25, -0.5 }), Vec3.init(.{ 1.0, 1.0, 1.0 })), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), box(Vec3.init(.{ 2.0, 0.0, 0.0 }), Vec3.init(.{ 1.0, 1.0, 1.0 })), 1e-6);
 }
 
 test "torus sdf reaches zero on major ring surface" {
-    try std.testing.expectApproxEqAbs(@as(f32, 0.0), torus(vec3(0.5, 0.0, 0.0), 0.4, 0.1), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), torus(Vec3.init(.{ 0.5, 0.0, 0.0 }), 0.4, 0.1), 1e-6);
 }
 
 test "union keeps the nearer material" {
@@ -223,8 +200,8 @@ test "raymarch hits a sphere" {
     };
 
     const ray = Ray{
-        .origin = vec3(0.0, 0.0, -3.0),
-        .direction = vec3(0.0, 0.0, 1.0),
+        .origin = Vec3.init(.{ 0.0, 0.0, -3.0 }),
+        .direction = Vec3.init(.{ 0.0, 0.0, 1.0 }),
     };
     const hit = raymarch(scene.sample, ray, .{}) orelse return error.ExpectedHit;
     try std.testing.expectApproxEqAbs(@as(f32, 2.0), hit.distance, 0.02);

@@ -1,6 +1,23 @@
 const std = @import("std");
-const curved = @import("../geometry/constant_curvature.zig");
+const geometry = @import("../geometry.zig");
 const projection = @import("projection.zig");
+
+const curved = struct {
+    pub const Metric = geometry.curved_types.Metric;
+    pub const Screen = geometry.curved_types.Screen;
+    pub const Vec3 = geometry.curved_types.Vec3;
+    pub const SphericalRenderPass = geometry.curved_view.SphericalRenderPass;
+    pub const HyperView = geometry.curved_view.HyperView;
+    pub const EllipticView = geometry.curved_view.EllipticView;
+    pub const SphericalView = geometry.curved_view.SphericalView;
+    pub const AmbientFor = geometry.curved_types.AmbientFor;
+    pub const TypedCamera = geometry.curved_types.TypedCamera;
+    pub const ambientFromTypedTangentBasisPoint = geometry.curved_surface.ambientFromTypedTangentBasisPoint;
+    pub const vec3 = geometry.curved_charts.vec3;
+    pub const vec3x = geometry.curved_charts.vec3x;
+    pub const vec3y = geometry.curved_charts.vec3y;
+    pub const vec3z = geometry.curved_charts.vec3z;
+};
 const Round = curved.AmbientFor(.spherical);
 
 pub fn TypedGroundBasis(comptime metric: curved.Metric) type {
@@ -13,13 +30,6 @@ pub fn TypedGroundBasis(comptime metric: curved.Metric) type {
     };
 }
 
-const ErasedGroundBasis = struct {
-    origin: [4]f32,
-    right: [4]f32,
-    forward: [4]f32,
-    up: [4]f32,
-};
-
 pub const HyperGroundBasis = TypedGroundBasis(.hyperbolic);
 pub const EllipticGroundBasis = TypedGroundBasis(.elliptic);
 pub const SphericalGroundBasis = TypedGroundBasis(.spherical);
@@ -30,29 +40,10 @@ pub const SphericalGroundHit = struct {
     forward: f32,
 };
 
-fn ambientCoords(v: anytype) [4]f32 {
-    return if (@TypeOf(v) == [4]f32) v else v.coeffsArray();
-}
-
-fn erasedGroundBasis(basis: anytype) ErasedGroundBasis {
-    return .{
-        .origin = ambientCoords(basis.origin),
-        .right = ambientCoords(basis.right),
-        .forward = ambientCoords(basis.forward),
-        .up = ambientCoords(basis.up),
-    };
-}
-
 pub fn sphericalGroundBasis(basis: anytype) SphericalGroundBasis {
     return switch (@TypeOf(basis)) {
         SphericalGroundBasis => basis,
-        ErasedGroundBasis => .{
-            .origin = Round.fromCoords(basis.origin),
-            .right = Round.fromCoords(basis.right),
-            .forward = Round.fromCoords(basis.forward),
-            .up = Round.fromCoords(basis.up),
-        },
-        else => sphericalGroundBasis(erasedGroundBasis(basis)),
+        else => @compileError("expected `SphericalGroundBasis`"),
     };
 }
 
@@ -155,21 +146,6 @@ pub fn ambientPointForBasis(
         },
         else => unreachable,
     }
-}
-
-fn signedGroundBasisForView(view: anytype, basis: ErasedGroundBasis) ErasedGroundBasis {
-    switch (@TypeOf(view)) {
-        curved.SphericalView => if (view.scene_sign < 0.0) {
-            return .{
-                .origin = .{ -basis.origin[0], -basis.origin[1], -basis.origin[2], -basis.origin[3] },
-                .right = .{ -basis.right[0], -basis.right[1], -basis.right[2], -basis.right[3] },
-                .forward = .{ -basis.forward[0], -basis.forward[1], -basis.forward[2], -basis.forward[3] },
-                .up = .{ -basis.up[0], -basis.up[1], -basis.up[2], -basis.up[3] },
-            };
-        },
-        else => {},
-    }
-    return basis;
 }
 
 pub fn signedSphericalGroundBasisForView(view: anytype, basis: SphericalGroundBasis) SphericalGroundBasis {
@@ -294,25 +270,6 @@ test "inverse screen directions point forward at screen center" {
     try std.testing.expectApproxEqAbs(0.0, curved.vec3x(wrapped), 1e-6);
     try std.testing.expectApproxEqAbs(0.0, curved.vec3y(wrapped), 1e-6);
     try std.testing.expectApproxEqAbs(1.0, curved.vec3z(wrapped), 1e-6);
-}
-
-test "signedGroundBasisForView flips spherical negative scene" {
-    var view = try curved.SphericalView.init(
-        .{ .radius = 1.48, .angular_zoom = 1.0, .chart_model = .conformal },
-        .stereographic,
-        .{ .near = 0.08, .far = std.math.inf(f32) },
-        curved.vec3(0.0, 0.0, -0.82),
-        curved.vec3(0.0, 0.0, 0.0),
-    );
-    const basis = erasedGroundBasis(typedWorldGroundBasis(.hyperbolic));
-    const positive = signedGroundBasisForView(view, basis);
-    view.scene_sign = -1.0;
-    const negative = signedGroundBasisForView(view, basis);
-
-    try std.testing.expectApproxEqAbs(-positive.origin[0], negative.origin[0], 1e-6);
-    try std.testing.expectApproxEqAbs(-positive.right[1], negative.right[1], 1e-6);
-    try std.testing.expectApproxEqAbs(-positive.forward[3], negative.forward[3], 1e-6);
-    try std.testing.expectApproxEqAbs(-positive.up[2], negative.up[2], 1e-6);
 }
 
 test "signedSphericalGroundBasisForView flips spherical negative scene" {
