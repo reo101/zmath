@@ -32,14 +32,72 @@ pub fn euclidean(comptime dimensions: usize) type {
     );
 }
 
+fn homogeneousSpans(
+    comptime first_positive_index: usize,
+    comptime positive_dimensions: usize,
+    comptime negative_index: ?usize,
+    comptime degenerate_index: ?usize,
+) ga.BasisIndexSpans {
+    return ga.BasisIndexSpans.init(.{
+        .positive = if (positive_dimensions == 0) null else .range(first_positive_index, first_positive_index + positive_dimensions - 1),
+        .negative = if (negative_index) |index| .singleton(index) else null,
+        .degenerate = if (degenerate_index) |index| .singleton(index) else null,
+    });
+}
+
+pub fn minkowski(comptime positive_dimensions: usize, comptime negative_dimensions: usize) type {
+    return withBasisSpans(
+        .{ .p = positive_dimensions, .q = negative_dimensions, .r = 0 },
+        ga.BasisIndexSpans.init(.{
+            .positive = if (positive_dimensions == 0) null else .range(0, positive_dimensions - 1),
+            .negative = if (negative_dimensions == 0) null else .range(positive_dimensions, positive_dimensions + negative_dimensions - 1),
+        }),
+    );
+}
+
+pub fn projectiveEuclidean(comptime euclidean_dimensions: usize) type {
+    return withBasisSpans(
+        .{ .p = euclidean_dimensions, .q = 0, .r = 1 },
+        homogeneousSpans(1, euclidean_dimensions, null, 0),
+    );
+}
+
+pub fn projectiveHyperbolic(comptime euclidean_dimensions: usize) type {
+    return withBasisSpans(
+        .{ .p = euclidean_dimensions, .q = 1, .r = 0 },
+        homogeneousSpans(1, euclidean_dimensions, 0, null),
+    );
+}
+
+pub fn projectiveElliptic(comptime euclidean_dimensions: usize) type {
+    return withBasisSpans(
+        .{ .p = euclidean_dimensions + 1, .q = 0, .r = 0 },
+        homogeneousSpans(0, euclidean_dimensions + 1, null, null),
+    );
+}
+
+pub fn conformalEuclidean(comptime euclidean_dimensions: usize) type {
+    return withBasisSpans(
+        .{ .p = euclidean_dimensions + 1, .q = 1, .r = 0 },
+        homogeneousSpans(1, euclidean_dimensions + 1, euclidean_dimensions + 2, null),
+    );
+}
+
 pub fn defaultBindings(comptime DefaultFamily: type, comptime DefaultScalar: type) type {
     return struct {
         pub const Family = DefaultFamily;
         pub const default_scalar = DefaultScalar;
+        pub const metric_signature = Family.metric_signature;
+        pub const dimension = Family.dimension;
+        pub const naming_options = Family.naming_options;
         pub const Algebra = Family.Algebra;
 
         pub fn Instantiate(comptime T: type) type {
             return Family.Instantiate(T);
+        }
+
+        pub fn resolveNamedBasisIndex(comptime named_index: usize) usize {
+            return comptime ga.blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
         }
 
         pub const h = Instantiate(DefaultScalar);
@@ -76,4 +134,26 @@ test "default bindings expose a canonical family surface" {
 
     try std.testing.expectEqual(@as(usize, 3), Bindings.Family.dimension);
     try std.testing.expectEqual(@as(f32, 3.0), v.coeffNamed("e3"));
+}
+
+test "minkowski family exposes split basis spans" {
+    const M22 = minkowski(2, 2).Instantiate(f32);
+
+    try std.testing.expectEqual(@as(usize, 4), minkowski(2, 2).dimension);
+    try std.testing.expectEqual(@as(f32, 1.0), M22.Basis.e(0).gp(M22.Basis.e(0)).scalarCoeff());
+    try std.testing.expectEqual(@as(f32, 1.0), M22.Basis.e(1).gp(M22.Basis.e(1)).scalarCoeff());
+    try std.testing.expectEqual(@as(f32, -1.0), M22.Basis.e(2).gp(M22.Basis.e(2)).scalarCoeff());
+    try std.testing.expectEqual(@as(f32, -1.0), M22.Basis.e(3).gp(M22.Basis.e(3)).scalarCoeff());
+}
+
+test "projective families expose expected homogeneous coordinates" {
+    const P3 = projectiveEuclidean(3).Instantiate(f32);
+    const H3 = projectiveHyperbolic(3).Instantiate(f32);
+    const E3 = projectiveElliptic(3).Instantiate(f32);
+    const C3 = conformalEuclidean(3).Instantiate(f32);
+
+    try std.testing.expectEqual(@as(f32, 0.0), P3.Basis.basisVectorByClass(.degenerate, 1).gp(P3.Basis.basisVectorByClass(.degenerate, 1)).scalarCoeff());
+    try std.testing.expectEqual(@as(f32, -1.0), H3.Basis.basisVectorByClass(.negative, 1).gp(H3.Basis.basisVectorByClass(.negative, 1)).scalarCoeff());
+    try std.testing.expectEqual(@as(f32, 1.0), E3.Basis.basisVectorByClass(.positive, 1).gp(E3.Basis.basisVectorByClass(.positive, 1)).scalarCoeff());
+    try std.testing.expectEqual(@as(f32, -1.0), C3.Basis.basisVectorByClass(.negative, 1).gp(C3.Basis.basisVectorByClass(.negative, 1)).scalarCoeff());
 }
