@@ -1,7 +1,7 @@
 const std = @import("std");
 
 pub const ga = @import("../ga.zig");
-const family = @import("family.zig");
+const family = @import("../ga/family.zig");
 
 pub const MetricSignature = ga.MetricSignature;
 

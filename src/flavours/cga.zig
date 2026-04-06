@@ -1,6 +1,6 @@
 const std = @import("std");
 const ga = @import("../ga.zig");
-const family = @import("family.zig");
+const family = @import("../ga/family.zig");
 
 /// CGA signature `Cl(4, 1, 0)`: four positive basis vectors and one negative.
 /// Typically used to model 3D Euclidean space conformally.

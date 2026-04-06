@@ -1,4 +1,4 @@
-pub const family = @import("flavours/family.zig");
+pub const family = @import("ga/family.zig");
 pub const vga = @import("flavours/vga.zig");
 pub const pga = @import("flavours/pga.zig");
 pub const hpga = @import("flavours/hpga.zig");
