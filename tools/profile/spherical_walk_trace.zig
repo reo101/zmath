@@ -2,7 +2,7 @@ const std = @import("std");
 const zmath = @import("zmath");
 const demo = @import("demo_core");
 
-const curved = zmath.geometry.constant_curvature;
+const curved = zmath.geometry.curved;
 
 const screen_width: usize = 160;
 const screen_height: usize = 90;
