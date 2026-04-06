@@ -3,7 +3,7 @@ const std = @import("std");
 pub const ga = @import("../ga.zig");
 const family = @import("../ga/family.zig");
 
-pub const MetricSignature = ga.MetricSignature;
+pub const MetricSignature = ga.blades.MetricSignature;
 
 /// Elliptic projective algebra signature `Cl(4, 0, 0)`: four positive basis
 /// vectors with homogeneous naming `e0..e3`.

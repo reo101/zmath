@@ -10,7 +10,7 @@ pub fn zero(comptime metric: Metric) AmbientFor(metric).Vector {
     return Ambient.scale(Ambient.identity(), 0.0);
 }
 
-pub fn basisVector(comptime metric: Metric, coords: [4]f32) AmbientFor(metric).Vector {
+pub fn basisVector(comptime metric: Metric, coords: anytype) AmbientFor(metric).Vector {
     return AmbientFor(metric).fromCoords(coords);
 }
 
@@ -90,6 +90,8 @@ test "ambient normalization falls back to the model identity on non-finite input
     const hyper = AmbientFor(.hyperbolic).toCoords(normalizeAmbient(.hyperbolic, AmbientFor(.hyperbolic).fromCoords(.{ nan, 0.0, 0.0, 0.0 })));
     const round = AmbientFor(.spherical).toCoords(normalizeAmbient(.spherical, AmbientFor(.spherical).fromCoords(.{ 0.0, nan, 0.0, 0.0 })));
 
-    try std.testing.expectEqualSlices(f32, &.{ 1.0, 0.0, 0.0, 0.0 }, &hyper);
-    try std.testing.expectEqualSlices(f32, &.{ 1.0, 0.0, 0.0, 0.0 }, &round);
+    const hyper_array = hyper.asArray();
+    const round_array = round.asArray();
+    try std.testing.expectEqualSlices(f32, &.{ 1.0, 0.0, 0.0, 0.0 }, &hyper_array);
+    try std.testing.expectEqualSlices(f32, &.{ 1.0, 0.0, 0.0, 0.0 }, &round_array);
 }

@@ -21,8 +21,8 @@ pub extern var out_color: Vec(3) addrspace(.output);
 pub const gl_position = @extern(*addrspace(.output) Vec(4), .{ .name = "position" });
 
 // BUG: causes a `SEGV` signal when compiling to `SPIR-V`
-// const e1: ga.BladeMask = ga.BladeMask.parsePanicking("e0");
-// const e2: ga.BladeMask = ga.BladeMask.parsePanicking("e1");
+// const e1: ga.blades.BladeMask = ga.blades.BladeMask.parsePanicking("e0");
+// const e2: ga.blades.BladeMask = ga.blades.BladeMask.parsePanicking("e1");
 // comptime {
 //     @compileLog(e1, e2);
 // }

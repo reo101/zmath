@@ -409,22 +409,22 @@ test "ambient helpers and flat interpolation stay consistent" {
     const b_hyper = curved_ambient.Hyper.fromCoords(.{ 0.5, -1.0, 2.0, -0.25 });
 
     const spherical_sum = curved_ambient.Round.toCoords(curved_ambient.Round.add(a_round, b_round));
-    try std.testing.expectApproxEqAbs(1.5, spherical_sum[0], 1e-6);
-    try std.testing.expectApproxEqAbs(1.0, spherical_sum[1], 1e-6);
-    try std.testing.expectApproxEqAbs(5.0, spherical_sum[2], 1e-6);
-    try std.testing.expectApproxEqAbs(3.75, spherical_sum[3], 1e-6);
+    try std.testing.expectApproxEqAbs(1.5, spherical_sum.w, 1e-6);
+    try std.testing.expectApproxEqAbs(1.0, spherical_sum.x, 1e-6);
+    try std.testing.expectApproxEqAbs(5.0, spherical_sum.y, 1e-6);
+    try std.testing.expectApproxEqAbs(3.75, spherical_sum.z, 1e-6);
 
     const hyper_diff = curved_ambient.Hyper.toCoords(curved_ambient.Hyper.sub(a_hyper, b_hyper));
-    try std.testing.expectApproxEqAbs(0.5, hyper_diff[0], 1e-6);
-    try std.testing.expectApproxEqAbs(3.0, hyper_diff[1], 1e-6);
-    try std.testing.expectApproxEqAbs(1.0, hyper_diff[2], 1e-6);
-    try std.testing.expectApproxEqAbs(4.25, hyper_diff[3], 1e-6);
+    try std.testing.expectApproxEqAbs(0.5, hyper_diff.w, 1e-6);
+    try std.testing.expectApproxEqAbs(3.0, hyper_diff.x, 1e-6);
+    try std.testing.expectApproxEqAbs(1.0, hyper_diff.y, 1e-6);
+    try std.testing.expectApproxEqAbs(4.25, hyper_diff.z, 1e-6);
 
     const scaled = curved_ambient.Round.toCoords(curved_ambient.Round.scale(a_round, 0.25));
-    try std.testing.expectApproxEqAbs(0.25, scaled[0], 1e-6);
-    try std.testing.expectApproxEqAbs(0.5, scaled[1], 1e-6);
-    try std.testing.expectApproxEqAbs(0.75, scaled[2], 1e-6);
-    try std.testing.expectApproxEqAbs(1.0, scaled[3], 1e-6);
+    try std.testing.expectApproxEqAbs(0.25, scaled.w, 1e-6);
+    try std.testing.expectApproxEqAbs(0.5, scaled.x, 1e-6);
+    try std.testing.expectApproxEqAbs(0.75, scaled.y, 1e-6);
+    try std.testing.expectApproxEqAbs(1.0, scaled.z, 1e-6);
 
     try std.testing.expectApproxEqAbs(3.5, curved_ambient.Round.dot(a_round, b_round), 1e-6);
     try std.testing.expectApproxEqAbs(2.5, curved_ambient.Hyper.dot(a_hyper, b_hyper), 1e-6);
@@ -610,8 +610,10 @@ test "ambient normalization falls back to the model identity on non-finite input
     const hyper = curved_ambient.Hyper.toCoords(typedNormalizeAmbient(.hyperbolic, curved_ambient.Hyper.fromCoords(.{ nan, 0.0, 0.0, 0.0 })));
     const round = curved_ambient.Round.toCoords(typedNormalizeAmbient(.spherical, curved_ambient.Round.fromCoords(.{ 0.0, nan, 0.0, 0.0 })));
 
-    try std.testing.expectEqualSlices(f32, &.{ 1.0, 0.0, 0.0, 0.0 }, &hyper);
-    try std.testing.expectEqualSlices(f32, &.{ 1.0, 0.0, 0.0, 0.0 }, &round);
+    const hyper_array = hyper.asArray();
+    const round_array = round.asArray();
+    try std.testing.expectEqualSlices(f32, &.{ 1.0, 0.0, 0.0, 0.0 }, &hyper_array);
+    try std.testing.expectEqualSlices(f32, &.{ 1.0, 0.0, 0.0, 0.0 }, &round_array);
 }
 
 test "ambient tangent-basis point builder rejects non-finite travel inputs" {
@@ -630,7 +632,9 @@ test "ambient tangent-basis point builder rejects non-finite travel inputs" {
         0.25,
     ).?;
 
-    try std.testing.expectEqualSlices(f32, &curved_ambient.Round.toCoords(origin), &curved_ambient.Round.toCoords(point));
+    const origin_coords = curved_ambient.Round.toCoords(origin).asArray();
+    const point_coords = curved_ambient.Round.toCoords(point).asArray();
+    try std.testing.expectEqualSlices(f32, &origin_coords, &point_coords);
 }
 
 test "spherical walk orientation survives forward transport" {
@@ -941,14 +945,14 @@ test "spherical ground-height mapping matches the radial map on horizontal and v
     const horizontal = vec3(0.31, 0.0, -0.22);
     const horizontal_exp = sphericalAmbientFromLocalPoint(params, horizontal);
     const horizontal_ground = sphericalAmbientFromGroundHeightPoint(params, horizontal);
-    inline for (Round.toCoords(horizontal_exp), Round.toCoords(horizontal_ground)) |expected, actual| {
+    inline for (Round.toCoords(horizontal_exp).asArray(), Round.toCoords(horizontal_ground).asArray()) |expected, actual| {
         try std.testing.expectApproxEqAbs(expected, actual, 1e-5);
     }
 
     const vertical = vec3(0.0, 0.27, 0.0);
     const vertical_exp = sphericalAmbientFromLocalPoint(params, vertical);
     const vertical_ground = sphericalAmbientFromGroundHeightPoint(params, vertical);
-    inline for (Round.toCoords(vertical_exp), Round.toCoords(vertical_ground)) |expected, actual| {
+    inline for (Round.toCoords(vertical_exp).asArray(), Round.toCoords(vertical_ground).asArray()) |expected, actual| {
         try std.testing.expectApproxEqAbs(expected, actual, 1e-5);
     }
 }
@@ -997,7 +1001,7 @@ test "ambient from tangent basis point matches spherical horizontal ground mappi
         local[2],
     ).?;
     const expected = sphericalAmbientFromGroundHeightPoint(params, local);
-    inline for (AmbientFor(.spherical).toCoords(expected), AmbientFor(.spherical).toCoords(ambient)) |coord, actual| {
+    inline for (AmbientFor(.spherical).toCoords(expected).asArray(), AmbientFor(.spherical).toCoords(ambient).asArray()) |coord, actual| {
         try std.testing.expectApproxEqAbs(coord, actual, 1e-5);
     }
 }

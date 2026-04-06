@@ -87,7 +87,7 @@ test "ambient from tangent basis point matches spherical horizontal ground mappi
         curved_charts.vec3z(local),
     ).?;
     const expected = sphericalAmbientFromGroundHeightPoint(params, local);
-    inline for (AmbientFor(.spherical).toCoords(expected), AmbientFor(.spherical).toCoords(ambient)) |coord, actual| {
+    inline for (AmbientFor(.spherical).toCoords(expected).asArray(), AmbientFor(.spherical).toCoords(ambient).asArray()) |coord, actual| {
         try std.testing.expectApproxEqAbs(coord, actual, 1e-5);
     }
 }
@@ -108,5 +108,7 @@ test "ambient tangent-basis point builder rejects non-finite travel inputs" {
         0.25,
     ).?;
 
-    try std.testing.expectEqualSlices(f32, &AmbientFor(.spherical).toCoords(origin), &AmbientFor(.spherical).toCoords(point));
+    const origin_coords = AmbientFor(.spherical).toCoords(origin).asArray();
+    const point_coords = AmbientFor(.spherical).toCoords(point).asArray();
+    try std.testing.expectEqualSlices(f32, &origin_coords, &point_coords);
 }

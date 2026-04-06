@@ -12,6 +12,7 @@ const curved = struct {
     pub const Screen = geometry.curved_types.Screen;
     pub const SampleStatus = geometry.curved_types.SampleStatus;
     pub const Vec3 = geometry.curved_types.Vec3;
+    pub const Coords4 = geometry.curved_ambient.Coords4;
     pub const AmbientFor = geometry.curved_types.AmbientFor;
     pub const HyperView = geometry.curved_view.HyperView;
     pub const EllipticView = geometry.curved_view.EllipticView;
@@ -558,8 +559,8 @@ fn debugPrintVec3(name: []const u8, v: curved.Vec3) void {
     std.debug.print("{s}=.{{ {d:.6}, {d:.6}, {d:.6} }}\n", .{ name, coords[0], coords[1], coords[2] });
 }
 
-fn debugPrintVec4(name: []const u8, v: [4]f32) void {
-    std.debug.print("{s}=.{{ {d:.6}, {d:.6}, {d:.6}, {d:.6} }}\n", .{ name, v[0], v[1], v[2], v[3] });
+fn debugPrintVec4(name: []const u8, v: curved.Coords4) void {
+    std.debug.print("{s}=.{{ {d:.6}, {d:.6}, {d:.6}, {d:.6} }}\n", .{ name, v.w, v.x, v.y, v.z });
 }
 
 fn curvedMetricOf(view: anytype) curved.Metric {
@@ -571,8 +572,8 @@ fn curvedMetricOf(view: anytype) curved.Metric {
     };
 }
 
-fn ambientCoords(v: anytype) [4]f32 {
-    return if (@TypeOf(v) == [4]f32) v else v.coeffsArray();
+fn ambientCoords(v: anytype) curved.Coords4 {
+    return curved.Coords4.init(if (@TypeOf(v) == curved.Coords4) v else v.coeffsArray());
 }
 
 fn dumpCurvedViewState(label: []const u8, view: anytype) void {

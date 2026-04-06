@@ -3,7 +3,7 @@ const std = @import("std");
 pub const ga = @import("../ga.zig");
 const family = @import("../ga/family.zig");
 
-pub const MetricSignature = ga.MetricSignature;
+pub const MetricSignature = ga.blades.MetricSignature;
 
 /// Hyperbolic projective algebra signature `Cl(3, 1, 0)`: three positive
 /// spatial basis vectors and one negative homogeneous basis vector `e0`.

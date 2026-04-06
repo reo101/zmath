@@ -1,9 +1,11 @@
 const std = @import("std");
 const ga = @import("../ga.zig");
+const blades = ga.blades;
+const blade_parsing = ga.blade_parsing;
 
 pub fn withNamingOptions(
-    comptime metric_sig: ga.MetricSignature,
-    comptime naming_opts: ga.SignedBladeNamingOptions,
+    comptime metric_sig: blades.MetricSignature,
+    comptime naming_opts: blade_parsing.SignedBladeNamingOptions,
 ) type {
     return struct {
         pub const signature = metric_sig;
@@ -19,16 +21,16 @@ pub fn withNamingOptions(
 }
 
 pub fn withBasisSpans(
-    comptime metric_signature: ga.MetricSignature,
-    comptime basis_spans: ga.BasisIndexSpans,
+    comptime metric_signature: blades.MetricSignature,
+    comptime basis_spans: blades.BasisIndexSpans,
 ) type {
-    return withNamingOptions(metric_signature, ga.SignedBladeNamingOptions.withBasisSpans(basis_spans));
+    return withNamingOptions(metric_signature, blade_parsing.SignedBladeNamingOptions.withBasisSpans(basis_spans));
 }
 
 pub fn euclidean(comptime dimensions: usize) type {
     return withNamingOptions(
         ga.euclideanSignature(dimensions),
-        ga.SignedBladeNamingOptions.euclidean(dimensions),
+        blade_parsing.SignedBladeNamingOptions.euclidean(dimensions),
     );
 }
 
@@ -37,8 +39,8 @@ fn homogeneousSpans(
     comptime positive_dimensions: usize,
     comptime negative_index: ?usize,
     comptime degenerate_index: ?usize,
-) ga.BasisIndexSpans {
-    return ga.BasisIndexSpans.init(.{
+) blades.BasisIndexSpans {
+    return blades.BasisIndexSpans.init(.{
         .positive = if (positive_dimensions == 0) null else .range(first_positive_index, first_positive_index + positive_dimensions - 1),
         .negative = if (negative_index) |index| .singleton(index) else null,
         .degenerate = if (degenerate_index) |index| .singleton(index) else null,
@@ -48,7 +50,7 @@ fn homogeneousSpans(
 pub fn minkowski(comptime positive_dimensions: usize, comptime negative_dimensions: usize) type {
     return withBasisSpans(
         .{ .p = positive_dimensions, .q = negative_dimensions, .r = 0 },
-        ga.BasisIndexSpans.init(.{
+        blades.BasisIndexSpans.init(.{
             .positive = if (positive_dimensions == 0) null else .range(0, positive_dimensions - 1),
             .negative = if (negative_dimensions == 0) null else .range(positive_dimensions, positive_dimensions + negative_dimensions - 1),
         }),
@@ -97,7 +99,7 @@ pub fn defaultBindings(comptime DefaultFamily: type, comptime DefaultScalar: typ
         }
 
         pub fn resolveNamedBasisIndex(comptime named_index: usize) usize {
-            return comptime ga.blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
+            return comptime blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
         }
 
         pub const h = Instantiate(DefaultScalar);
@@ -107,7 +109,7 @@ pub fn defaultBindings(comptime DefaultFamily: type, comptime DefaultScalar: typ
 test "family builder exposes named algebra metadata" {
     const Family = withBasisSpans(
         .{ .p = 2, .q = 1, .r = 0 },
-        ga.BasisIndexSpans.init(.{
+        blades.BasisIndexSpans.init(.{
             .positive = .range(1, 2),
             .negative = .singleton(0),
         }),

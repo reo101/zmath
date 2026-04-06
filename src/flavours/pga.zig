@@ -3,7 +3,7 @@ const std = @import("std");
 pub const ga = @import("../ga.zig");
 const family = @import("../ga/family.zig");
 
-pub const MetricSignature = ga.MetricSignature;
+pub const MetricSignature = ga.blades.MetricSignature;
 
 /// PGA signature `Cl(3, 0, 1)`: three positive basis vectors and one
 /// degenerate (null) basis vector `e0` that squares to zero.
@@ -155,7 +155,7 @@ test "fullSignedBladeFromIndicesWithSignature respects degenerate square" {
 
 test "pga signed blade parser accepts e0 alias for degenerate basis" {
     const parsed = ga.blade_parsing.parseSignedBlade("e0", dimension, bindings.naming_options, false);
-    try std.testing.expectEqual(ga.SignedBladeSpec{ .sign = .positive, .mask = .init(0b1000) }, try parsed);
+    try std.testing.expectEqual(ga.blades.SignedBladeSpec{ .sign = .positive, .mask = .init(0b1000) }, try parsed);
 
     const E = h.Basis;
     try std.testing.expect(E.signedBlade("e0").eql(E.e(0)));
