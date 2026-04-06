@@ -1,9 +1,10 @@
 const ga = @import("zmath").ga;
 
 const Sig8 = ga.euclideanSignature(8);
-const Full8 = ga.multivector.FullMultivector(f64, Sig8);
-const Rotor8 = ga.multivector.Rotor(f64, Sig8);
-const Vector8 = ga.multivector.Vector(f64, Sig8);
+const Cl8 = ga.Algebra(Sig8).Instantiate(f64);
+const Full8 = Cl8.Full;
+const Rotor8 = Cl8.Rotor;
+const Vector8 = Cl8.Vector;
 
 // Direct mask builders. These isolate the blade-set combinator cost.
 const Full8BladeIndex = ga.blades.bladeIndexByMask(Sig8.dimension(), Full8.blades);

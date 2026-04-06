@@ -25,10 +25,11 @@ fn smithedFullValue(comptime Full: type, smith: *std.testing.Smith) Full {
 
 fn fuzzRuntimeExpressionCorpusCase(case: anytype, smith: *std.testing.Smith) !void {
     const sig = comptime blades.MetricSignature.euclidean(3);
+    const E3 = ga.Algebra(sig).Instantiate(f32);
     const naming_options = blade_parsing.SignedBladeNamingOptions.euclidean(3);
-    const Basis = multivector.Basis(f32, sig);
-    const Full = multivector.FullMultivector(f32, sig);
-    const Scalar = multivector.Scalar(f32, sig);
+    const Basis = E3.Basis;
+    const Full = E3.Full;
+    const Scalar = E3.Scalar;
     const scalar = smithedScalar(smith);
     const other_scalar = smithedScalar(smith);
 
@@ -125,8 +126,9 @@ fn fuzzRuntimeExpressionCorpusCase(case: anytype, smith: *std.testing.Smith) !vo
 
 fn fuzzRandomRuntimeExpression(smith: *std.testing.Smith) !void {
     const sig = comptime blades.MetricSignature.euclidean(3);
+    const E3 = ga.Algebra(sig).Instantiate(f32);
     const options = blade_parsing.SignedBladeNamingOptions.euclidean(3);
-    const Full = multivector.FullMultivector(f32, sig);
+    const Full = E3.Full;
     const alphabet = "e0123456789_[](){}+-*^. ,abcsv";
 
     var buf: [192]u8 = undefined;
