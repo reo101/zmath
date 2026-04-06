@@ -7,47 +7,32 @@ pub const MetricSignature = ga.MetricSignature;
 
 /// STA signature `Cl(1, 3, 0)`: one positive timelike basis vector and
 /// three negative spacelike basis vectors.
-const sig: MetricSignature = .{ .p = 1, .q = 3, .r = 0 };
-pub const metric_signature = sig;
-
-/// Ambient dimension of the STA algebra (4).
-pub const dimension = sig.dimension();
-
-fn minkowskiBasisSpans(comptime positive_dimensions: usize, comptime negative_dimensions: usize) ga.BasisIndexSpans {
-    return ga.BasisIndexSpans.init(.{
-        .positive = if (positive_dimensions == 0) null else .range(0, positive_dimensions - 1),
-        .negative = if (negative_dimensions == 0) null else .range(positive_dimensions, positive_dimensions + negative_dimensions - 1),
-    });
-}
-
-const basis_spans = minkowskiBasisSpans(sig.p, sig.q);
-
-const naming_options = ga.SignedBladeNamingOptions.withBasisSpans(basis_spans);
+const default_family = family.minkowski(1, 3);
 pub fn MinkowskiFamily(comptime positive_dimensions: usize, comptime negative_dimensions: usize) type {
-    return family.withBasisSpans(
-        .{ .p = positive_dimensions, .q = negative_dimensions, .r = 0 },
-        minkowskiBasisSpans(positive_dimensions, negative_dimensions),
-    );
+    return family.minkowski(positive_dimensions, negative_dimensions);
 }
 
 pub fn SpacetimeFamily(comptime time_dimensions: usize, comptime space_dimensions: usize) type {
     return MinkowskiFamily(time_dimensions, space_dimensions);
 }
 
-const default_family = SpacetimeFamily(1, 3);
 const bindings = family.defaultBindings(default_family, f64);
 pub const Family = bindings.Family;
 pub const default_scalar = bindings.default_scalar;
+pub const metric_signature = bindings.metric_signature;
+/// Ambient dimension of the STA algebra (4).
+pub const dimension = bindings.dimension;
 pub const Algebra = bindings.Algebra;
 pub const Instantiate = bindings.Instantiate;
 pub const h = bindings.h;
+const naming_options = bindings.naming_options;
 
 const Vector = Algebra.Vector(f64);
 const Bivector = Algebra.Bivector(f64);
 const Rotor = Algebra.Rotor(f64);
 
 fn namedBasisIndex(comptime named_index: usize) usize {
-    return comptime ga.blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
+    return bindings.resolveNamedBasisIndex(named_index);
 }
 
 /// Spacetime split of a vector `x` into time and space components relative
@@ -205,10 +190,10 @@ pub fn perfectFluidStressEnergy(
 test "sta signature has expected metric classes and dimension" {
     try std.testing.expectEqual(@as(usize, 4), dimension);
 
-    try std.testing.expectEqual(.positive, sig.basisSquareClass(namedBasisIndex(0)));
+    try std.testing.expectEqual(.positive, metric_signature.basisSquareClass(namedBasisIndex(0)));
 
     inline for (1..4) |i| {
-        try std.testing.expectEqual(.negative, sig.basisSquareClass(namedBasisIndex(i)));
+        try std.testing.expectEqual(.negative, metric_signature.basisSquareClass(namedBasisIndex(i)));
     }
 }
 

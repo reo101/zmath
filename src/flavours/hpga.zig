@@ -7,38 +7,21 @@ pub const MetricSignature = ga.MetricSignature;
 
 /// Hyperbolic projective algebra signature `Cl(3, 1, 0)`: three positive
 /// spatial basis vectors and one negative homogeneous basis vector `e0`.
-const sig: MetricSignature = .{ .p = 3, .q = 1, .r = 0 };
-pub const metric_signature = sig;
-
-/// Ambient dimension of the algebra (4).
-pub const dimension = sig.dimension();
-const basis_spans = ga.BasisIndexSpans.init(.{
-    .positive = .range(1, 3),
-    .negative = .singleton(0),
-});
-
-const naming_options = ga.SignedBladeNamingOptions.withBasisSpans(basis_spans);
+const default_family = family.projectiveHyperbolic(3);
 pub fn EuclideanFamily(comptime euclidean_dimensions: usize) type {
-    return family.withBasisSpans(
-        .{
-            .p = euclidean_dimensions,
-            .q = 1,
-            .r = 0,
-        },
-        ga.BasisIndexSpans.init(.{
-            .positive = .range(1, euclidean_dimensions),
-            .negative = .singleton(0),
-        }),
-    );
+    return family.projectiveHyperbolic(euclidean_dimensions);
 }
 
-const default_family = EuclideanFamily(3);
 const bindings = family.defaultBindings(default_family, f32);
 pub const Family = bindings.Family;
 pub const default_scalar = bindings.default_scalar;
+pub const metric_signature = bindings.metric_signature;
+/// Ambient dimension of the algebra (4).
+pub const dimension = bindings.dimension;
 pub const Algebra = bindings.Algebra;
 pub const Instantiate = bindings.Instantiate;
 pub const h = bindings.h;
+const naming_options = bindings.naming_options;
 
 pub const Point = struct {
     pub fn initHomogeneous(w: f32, x: f32, y: f32, z: f32) h.Full {
@@ -76,14 +59,14 @@ pub fn ambientCoords(p: anytype) [4]f32 {
 }
 
 fn namedBasisIndex(comptime named_index: usize) usize {
-    return comptime ga.blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
+    return bindings.resolveNamedBasisIndex(named_index);
 }
 
 test "hpga signature has expected basis classes" {
-    try std.testing.expectEqual(.positive, sig.basisSquareClass(namedBasisIndex(1)));
-    try std.testing.expectEqual(.positive, sig.basisSquareClass(namedBasisIndex(2)));
-    try std.testing.expectEqual(.positive, sig.basisSquareClass(namedBasisIndex(3)));
-    try std.testing.expectEqual(.negative, sig.basisSquareClass(namedBasisIndex(0)));
+    try std.testing.expectEqual(.positive, metric_signature.basisSquareClass(namedBasisIndex(1)));
+    try std.testing.expectEqual(.positive, metric_signature.basisSquareClass(namedBasisIndex(2)));
+    try std.testing.expectEqual(.positive, metric_signature.basisSquareClass(namedBasisIndex(3)));
+    try std.testing.expectEqual(.negative, metric_signature.basisSquareClass(namedBasisIndex(0)));
 }
 
 test "hpga proper point normalizes onto the hyperboloid" {

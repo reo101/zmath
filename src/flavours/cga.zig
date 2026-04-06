@@ -6,36 +6,17 @@ const family = @import("../ga/family.zig");
 /// Typically used to model 3D Euclidean space conformally.
 ///
 /// 3D points are mapped to null vectors in 5D.
-const sig: ga.MetricSignature = .{ .p = 4, .q = 1, .r = 0 };
-pub const metric_signature = sig;
-
-/// Ambient dimension of the CGA algebra (5).
-pub const dimension = sig.dimension();
-
-const basis_spans = ga.BasisIndexSpans.init(.{
-    .positive = .range(1, 4),
-    .negative = .singleton(5),
-});
-
-const naming_options = ga.SignedBladeNamingOptions.withBasisSpans(basis_spans);
+const default_family = family.conformalEuclidean(3);
 pub fn EuclideanFamily(comptime euclidean_dimensions: usize) type {
-    return family.withBasisSpans(
-        .{
-            .p = euclidean_dimensions + 1,
-            .q = 1,
-            .r = 0,
-        },
-        ga.BasisIndexSpans.init(.{
-            .positive = .range(1, euclidean_dimensions + 1),
-            .negative = .singleton(euclidean_dimensions + 2),
-        }),
-    );
+    return family.conformalEuclidean(euclidean_dimensions);
 }
 
-const default_family = EuclideanFamily(3);
 const bindings = family.defaultBindings(default_family, f32);
 pub const Family = bindings.Family;
 pub const default_scalar = bindings.default_scalar;
+pub const metric_signature = bindings.metric_signature;
+/// Ambient dimension of the CGA algebra (5).
+pub const dimension = bindings.dimension;
 pub const Algebra = bindings.Algebra;
 pub const Instantiate = bindings.Instantiate;
 pub const h = bindings.h;
