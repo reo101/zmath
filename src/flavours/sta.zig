@@ -25,163 +25,154 @@ pub const Instantiate = bindings.Instantiate;
 pub const h = bindings.h;
 const naming_options = bindings.naming_options;
 
-const Vector = Algebra.Vector(f64);
-const Bivector = Algebra.Bivector(f64);
-const Rotor = Algebra.Rotor(f64);
+pub fn InstantiateHelpers(comptime T: type) type {
+    const H = Instantiate(T);
+
+    return struct {
+        const Self = @This();
+        pub const h = H;
+        pub const Vector = H.Vector;
+        pub const Bivector = H.Bivector;
+        pub const Rotor = H.Rotor;
+        pub const Spinor = H.Even;
+
+        /// Spacetime split of a vector `x` into time and space components relative
+        /// to an observer with velocity `gamma0`.
+        ///
+        /// x*gamma0 = (x . gamma0) + (x ^ gamma0) = t + x_vec
+        pub fn spacetimeSplit(x: anytype) struct { time: T, space: H.Bivector } {
+            comptime ga.multivector.ensureMultivector(@TypeOf(x));
+            const E = H.Basis;
+            const g0 = E.e(0);
+            const split = x.gp(g0);
+            return .{
+                .time = split.scalarCoeff(),
+                .space = split.gradePart(2),
+            };
+        }
+
+        /// Constructs a Faraday bivector `F = E + I*B` from electric and magnetic field components.
+        pub fn faradayBivector(electric: anytype, magnetic: anytype) H.Bivector {
+            comptime {
+                ga.multivector.ensureMultivector(@TypeOf(electric));
+                ga.multivector.ensureMultivector(@TypeOf(magnetic));
+            }
+            const I = H.Pseudoscalar.init(.{1});
+            return electric.add(I.gp(magnetic).gradePart(2));
+        }
+
+        /// Constructs a Lorentz boost rotor `L = exp(phi * v_hat / 2)`.
+        pub fn lorentzBoost(rapidity: T, direction: H.Bivector) H.Rotor {
+            const cosh_half = std.math.cosh(rapidity / 2.0);
+            const sinh_half = std.math.sinh(rapidity / 2.0);
+
+            var rotor = H.Rotor.zero();
+            rotor.coeffs[0] = cosh_half;
+
+            inline for (H.Bivector.blades, 0..) |mask, b_idx| {
+                const r_idx = H.Rotor.getBladeIndex(mask);
+                rotor.coeffs[r_idx] = direction.coeffs[b_idx] * sinh_half;
+            }
+
+            return rotor;
+        }
+
+        /// Computes the action of the spacetime gradient (Dirac operator) ∇ on a multivector.
+        pub fn applyGradient(comptime MType: type, partial_derivatives: [4]MType) H.Full {
+            const E = H.Basis;
+            var result = H.Full.zero();
+
+            const basis_vectors = [4]H.Vector{
+                E.e(0).gradePart(1),
+                E.e(1).negate().gradePart(1),
+                E.e(2).negate().gradePart(1),
+                E.e(3).negate().gradePart(1),
+            };
+
+            inline for (basis_vectors, partial_derivatives) |gamma_mu, partial_mu| {
+                result = result.add(gamma_mu.gp(partial_mu));
+            }
+
+            return result;
+        }
+
+        /// Maxwell's equation in STA: ∇F = J
+        pub fn maxwellSource(f_derivatives: [4]H.Bivector) H.Full {
+            return Self.applyGradient(H.Bivector, f_derivatives);
+        }
+
+        /// Performs a duality rotation on a Faraday bivector F by angle theta.
+        pub fn dualityRotate(f: anytype, theta: T) @TypeOf(f.gp(H.Scalar.init(.{0}))) {
+            comptime ga.multivector.ensureMultivector(@TypeOf(f));
+            const I = H.Pseudoscalar.init(.{1});
+            const cos_t = std.math.cos(theta);
+            const sin_t = std.math.sin(theta);
+            const expo = H.Scalar.init(.{cos_t}).add(I.scale(sin_t));
+            return f.gp(expo);
+        }
+
+        /// Decomposes a spinor into its scalar and pseudoscalar invariants.
+        pub fn spinorInvariants(psi: anytype) struct { @"ρ": T, @"β": T } {
+            comptime ga.multivector.ensureMultivector(@TypeOf(psi));
+            const rho_exp_ib = psi.gp(psi.reverse());
+            const re = rho_exp_ib.scalarCoeff();
+            const im = rho_exp_ib.coeff(H.Pseudoscalar.blades[0]);
+
+            return .{
+                .@"ρ" = @sqrt(re * re + im * im),
+                .@"β" = std.math.atan2(im, re),
+            };
+        }
+
+        pub fn properTimeSquared(dx: H.Vector) T {
+            return dx.scalarProduct(dx);
+        }
+
+        pub fn fourVelocity(relative_v: H.Bivector) H.Vector {
+            const E = H.Basis;
+            const g0 = E.e(0).gradePart(1);
+            const v2 = relative_v.scalarProduct(relative_v);
+            const gamma = 1.0 / std.math.sqrt(1.0 - v2);
+            return g0.add(relative_v.gp(g0).gradePart(1)).scale(gamma);
+        }
+
+        pub fn fourMomentum(mass: T, velocity: H.Vector) H.Vector {
+            return velocity.scale(mass);
+        }
+
+        pub fn perfectFluidStressEnergy(
+            a: H.Vector,
+            u: H.Vector,
+            energy_density: T,
+            pressure: T,
+        ) H.Vector {
+            const dot_au = a.scalarProduct(u);
+            const term1 = u.scale((energy_density + pressure) * dot_au);
+            const term2 = a.scale(pressure);
+            return term1.sub(term2);
+        }
+    };
+}
+
+const default_helpers = InstantiateHelpers(default_scalar);
+const Vector = default_helpers.Vector;
+const Bivector = default_helpers.Bivector;
+const Rotor = default_helpers.Rotor;
+pub const spacetimeSplit = default_helpers.spacetimeSplit;
+pub const faradayBivector = default_helpers.faradayBivector;
+pub const lorentzBoost = default_helpers.lorentzBoost;
+pub const applyGradient = default_helpers.applyGradient;
+pub const maxwellSource = default_helpers.maxwellSource;
+pub const dualityRotate = default_helpers.dualityRotate;
+pub const Spinor = default_helpers.Spinor;
+pub const spinorInvariants = default_helpers.spinorInvariants;
+pub const properTimeSquared = default_helpers.properTimeSquared;
+pub const fourVelocity = default_helpers.fourVelocity;
+pub const fourMomentum = default_helpers.fourMomentum;
+pub const perfectFluidStressEnergy = default_helpers.perfectFluidStressEnergy;
 
 fn namedBasisIndex(comptime named_index: usize) usize {
     return bindings.resolveNamedBasisIndex(named_index);
-}
-
-/// Spacetime split of a vector `x` into time and space components relative
-/// to an observer with velocity `gamma0`.
-///
-/// x*gamma0 = (x . gamma0) + (x ^ gamma0) = t + x_vec
-pub fn spacetimeSplit(x: anytype) struct { time: f64, space: h.Bivector } {
-    comptime ga.multivector.ensureMultivector(@TypeOf(x));
-    const E = h.Basis;
-    const g0 = E.e(0);
-    const split = x.gp(g0);
-    return .{
-        .time = split.scalarCoeff(),
-        .space = split.gradePart(2),
-    };
-}
-
-/// Constructs a Faraday bivector `F = E + I*B` from electric and magnetic field components.
-/// Note that in STA, relative 3-vectors like `E` and `B` are represented as bivectors
-/// in the spacetime split (spanning the observer's time axis).
-pub fn faradayBivector(electric: anytype, magnetic: anytype) h.Bivector {
-    comptime {
-        ga.multivector.ensureMultivector(@TypeOf(electric));
-        ga.multivector.ensureMultivector(@TypeOf(magnetic));
-    }
-    const I = h.Pseudoscalar.init(.{1});
-    // F = E + I*B
-    return electric.add(I.gp(magnetic).gradePart(2));
-}
-
-
-
-/// Constructs a Lorentz boost rotor `L = exp(phi * v_hat / 2)`.
-/// `v_hat` is a unit spacelike bivector representing the boost direction.
-pub fn lorentzBoost(rapidity: f64, direction: Bivector) Rotor {
-    const cosh_half = std.math.cosh(rapidity / 2.0);
-    const sinh_half = std.math.sinh(rapidity / 2.0);
-
-    // L = cosh(phi/2) + v_hat * sinh(phi/2)
-    var rotor = h.Rotor.zero();
-    rotor.coeffs[0] = cosh_half; // scalar part (index 0 in EvenMultivector)
-
-    // Direction part (bivector components)
-    inline for (h.Bivector.blades, 0..) |mask, b_idx| {
-        const r_idx = h.Rotor.getBladeIndex(mask);
-        rotor.coeffs[r_idx] = direction.coeffs[b_idx] * sinh_half;
-    }
-
-    return rotor;
-}
-
-/// Computes the action of the spacetime gradient (Dirac operator) ∇ on a multivector.
-///
-/// ∇ M = Σ γ^μ ∂_μ M
-///
-/// Since this library focuses on algebraic relations rather than numerical
-/// differentiation, this function represents the symbolic result of applying
-/// the gradient to a field with given partial derivatives.
-pub fn applyGradient(comptime MType: type, partial_derivatives: [4]MType) h.Full {
-    const E = h.Basis;
-    var result = h.Full.zero();
-
-    // ∇ M = γ^0 ∂_0 M + γ^1 ∂_1 M + γ^2 ∂_2 M + γ^3 ∂_3 M
-    // Note: in STA, γ^0 = γ_0 and γ^i = -γ_i
-    const basis_vectors = [4]h.Vector{
-        E.e(0).gradePart(1),
-        E.e(1).negate().gradePart(1),
-        E.e(2).negate().gradePart(1),
-        E.e(3).negate().gradePart(1),
-    };
-
-    inline for (basis_vectors, partial_derivatives) |gamma_mu, partial_mu| {
-        result = result.add(gamma_mu.gp(partial_mu));
-    }
-
-    return result;
-}
-
-/// Maxwell's equation in STA: ∇F = J
-/// Given a Faraday bivector F and its derivatives, returns the 4-current J.
-pub fn maxwellSource(f_derivatives: [4]h.Bivector) h.Full {
-    return applyGradient(h.Bivector, f_derivatives);
-}
-
-/// Performs a duality rotation on a Faraday bivector F by angle theta.
-/// F' = F * exp(I * theta) = F * (cos(theta) + I * sin(theta))
-pub fn dualityRotate(f: anytype, theta: f64) @TypeOf(f.gp(h.Scalar.init(.{0}))) {
-    comptime ga.multivector.ensureMultivector(@TypeOf(f));
-    const I = h.Pseudoscalar.init(.{1});
-    // exp(I*theta) = cos(theta) + I*sin(theta)
-    const cos_t = std.math.cos(theta);
-    const sin_t = std.math.sin(theta);
-    const expo = h.Scalar.init(.{cos_t}).add(I.scale(sin_t));
-    return f.gp(expo);
-}
-
-/// In STA, a Dirac spinor is represented by an element of the even subalgebra.
-/// It can be written in the form ψ = √ρ e^{Iβ/2} R, where R is a rotor.
-pub const Spinor = h.Even;
-
-/// Decomposes a spinor into its scalar and pseudoscalar invariants (ρ and β).
-pub fn spinorInvariants(psi: anytype) struct { @"ρ": f64, @"β": f64 } {
-    comptime ga.multivector.ensureMultivector(@TypeOf(psi));
-    // psi * reverse(psi) = ρ e^{Iβ} = ρ(cos β + I sin β)
-    const rho_exp_ib = psi.gp(psi.reverse());
-    const re = rho_exp_ib.scalarCoeff();
-    const im = rho_exp_ib.coeff(h.Pseudoscalar.blades[0]);
-
-    return .{
-        .@"ρ" = @sqrt(re * re + im * im),
-        .@"β" = std.math.atan2(im, re),
-    };
-}
-
-/// Computes the proper time interval squared (ds^2) for a differential 4-position.
-/// In units where c=1, ds^2 = dx^2.
-pub fn properTimeSquared(dx: h.Vector) f64 {
-    return dx.scalarProduct(dx);
-}
-
-/// Returns the 4-velocity vector for a given relative velocity bivector.
-/// `relative_v` is a bivector in the timelike plane (e.g., v^i * e_i0).
-pub fn fourVelocity(relative_v: h.Bivector) h.Vector {
-    const E = h.Basis;
-    const g0 = E.e(0).gradePart(1);
-
-    // v^2 = (v*v) because relative_v is a timelike bivector (e_i0) which squares to +1
-    const v2 = relative_v.scalarProduct(relative_v);
-    const gamma = 1.0 / std.math.sqrt(1.0 - v2);
-
-    // u = gamma * (1 + v) * g0 = gamma * (g0 + v*g0)
-    return g0.add(relative_v.gp(g0).gradePart(1)).scale(gamma);
-}
-
-/// Returns the 4-momentum p = m*u.
-pub fn fourMomentum(mass: f64, velocity: h.Vector) h.Vector {
-    return velocity.scale(mass);
-}
-
-/// Computes the stress-energy vector T(a) for a perfect fluid.
-/// T(a) = (rho + p)(a . u)u - p*a
-pub fn perfectFluidStressEnergy(
-    a: h.Vector,
-    u: h.Vector,
-    energy_density: f64,
-    pressure: f64,
-) h.Vector {
-    const dot_au = a.scalarProduct(u);
-    const term1 = u.scale((energy_density + pressure) * dot_au);
-    const term2 = a.scale(pressure);
-    return term1.sub(term2);
 }
 
 
@@ -209,6 +200,15 @@ test "sta exposes configurable Minkowski families" {
     try std.testing.expectEqual(@as(f32, 1.0), M22.Basis.e(1).gp(M22.Basis.e(1)).scalarCoeff());
     try std.testing.expectEqual(@as(f32, -1.0), M22.Basis.e(2).gp(M22.Basis.e(2)).scalarCoeff());
     try std.testing.expectEqual(@as(f32, -1.0), M22.Basis.e(3).gp(M22.Basis.e(3)).scalarCoeff());
+}
+
+test "sta helpers are instantiatable by scalar type" {
+    const Helpers = InstantiateHelpers(f32);
+    const E = Helpers.h.Basis;
+    const v = E.signedBlade("e10").scale(0.25).gradePart(2);
+    const u = Helpers.fourVelocity(v);
+
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), u.scalarProduct(u), 1e-5);
 }
 
 test "sta basis vectors square to minkowski signs" {
