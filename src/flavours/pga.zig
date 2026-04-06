@@ -28,8 +28,7 @@ pub fn InstantiateHelpers(comptime T: type) type {
 
         pub const Point = struct {
             pub fn init(x: T, y: T, z: T) H.Full {
-                // PGA points are trivectors: x*e230 + y*e310 + z*e120 + e123
-                // `e0` is the degenerate homogeneous basis vector.
+                // PGA points are trivectors: x*e230 + y*e310 + z*e120 + e123.
                 return H.exprAs(H.Full, "{x}*e_2_3_0 + {y}*e_3_1_0 + {z}*e_1_2_0 + e123", .{ .x = x, .y = y, .z = z });
             }
 
