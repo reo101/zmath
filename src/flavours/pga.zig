@@ -3,8 +3,6 @@ const std = @import("std");
 pub const ga = @import("../ga.zig");
 const family = @import("../ga/family.zig");
 
-pub const MetricSignature = ga.blades.MetricSignature;
-
 /// PGA signature `Cl(3, 0, 1)`: three positive basis vectors and one
 /// degenerate (null) basis vector `e0` that squares to zero.
 const default_family = family.projectiveEuclidean(3);
@@ -22,51 +20,63 @@ pub const Algebra = bindings.Algebra;
 pub const Instantiate = bindings.Instantiate;
 pub const h = bindings.h;
 
-pub const Point = struct {
-    pub fn init(x: f32, y: f32, z: f32) h.Full {
-        // PGA points are trivectors: x*e230 + y*e310 + z*e120 + e123
-        // `e0` is the degenerate homogeneous basis vector.
-        return h.exprAs(h.Full, "{x}*e_2_3_0 + {y}*e_3_1_0 + {z}*e_1_2_0 + e123", .{ .x = x, .y = y, .z = z });
-    }
+pub fn InstantiateHelpers(comptime T: type) type {
+    const H = Instantiate(T);
 
-    pub fn direction(x: f32, y: f32, z: f32) h.Full {
-        return h.exprAs(h.Full, "{x}*e_2_3_0 + {y}*e_3_1_0 + {z}*e_1_2_0", .{ .x = x, .y = y, .z = z });
-    }
-};
+    return struct {
+        pub const h = H;
 
-pub const Plane = struct {
-    pub fn init(a: f32, b: f32, c: f32, d: f32) h.Full {
-        // Plane: a*e1 + b*e2 + c*e3 + d*e0
-        return h.exprAs(h.Full, "{a}*e1 + {b}*e2 + {c}*e3 + {d}*e0", .{ .a = a, .b = b, .c = c, .d = d });
-    }
-};
+        pub const Point = struct {
+            pub fn init(x: T, y: T, z: T) H.Full {
+                // PGA points are trivectors: x*e230 + y*e310 + z*e120 + e123
+                // `e0` is the degenerate homogeneous basis vector.
+                return H.exprAs(H.Full, "{x}*e_2_3_0 + {y}*e_3_1_0 + {z}*e_1_2_0 + e123", .{ .x = x, .y = y, .z = z });
+            }
+
+            pub fn direction(x: T, y: T, z: T) H.Full {
+                return H.exprAs(H.Full, "{x}*e_2_3_0 + {y}*e_3_1_0 + {z}*e_1_2_0", .{ .x = x, .y = y, .z = z });
+            }
+        };
+
+        pub const Plane = struct {
+            pub fn init(a: T, b: T, c: T, d: T) H.Full {
+                // Plane: a*e1 + b*e2 + c*e3 + d*e0
+                return H.exprAs(H.Full, "{a}*e1 + {b}*e2 + {c}*e3 + {d}*e0", .{ .a = a, .b = b, .c = c, .d = d });
+            }
+        };
+
+        /// Converts a PGA multivector (intended to be a rotor) to a 4x4 matrix.
+        /// Assumes the multivector acts on points P = x*e1 + y*e2 + z*e3 + e0.
+        pub fn toMatrix4x4(mv: anytype) [4][4]T {
+            ga.multivector.ensureMultivector(@TypeOf(mv));
+            const E = H.Basis;
+            const basis_vectors = [_]H.Vector{
+                E.e(1).gradePart(1),
+                E.e(2).gradePart(1),
+                E.e(3).gradePart(1),
+                E.e(0).gradePart(1),
+            };
+
+            var mat: [4][4]T = undefined;
+            inline for (basis_vectors, 0..) |v, j| {
+                const v_prime = mv.gp(v).gp(mv.reverse()).gradePart(1);
+                mat[0][j] = @floatCast(v_prime.coeffNamed("e1"));
+                mat[1][j] = @floatCast(v_prime.coeffNamed("e2"));
+                mat[2][j] = @floatCast(v_prime.coeffNamed("e3"));
+                mat[3][j] = @floatCast(v_prime.coeffNamedWithOptions("e0", bindings.naming_options));
+            }
+            return mat;
+        }
+    };
+}
+
+const default_helpers = InstantiateHelpers(default_scalar);
+pub const Point = default_helpers.Point;
+pub const Plane = default_helpers.Plane;
+pub const toMatrix4x4 = default_helpers.toMatrix4x4;
 
 fn namedBasisIndex(comptime named_index: usize) usize {
     return bindings.resolveNamedBasisIndex(named_index);
-}
-
-/// Converts a PGA multivector (intended to be a rotor) to a 4x4 matrix.
-/// Assumes the multivector acts on points P = x*e1 + y*e2 + z*e3 + e0.
-pub fn toMatrix4x4(mv: anytype) [4][4]f32 {
-    ga.multivector.ensureMultivector(@TypeOf(mv));
-    const E = h.Basis;
-    const basis_vectors = [_]h.Vector{
-        E.e(1).gradePart(1),
-        E.e(2).gradePart(1),
-        E.e(3).gradePart(1),
-        E.e(0).gradePart(1),
-    };
-
-    var mat: [4][4]f32 = undefined;
-    inline for (basis_vectors, 0..) |v, j| {
-        // Compute v' = mv * v * ~mv
-        const v_prime = mv.gp(v).gp(mv.reverse()).gradePart(1);
-        mat[0][j] = @floatCast(v_prime.coeffNamed("e1"));
-        mat[1][j] = @floatCast(v_prime.coeffNamed("e2"));
-        mat[2][j] = @floatCast(v_prime.coeffNamed("e3"));
-        mat[3][j] = @floatCast(v_prime.coeffNamedWithOptions("e0", bindings.naming_options));
-    }
-    return mat;
 }
 
 test "pga signature has correct dimension and basis-vector squares" {
@@ -190,4 +200,12 @@ test "pga exposes configurable Euclidean families" {
 
     try std.testing.expectEqual(@as(usize, 3), EuclideanFamily(2).dimension);
     try std.testing.expectEqual(@as(f32, 0.0), P2.Basis.e(0).gp(P2.Basis.e(0)).scalarCoeff());
+}
+
+test "pga helpers are instantiatable by scalar type" {
+    const Helpers = InstantiateHelpers(f64);
+    const p = Helpers.Point.init(1.0, 2.0, 3.0);
+
+    try std.testing.expectEqual(@as(f64, 1.0), p.coeffNamedWithOptions("e_2_3_0", bindings.naming_options));
+    try std.testing.expectEqual(@as(f64, 1.0), Helpers.toMatrix4x4(Helpers.h.Scalar.init(.{1}))[0][0]);
 }
