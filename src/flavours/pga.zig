@@ -66,7 +66,7 @@ fn namedBasisIndex(comptime named_index: usize) usize {
 /// Converts a PGA multivector (intended to be a rotor) to a 4x4 matrix.
 /// Assumes the multivector acts on points P = x*e1 + y*e2 + z*e3 + e0.
 pub fn toMatrix4x4(mv: anytype) [4][4]f32 {
-    ga.ensureMultivector(@TypeOf(mv));
+    ga.multivector.ensureMultivector(@TypeOf(mv));
     const E = h.Basis;
     const basis_vectors = [_]h.Vector{
         E.e(1),
@@ -167,7 +167,7 @@ test "euclidean point representation and join" {
 test "fullSignedBladeFromIndicesWithSignature respects degenerate square" {
     // Repeated degenerate index should give zero
     const degenerate_index = namedBasisIndex(0);
-    const result = ga.fullSignedBladeFromIndicesWithSignature(f64, sig, &.{ degenerate_index, degenerate_index });
+    const result = ga.multivector.fullSignedBladeFromIndicesWithSignature(f64, sig, &.{ degenerate_index, degenerate_index });
     // e0*e0 = 0, so the scalar part must be zero
     try std.testing.expectEqual(@as(f64, 0.0), result.scalarCoeff());
 }

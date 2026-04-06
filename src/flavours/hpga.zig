@@ -66,7 +66,7 @@ pub const Point = struct {
 };
 
 pub fn ambientCoords(p: anytype) [4]f32 {
-    ga.ensureMultivector(@TypeOf(p));
+    ga.multivector.ensureMultivector(@TypeOf(p));
     return .{
         @floatCast(p.coeffNamedWithOptions("e123", naming_options)),
         @floatCast(p.coeffNamedWithOptions("e320", naming_options)),

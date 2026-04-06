@@ -38,7 +38,7 @@ pub fn projectEuclidean(
     zoom: f32,
     projection: EuclideanProjection,
 ) ?[2]f32 {
-    ga.ensureMultivector(@TypeOf(p));
+    ga.multivector.ensureMultivector(@TypeOf(p));
 
     const x_raw = p.coeffNamed("e1");
     const y_raw = p.coeffNamed("e2");
@@ -234,7 +234,7 @@ test "stereographic projection rejects points too close to the pole singularity"
 /// Projects a point using PGA universal projection formula.
 /// P' = (Eye v Point) ^ Screen
 pub fn projectPGA(camera: anytype, p: anytype, canvas_width: usize, canvas_height: usize, zoom: f32) ?[2]f32 {
-    ga.ensureMultivector(@TypeOf(p));
+    ga.multivector.ensureMultivector(@TypeOf(p));
 
     const ray = camera.eye.join(p);
     const p_prime_mv = ray.wedge(camera.screen);

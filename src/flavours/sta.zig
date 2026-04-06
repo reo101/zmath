@@ -55,7 +55,7 @@ fn namedBasisIndex(comptime named_index: usize) usize {
 ///
 /// x*gamma0 = (x . gamma0) + (x ^ gamma0) = t + x_vec
 pub fn spacetimeSplit(x: anytype) struct { time: f64, space: h.Bivector } {
-    comptime ga.ensureMultivector(@TypeOf(x));
+    comptime ga.multivector.ensureMultivector(@TypeOf(x));
     const E = h.Basis;
     const g0 = E.e(0);
     const split = x.gp(g0);
@@ -70,8 +70,8 @@ pub fn spacetimeSplit(x: anytype) struct { time: f64, space: h.Bivector } {
 /// in the spacetime split (spanning the observer's time axis).
 pub fn faradayBivector(electric: anytype, magnetic: anytype) h.Bivector {
     comptime {
-        ga.ensureMultivector(@TypeOf(electric));
-        ga.ensureMultivector(@TypeOf(magnetic));
+        ga.multivector.ensureMultivector(@TypeOf(electric));
+        ga.multivector.ensureMultivector(@TypeOf(magnetic));
     }
     const I = h.Pseudoscalar.init(.{1});
     // F = E + I*B
@@ -135,7 +135,7 @@ pub fn maxwellSource(f_derivatives: [4]h.Bivector) h.Full {
 /// Performs a duality rotation on a Faraday bivector F by angle theta.
 /// F' = F * exp(I * theta) = F * (cos(theta) + I * sin(theta))
 pub fn dualityRotate(f: anytype, theta: f64) @TypeOf(f.gp(h.Scalar.init(.{0}))) {
-    comptime ga.ensureMultivector(@TypeOf(f));
+    comptime ga.multivector.ensureMultivector(@TypeOf(f));
     const I = h.Pseudoscalar.init(.{1});
     // exp(I*theta) = cos(theta) + I*sin(theta)
     const cos_t = std.math.cos(theta);
@@ -150,7 +150,7 @@ pub const Spinor = h.Even;
 
 /// Decomposes a spinor into its scalar and pseudoscalar invariants (ρ and β).
 pub fn spinorInvariants(psi: anytype) struct { @"ρ": f64, @"β": f64 } {
-    comptime ga.ensureMultivector(@TypeOf(psi));
+    comptime ga.multivector.ensureMultivector(@TypeOf(psi));
     // psi * reverse(psi) = ρ e^{Iβ} = ρ(cos β + I sin β)
     const rho_exp_ib = psi.gp(psi.reverse());
     const re = rho_exp_ib.scalarCoeff();
