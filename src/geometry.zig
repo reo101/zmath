@@ -6,4 +6,4 @@ pub const curved_camera = @import("geometry/curved_camera.zig");
 pub const curved_view = @import("geometry/curved_view.zig");
 pub const curved_tangent = @import("geometry/curved_tangent.zig");
 pub const curved_surface = @import("geometry/curved_surface.zig");
-pub const constant_curvature = @import("geometry/constant_curvature.zig");
+pub const curved = @import("geometry/curved.zig");

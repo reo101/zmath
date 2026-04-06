@@ -2,7 +2,7 @@ const std = @import("std");
 const zmath = @import("zmath");
 const demo = @import("demo_core");
 
-const curved = zmath.geometry.constant_curvature;
+const curved = zmath.geometry.curved;
 const Round = curved.AmbientFor(.spherical);
 const SphericalView = curved.SphericalView;
 
