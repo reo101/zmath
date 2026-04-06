@@ -3,8 +3,6 @@ const std = @import("std");
 pub const ga = @import("../ga.zig");
 const family = @import("../ga/family.zig");
 
-pub const MetricSignature = ga.blades.MetricSignature;
-
 /// STA signature `Cl(1, 3, 0)`: one positive timelike basis vector and
 /// three negative spacelike basis vectors.
 const default_family = family.minkowski(1, 3);
