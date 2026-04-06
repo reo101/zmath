@@ -1206,11 +1206,17 @@ pub fn signedBladeWithOptions(
 }
 
 /// Carrier type storing every blade in the algebra.
+///
+/// Prefer `ga.Algebra(sig).Instantiate(T).Full` at call sites. These free
+/// constructors remain as lower-level building blocks for generic internals.
 pub fn FullMultivector(comptime T: type, comptime sig: MetricSignature) type {
     return Multivector(T, &blade_ops.allBladeMasks(sig.dimension()), sig);
 }
 
 /// Carrier type restricted to one grade.
+///
+/// Prefer `ga.Algebra(sig).Instantiate(T).KVector`-style access through the
+/// algebra namespace when the signature is already known.
 pub fn KVector(comptime T: type, comptime grade: usize, comptime sig: MetricSignature) type {
     return Multivector(T, &blade_ops.gradeBladeMasks(sig.dimension(), grade), sig);
 }
@@ -1256,6 +1262,8 @@ pub fn Rotor(comptime T: type, comptime sig: MetricSignature) type {
 }
 
 /// Namespace for basis-vector and signed-blade helpers in one algebra.
+///
+/// Prefer `ga.Algebra(sig).Instantiate(T).Basis` at ordinary call sites.
 pub fn Basis(comptime T: type, comptime sig: MetricSignature) type {
     return BasisWithNamingOptions(T, sig, blade_parsing.SignedBladeNamingOptions.fromSignature(sig));
 }
