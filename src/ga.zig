@@ -25,7 +25,6 @@ pub const gradeBladeMasks = blades.gradeBladeMasks;
 pub const evenBladeMasks = blades.evenBladeMasks;
 pub const oddBladeMasks = blades.oddBladeMasks;
 pub const basisVectorMask = blades.basisVectorMask;
-pub const basisVectorBladeMask = basisVectorMask;
 pub const basisBladeMask = blades.basisBladeMask;
 pub const writeBladeMask = blades.writeBladeMask;
 
