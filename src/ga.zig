@@ -19,8 +19,6 @@ pub const SignedBladeNamingOptions = blade_parsing.SignedBladeNamingOptions;
 pub const euclideanSignature = blades.euclideanSignature;
 
 pub const isSignedBlade = blade_parsing.isSignedBlade;
-pub const isMultivectorType = multivector.isMultivectorType;
-pub const ensureMultivector = multivector.ensureMultivector;
 
 /// Returns a signature-baked algebra namespace for a fixed `Cl(p, q, r)`.
 pub fn Algebra(comptime sig: MetricSignature) type {
@@ -209,9 +207,6 @@ pub fn AlgebraWithNamingOptions(comptime sig: MetricSignature, comptime naming_o
     };
 }
 
-pub const fullSignedBladeFromIndicesWithSignature = multivector.fullSignedBladeFromIndicesWithSignature;
-pub const writeMultivector = multivector.writeMultivector;
-
 test "ga facade exposes core and specialized modules" {
     _ = expression;
 
@@ -220,7 +215,7 @@ test "ga facade exposes core and specialized modules" {
     try std.testing.expect(isSignedBlade("e(1,2)", 2, null));
 
     const sig: MetricSignature = .{ .p = 1, .q = 1 };
-    const value = fullSignedBladeFromIndicesWithSignature(i32, sig, &.{ 2, 2 });
+    const value = multivector.fullSignedBladeFromIndicesWithSignature(i32, sig, &.{ 2, 2 });
     try std.testing.expectEqual(@as(i32, -1), value.scalarCoeff());
 
     const E2 = Algebra(.euclidean(2)).Basis(f64);
