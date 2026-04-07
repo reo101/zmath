@@ -59,6 +59,10 @@ pub const SignedBladeNamingOptions = struct {
     /// Custom blade aliases (e.g., `i` → `e12` in Cl(2,0,0)).
     blade_aliases: []const BladeAlias = &.{},
 
+    /// Custom names for individual basis vectors (one-based indexed by named index).
+    /// If an entry is null, the default naming logic is used.
+    basis_names: []const ?[]const u8 = &.{},
+
     /// Builds naming options from basis spans while keeping parser syntax
     /// behavior at defaults (`basis_prefix = 'e'`, all forms enabled).
     pub fn withBasisSpans(basis_spans: blades.BasisIndexSpans) SignedBladeNamingOptions {
