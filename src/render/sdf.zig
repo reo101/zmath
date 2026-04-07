@@ -2,7 +2,7 @@ const std = @import("std");
 const curved_ambient = @import("../geometry/curved_ambient.zig");
 
 const Flat3 = curved_ambient.Flat3;
-pub const Vec3 = Flat3.Vector;
+const Vec3 = Flat3.Vector;
 
 fn normalizeOr(v: Vec3, fallback: Vec3) Vec3 {
     const length = v.magnitude();
@@ -31,10 +31,10 @@ fn maxComponent(v: Vec3) f32 {
 }
 
 pub const Ray = struct {
-    origin: Vec3,
-    direction: Vec3,
+    origin: Flat3.Vector,
+    direction: Flat3.Vector,
 
-    pub fn at(self: Ray, distance: f32) Vec3 {
+    pub fn at(self: Ray, distance: f32) Flat3.Vector {
         return self.origin.add(self.direction.scale(distance));
     }
 };
@@ -46,7 +46,7 @@ pub const Sample = struct {
 
 pub const Hit = struct {
     distance: f32,
-    position: Vec3,
+    position: Flat3.Vector,
     sample: Sample,
     steps: usize,
 };
@@ -60,24 +60,24 @@ pub const MarchOptions = struct {
     max_steps: usize = 96,
 };
 
-pub fn sphere(point: Vec3, radius: f32) f32 {
+pub fn sphere(point: Flat3.Vector, radius: f32) f32 {
     return point.magnitude() - radius;
 }
 
-pub fn box(point: Vec3, half_extent: Vec3) f32 {
+pub fn box(point: Flat3.Vector, half_extent: Flat3.Vector) f32 {
     const q = absVec(point).sub(half_extent);
     const outside = maxVec(q, Vec3.init(.{ 0.0, 0.0, 0.0 })).magnitude();
     const inside = @min(maxComponent(q), 0.0);
     return outside + inside;
 }
 
-pub fn torus(point: Vec3, major_radius: f32, minor_radius: f32) f32 {
+pub fn torus(point: Flat3.Vector, major_radius: f32, minor_radius: f32) f32 {
     const n = point.named();
     const qx = @sqrt(n.e1 * n.e1 + n.e2 * n.e2) - major_radius;
     return @sqrt(qx * qx + n.e3 * n.e3) - minor_radius;
 }
 
-pub fn plane(point: Vec3, unit_normal: Vec3, offset: f32) f32 {
+pub fn plane(point: Flat3.Vector, unit_normal: Flat3.Vector, offset: f32) f32 {
     return point.scalarProduct(unit_normal) + offset;
 }
 
@@ -110,7 +110,7 @@ pub fn rotate2(v: [2]f32, angle: f32) [2]f32 {
     };
 }
 
-pub fn estimateNormal(scene_fn: anytype, point: Vec3, epsilon: f32) Vec3 {
+pub fn estimateNormal(scene_fn: anytype, point: Flat3.Vector, epsilon: f32) Flat3.Vector {
     const e = epsilon;
     const center = scene_fn(point).distance;
     const nx = center - scene_fn(point.sub(Vec3.init(.{ e, 0.0, 0.0 }))).distance;
@@ -119,7 +119,7 @@ pub fn estimateNormal(scene_fn: anytype, point: Vec3, epsilon: f32) Vec3 {
     return normalizeOr(Vec3.init(.{ nx, ny, nz }), Vec3.init(.{ 0.0, 0.0, 1.0 }));
 }
 
-pub fn estimateNormalWith(scene_fn: anytype, ctx: anytype, point: Vec3, epsilon: f32) Vec3 {
+pub fn estimateNormalWith(scene_fn: anytype, ctx: anytype, point: Flat3.Vector, epsilon: f32) Flat3.Vector {
     const e = epsilon;
     const center = scene_fn(ctx, point).distance;
     const nx = center - scene_fn(ctx, point.sub(Vec3.init(.{ e, 0.0, 0.0 }))).distance;
