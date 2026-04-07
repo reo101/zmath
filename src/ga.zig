@@ -1,3 +1,21 @@
+//! Geometric Algebra (GA) core module.
+//!
+//! This module provides the foundational tools for working with multivectors,
+//! blades, and algebras.
+//!
+//! ### Canonical Usage
+//! For most users, the `Algebra` function is the primary entry point. It creates
+//! a namespace for a specific metric signature (e.g., Euclidean, Minkowski, Projective).
+//!
+//! ```zig
+//! const Cl3 = ga.Algebra(.euclidean(3)).Instantiate(f64);
+//! const v = Cl3.Vector.init(.{1, 2, 3});
+//! ```
+//!
+//! ### Advanced Usage
+//! The underlying modules (`blades`, `multivector`, `rotors`) can be used directly
+//! for more low-level control or when building custom algebra abstractions.
+
 const std = @import("std");
 
 pub const blades = @import("ga/blades.zig");
@@ -13,6 +31,9 @@ pub const NamingOptions = blade_parsing.SignedBladeNamingOptions;
 pub const euclideanSignature = blades.euclideanSignature;
 
 /// Returns a signature-baked algebra namespace for a fixed `Cl(p, q, r)`.
+///
+/// This provides a high-level API for creating multivector types, basis helpers,
+/// and expression compilers for a specific algebra.
 pub fn Algebra(comptime sig: blades.MetricSignature) type {
     return AlgebraWithNamingOptions(sig, blade_parsing.SignedBladeNamingOptions.fromSignature(sig));
 }
@@ -25,54 +46,62 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
         pub const dimension = metric_signature.dimension();
         pub const naming = naming_options;
 
-        /// Generic multivector type for this algebra.
+        /// Creates a generic multivector type restricted to specific blades.
         pub fn Multivector(comptime T: type, comptime blade_masks: []const blades.BladeMask) type {
             return multivector.MultivectorWithNaming(T, blade_masks, metric_signature, naming);
         }
 
-        /// Basis helper for this algebra.
+        /// Creates a basis helper for this algebra, providing named basis vectors (e.g., `e1`, `e12`).
         pub fn Basis(comptime T: type) type {
             return multivector.BasisWithNamingOptions(T, metric_signature, naming);
         }
 
-        /// Full multivector carrier for this algebra.
+        /// Multivector carrier containing all possible blades for this algebra.
         pub fn FullMultivector(comptime T: type) type {
             return Self.Multivector(T, &blades.allBladeMasks(dimension));
         }
 
-        /// Grade-restricted multivector carrier for this algebra.
+        /// Grade-restricted multivector carrier (e.g., only Vectors, only Bivectors).
         pub fn KVector(comptime T: type, comptime grade: usize) type {
             return Self.Multivector(T, &blades.gradeBladeMasks(dimension, grade));
         }
 
+        /// Multivector containing only even-grade blades (e.g., Scalars + Bivectors).
         pub fn EvenMultivector(comptime T: type) type {
             return Self.Multivector(T, &blades.evenBladeMasks(dimension));
         }
 
+        /// Multivector containing only odd-grade blades (e.g., Vectors + Trivectors).
         pub fn OddMultivector(comptime T: type) type {
             return Self.Multivector(T, &blades.oddBladeMasks(dimension));
         }
 
+        /// Scalar type (Grade 0).
         pub fn Scalar(comptime T: type) type {
             return Self.KVector(T, 0);
         }
 
+        /// Vector type (Grade 1).
         pub fn Vector(comptime T: type) type {
             return Self.KVector(T, 1);
         }
 
+        /// Bivector type (Grade 2).
         pub fn Bivector(comptime T: type) type {
             return Self.KVector(T, 2);
         }
 
+        /// Trivector type (Grade 3).
         pub fn Trivector(comptime T: type) type {
             return Self.KVector(T, 3);
         }
 
+        /// Pseudoscalar type (Top Grade).
         pub fn Pseudoscalar(comptime T: type) type {
             return Self.KVector(T, dimension);
         }
 
+        /// Rotor type (Even Multivectors).
         pub fn Rotor(comptime T: type) type {
             return Self.EvenMultivector(T);
         }
@@ -93,7 +122,7 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
             return Self.basisBlade(T, blades.basisVectorMask(dimension, one_based_index));
         }
 
-        /// Constructs a signed blade from a name string.
+        /// Constructs a signed blade from a name string (e.g., "e1", "-e12", "e(1,2)").
         pub fn signedBlade(
             comptime T: type,
             comptime name: []const u8,
@@ -102,7 +131,7 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
             return Self.basisBlade(T, spec.mask).scale(@intFromEnum(spec.sign));
         }
 
-        /// Constructs a signed blade from internal indices.
+        /// Constructs a signed blade from internal basis indices.
         pub fn fullSignedBladeFromIndices(
             comptime T: type,
             indices: []const usize,
@@ -111,18 +140,28 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
             return Self.FullMultivector(T).init(raw.coeffsArray());
         }
 
-        /// Returns a namespace where all type constructors are bound to `T`.
+        /// Returns a namespace where all type constructors and common operations are bound to a specific coefficient type `T`.
         pub fn Instantiate(comptime T: type) type {
             return struct {
+                /// Scalar type (Grade 0) bound to `T`.
                 pub const Scalar = Self.Scalar(T);
+                /// Vector type (Grade 1) bound to `T`.
                 pub const Vector = Self.Vector(T);
+                /// Bivector type (Grade 2) bound to `T`.
                 pub const Bivector = Self.Bivector(T);
+                /// Trivector type (Grade 3) bound to `T`.
                 pub const Trivector = Self.Trivector(T);
+                /// Full multivector carrier bound to `T`.
                 pub const Full = Self.FullMultivector(T);
+                /// Even-grade multivector carrier bound to `T`.
                 pub const Even = Self.EvenMultivector(T);
+                /// Odd-grade multivector carrier bound to `T`.
                 pub const Odd = Self.OddMultivector(T);
+                /// Pseudoscalar type bound to `T`.
                 pub const Pseudoscalar = Self.Pseudoscalar(T);
+                /// Rotor type bound to `T`.
                 pub const Rotor = Self.Rotor(T);
+                /// Basis helper providing named basis vectors, bound to `T`.
                 pub const Basis = Self.Basis(T);
 
                 /// Constructs a unit basis blade from a mask.
@@ -185,7 +224,7 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
                     return expression.compile(T, metric_signature, naming, source);
                 }
 
-                /// Evaluates a multivector expression string.
+                /// Evaluates a multivector expression string into a Full multivector.
                 pub fn expr(comptime source: []const u8, args: anytype) multivector.FullMultivector(T, metric_signature) {
                     return compileExpr(source).eval(args);
                 }

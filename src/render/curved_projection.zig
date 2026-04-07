@@ -125,11 +125,25 @@ test "wrapped projection breaks on large horizontal wrap" {
     try std.testing.expect(!shouldBreakProjectionSegment(.stereographic, .{ 10.0, 20.0 }, .{ 15.0, 22.0 }, 100, 50));
 }
 
-test "conformal model point projects inside the screen" {
-    const point = Vec3.init(.{ 0.10, -0.20, 0.30 });
-    const projected = projectConformalModelPoint(point, 160, 90, 1.0).?;
-    try std.testing.expect(projected[0] >= 0.0);
-    try std.testing.expect(projected[0] <= 160.0);
-    try std.testing.expect(projected[1] >= 0.0);
-    try std.testing.expect(projected[1] <= 90.0);
+test "sample status correctly handles clipping and visibility" {
+    const clip = DistanceClip{ .near = 1.0, .far = 10.0 };
+    try std.testing.expectEqual(SampleStatus.visible, sampleStatus(5.0, clip, .{ 10.0, 10.0 }));
+    try std.testing.expectEqual(SampleStatus.hidden, sampleStatus(5.0, clip, null));
+    try std.testing.expectEqual(SampleStatus.clipped_near, sampleStatus(0.5, clip, .{ 10.0, 10.0 }));
+    try std.testing.expectEqual(SampleStatus.clipped_far, sampleStatus(15.0, clip, .{ 10.0, 10.0 }));
+}
+
+test "projectConformalModelPoint handles aspect ratio and zoom" {
+    const point = Vec3.init(.{ 0.0, 0.0, 0.0 });
+    const projected = projectConformalModelPoint(point, 200, 100, 1.0).?;
+    // Center should be (100, 50)
+    try std.testing.expectApproxEqAbs(@as(f32, 100.0), projected[0], 1e-5);
+    try std.testing.expectApproxEqAbs(@as(f32, 50.0), projected[1], 1e-5);
+
+    const offset_point = Vec3.init(.{ 0.1, 0.1, 0.0 });
+    const projected_offset = projectConformalModelPoint(offset_point, 200, 100, 1.0).?;
+    // x = (0.1 * 1.0 / (200/200) + 1.0) * 100 = 1.1 * 100 = 110
+    // y = (1.0 - 0.1 * 1.0) * 50 = 0.9 * 50 = 45
+    try std.testing.expectApproxEqAbs(@as(f32, 110.0), projected_offset[0], 1e-5);
+    try std.testing.expectApproxEqAbs(@as(f32, 45.0), projected_offset[1], 1e-5);
 }
