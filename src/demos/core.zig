@@ -213,6 +213,10 @@ pub const CameraState = struct {
     fn euclidEyeVector(self: CameraState) h.Vector {
         return h.Vector.init(.{ self.euclid_eye_x, self.euclid_eye_y, self.euclid_eye_z });
     }
+
+    fn euclideanCameraBasis(self: CameraState) EuclideanCameraBasis {
+        return euclideanCameraBasisFromAngles(self.euclidEyeVector(), self.euclid_rotation, self.euclid_pitch);
+    }
 };
 
 pub const App = struct {
@@ -370,42 +374,76 @@ pub const App = struct {
     }
 }
 
-fn renderEuclideanGround(
-    self: *App,
-    canvas: *canvas_api.Canvas,
-    width: usize,
-    height: usize,
-    zoom: f32,
-    projection_mode: projection.EuclideanProjection,
-) void {
-    const cell_size: f32 = 4.0;
-    const ground_y: f32 = 4.0;
-    const basis = euclideanCameraBasis(self.camera);
+    fn renderEuclideanGround(
+        self: *App,
+        canvas: *canvas_api.Canvas,
+        width: usize,
+        height: usize,
+        zoom: f32,
+        projection_mode: projection.EuclideanProjection,
+    ) void {
+        const cell_size: f32 = 4.0;
+        const ground_y: f32 = -4.0; // Place ground BELOW the origin/camera
+        const basis = self.camera.euclideanCameraBasis();
 
-    for (0..height) |yi| {
-        for (0..width) |xi| {
-            const screen_p = [2]f32{ @floatFromInt(xi), @floatFromInt(yi) };
-            const dir = projection.inverseProjectEuclidean(screen_p, width, height, zoom, projection_mode);
+        for (0..height) |yi| {
+            for (0..width) |xi| {
+                const screen_p = [2]f32{ @floatFromInt(xi), @floatFromInt(yi) };
+                const dir_cam = projection.inverseProjectEuclidean(screen_p, width, height, zoom, projection_mode);
 
-            // Ray: P(t) = eye + t*dir
-            // Hit ground: P(t).y = ground_y  => eye.y + t*dir.y = ground_y
-            const eye = basis.eye.coeffNamed("e2");
-            const dy = dir.coeffNamed("e2");
+                // Transform direction from camera space to world space
+                const dir = basis.right.scale(dir_cam.coeffNamed("e1"))
+                    .add(basis.up.scale(dir_cam.coeffNamed("e2")))
+                    .add(basis.forward.scale(dir_cam.coeffNamed("e3")));
 
-            if (@abs(dy) < 1e-6) continue;
-            const t = (ground_y - eye) / dy;
-            if (t <= 0.0 or t > far_clip_z) continue;
+                if (projection_mode == .perspective) {
+                    // Ray: P(t) = eye + t*dir
+                    const eye_y = basis.eye.coeffNamed("e2");
+                    const dy = dir.coeffNamed("e2");
 
-            const hit = basis.eye.add(dir.scale(t));
-            const hx = hit.coeffNamed("e1");
-            const hz = hit.coeffNamed("e3");
+                    if (@abs(dy) < 1e-6) continue;
+                    const t = (ground_y - eye_y) / dy;
+                    if (t <= 0.0 or t > far_clip_z) continue;
 
-            const checker = ((@as(i32, @intFromFloat(@floor(hx / cell_size))) + @as(i32, @intFromFloat(@floor(hz / cell_size)))) & 1) == 0;
-            const tone = if (checker) @as(u8, 237) else @as(u8, 236);
-            canvas.setFill(@floatFromInt(xi), @floatFromInt(yi), 1, tone, t);
+                    const hit = basis.eye.add(dir.scale(t));
+                    const hx = hit.coeffNamed("e1");
+                    const hz = hit.coeffNamed("e3");
+
+                    const checker = ((@as(i32, @intFromFloat(@floor(hx / cell_size))) + @as(i32, @intFromFloat(@floor(hz / cell_size)))) & 1) == 0;
+                    const tone = if (checker) @as(u8, 237) else @as(u8, 236);
+                    canvas.setFill(@floatFromInt(xi), @floatFromInt(yi), 1, tone, t);
+                } else {
+                    // Isometric: Parallel projection. Ray starts at eye + screen_plane_offset
+                    // and travels along world-space forward.
+                    const z_offset = projection.euclideanProjectionDepthOffset(.isometric);
+                    const aspect = @as(f32, @floatFromInt(width)) / @as(f32, @floatFromInt(height * 2));
+                    const x_unit = (@as(f32, @floatFromInt(xi)) / (@as(f32, @floatFromInt(width)) / 2.0)) - 1.0;
+                    const y_unit = 1.0 - (@as(f32, @floatFromInt(yi)) / (@as(f32, @floatFromInt(height)) / 2.0));
+
+                    const scale = zoom / z_offset;
+                    const origin = basis.eye
+                        .add(basis.right.scale(x_unit * aspect / scale))
+                        .add(basis.up.scale(y_unit / scale));
+
+                    const ray_dir = basis.forward;
+                    const eye_y = origin.coeffNamed("e2");
+                    const dy = ray_dir.coeffNamed("e2");
+
+                    if (@abs(dy) < 1e-6) continue;
+                    const t = (ground_y - eye_y) / dy;
+                    if (t + z_offset <= 0.0 or t + z_offset > far_clip_z) continue;
+
+                    const hit = origin.add(ray_dir.scale(t));
+                    const hx = hit.coeffNamed("e1");
+                    const hz = hit.coeffNamed("e3");
+
+                    const checker = ((@as(i32, @intFromFloat(@floor(hx / cell_size))) + @as(i32, @intFromFloat(@floor(hz / cell_size)))) & 1) == 0;
+                    const tone = if (checker) @as(u8, 237) else @as(u8, 236);
+                    canvas.setFill(@floatFromInt(xi), @floatFromInt(yi), 1, tone, t + z_offset);
+                }
+            }
         }
     }
-}
 
 pub fn render(self: *App, canvas: *canvas_api.Canvas, width: usize, height: usize) FrameInfo {
     canvas.clear();
