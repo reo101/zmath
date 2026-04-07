@@ -1,7 +1,10 @@
 const std = @import("std");
 
 pub const ga = @import("../ga.zig");
+const blade_parsing = @import("../ga/blade_parsing.zig");
+const blades = @import("../ga/blades.zig");
 const family = @import("../ga/family.zig");
+const multivector = @import("../ga/multivector.zig");
 const projective_helpers = @import("projective_helpers.zig");
 
 /// PGA signature `Cl(3, 0, 1)`: three positive basis vectors and one
@@ -61,7 +64,7 @@ pub fn FamilyHelpers(comptime FamilyType: type, comptime T: type) type {
         /// Converts a PGA multivector (intended to be a rotor) to a 4x4 matrix.
         /// Assumes the multivector acts on points P = x*e1 + y*e2 + z*e3 + e0.
         pub fn toMatrix4x4(mv: anytype) [4][4]T {
-            ga.multivector.ensureMultivector(@TypeOf(mv));
+            multivector.ensureMultivector(@TypeOf(mv));
             const E = H.Basis;
             const basis_vectors = [_]H.Vector{
                 E.e(1).gradePart(1),
@@ -187,14 +190,14 @@ test "fullSignedBladeFromIndicesWithSignature respects degenerate square" {
 }
 
 test "pga signed blade parser accepts e0 alias for degenerate basis" {
-    const parsed = ga.blade_parsing.parseSignedBlade("e0", dimension, bindings.naming_options, false);
-    try std.testing.expectEqual(ga.blades.SignedBladeSpec{ .sign = .positive, .mask = .init(0b1000) }, try parsed);
+    const parsed = blade_parsing.parseSignedBlade("e0", dimension, bindings.naming_options, false);
+    try std.testing.expectEqual(blades.SignedBladeSpec{ .sign = .positive, .mask = .init(0b1000) }, try parsed);
 
     const E = h.Basis;
     try std.testing.expect(E.signedBlade("e0").eql(E.e(0)));
-    try std.testing.expectError(error.InvalidBasisIndex, ga.blade_parsing.resolveNamedBasisIndex(4, dimension, bindings.naming_options, false));
-    try std.testing.expectError(error.InvalidBasisIndex, ga.blade_parsing.parseSignedBlade("e4", dimension, bindings.naming_options, false));
-    try std.testing.expectError(error.InvalidBasisIndex, ga.blade_parsing.parseSignedBlade("e14", dimension, bindings.naming_options, false));
+    try std.testing.expectError(error.InvalidBasisIndex, blade_parsing.resolveNamedBasisIndex(4, dimension, bindings.naming_options, false));
+    try std.testing.expectError(error.InvalidBasisIndex, blade_parsing.parseSignedBlade("e4", dimension, bindings.naming_options, false));
+    try std.testing.expectError(error.InvalidBasisIndex, blade_parsing.parseSignedBlade("e14", dimension, bindings.naming_options, false));
 }
 
 test "Point.init correctly constructs trivectors" {
