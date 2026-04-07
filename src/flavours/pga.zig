@@ -2,6 +2,7 @@ const std = @import("std");
 
 pub const ga = @import("../ga.zig");
 const family = @import("../ga/family.zig");
+const projective_helpers = @import("projective_helpers.zig");
 
 /// PGA signature `Cl(3, 0, 1)`: three positive basis vectors and one
 /// degenerate (null) basis vector `e0` that squares to zero.
@@ -22,14 +23,27 @@ pub const h = bindings.h;
 
 pub fn InstantiateHelpers(comptime T: type) type {
     const H = Instantiate(T);
+    const Shared = projective_helpers.EuclideanProjectiveHelpers(T, H);
 
     return struct {
         pub const h = H;
 
         pub const Point = struct {
+            pub fn initHomogeneousCoords(w: T, coords: [H.Full.dimensions - 1]T) H.Full {
+                return Shared.Point.initHomogeneousCoords(w, coords);
+            }
+
+            pub fn fromCoords(coords: [H.Full.dimensions - 1]T) H.Full {
+                return Shared.Point.fromCoords(coords);
+            }
+
             pub fn init(x: T, y: T, z: T) H.Full {
                 // PGA points are trivectors: x*e230 + y*e310 + z*e120 + e123.
                 return H.exprAs(H.Full, "{x}*e_2_3_0 + {y}*e_3_1_0 + {z}*e_1_2_0 + e123", .{ .x = x, .y = y, .z = z });
+            }
+
+            pub fn directionFromCoords(coords: [H.Full.dimensions - 1]T) H.Full {
+                return Shared.Point.directionFromCoords(coords);
             }
 
             pub fn direction(x: T, y: T, z: T) H.Full {
@@ -66,6 +80,10 @@ pub fn InstantiateHelpers(comptime T: type) type {
             }
             return mat;
         }
+
+        pub fn ambientCoords(p: anytype) [H.Full.dimensions]T {
+            return Shared.ambientCoords(p);
+        }
     };
 }
 
@@ -73,6 +91,7 @@ const default_helpers = InstantiateHelpers(default_scalar);
 pub const Point = default_helpers.Point;
 pub const Plane = default_helpers.Plane;
 pub const toMatrix4x4 = default_helpers.toMatrix4x4;
+pub const ambientCoords = default_helpers.ambientCoords;
 
 fn namedBasisIndex(comptime named_index: usize) usize {
     return bindings.resolveNamedBasisIndex(named_index);
@@ -207,4 +226,14 @@ test "pga helpers are instantiatable by scalar type" {
 
     try std.testing.expectEqual(@as(f64, 1.0), p.coeffNamedWithOptions("e_2_3_0", bindings.naming_options));
     try std.testing.expectEqual(@as(f64, 1.0), Helpers.toMatrix4x4(Helpers.h.Scalar.init(.{1}))[0][0]);
+}
+
+test "pga helpers support non-3d families through coordinate arrays" {
+    const Helpers = projective_helpers.EuclideanProjectiveHelpers(f32, EuclideanFamily(2).Instantiate(f32));
+    const p = Helpers.Point.fromCoords(.{ 1.0, 2.0 });
+    const coords = Helpers.ambientCoords(p);
+
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), coords[0], 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), coords[1], 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), coords[2], 1e-6);
 }

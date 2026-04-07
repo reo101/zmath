@@ -149,3 +149,43 @@ pub fn RoundProjectiveHelpers(
         }
     };
 }
+
+pub fn EuclideanProjectiveHelpers(comptime T: type, comptime H: type) type {
+    const coord_count = H.Full.dimensions - 1;
+
+    return struct {
+        pub const h = H;
+
+        pub const Point = struct {
+            pub fn initHomogeneousCoords(w: T, coords: [coord_count]T) H.Full {
+                return initHomogeneousPoint(T, H, w, coords);
+            }
+
+            pub fn fromCoords(coords: [coord_count]T) H.Full {
+                return initHomogeneousPoint(T, H, 1.0, coords);
+            }
+
+            pub fn init(x: T, y: T, z: T) H.Full {
+                if (comptime coord_count != 3) {
+                    @compileError("`Point.init(x, y, z)` is only available for 3D projective Euclidean families; use `Point.fromCoords()` for other dimensions");
+                }
+                return fromCoords(.{ x, y, z });
+            }
+
+            pub fn directionFromCoords(coords: [coord_count]T) H.Full {
+                return initHomogeneousPoint(T, H, 0.0, coords);
+            }
+
+            pub fn direction(x: T, y: T, z: T) H.Full {
+                if (comptime coord_count != 3) {
+                    @compileError("`Point.direction(x, y, z)` is only available for 3D projective Euclidean families; use `Point.directionFromCoords()` for other dimensions");
+                }
+                return directionFromCoords(.{ x, y, z });
+            }
+        };
+
+        pub fn ambientCoords(p: anytype) [H.Full.dimensions]T {
+            return homogeneousCoords(T, H, p);
+        }
+    };
+}
