@@ -982,6 +982,70 @@ fn parserParsePrefix(
     };
 }
 
+const InfixOperatorKind = enum {
+    inverse,
+    implicit_gp,
+    gp,
+    divide,
+    wedge,
+    dot,
+    left_contraction,
+    right_contraction,
+    join,
+    add,
+    sub,
+};
+
+fn infixOperatorBindingPower(kind: InfixOperatorKind) pratt.BindingPower {
+    return switch (kind) {
+        .inverse => pratt.postfix(9),
+        .implicit_gp => pratt.leftAssoc(7),
+        .gp, .divide, .wedge, .dot, .left_contraction, .right_contraction => pratt.leftAssoc(5),
+        .join => pratt.leftAssoc(4),
+        .add, .sub => pratt.leftAssoc(3),
+    };
+}
+
+fn infixOperatorNodeCost(kind: InfixOperatorKind) usize {
+    return switch (kind) {
+        .divide, .sub => 2,
+        .inverse,
+        .implicit_gp,
+        .gp,
+        .wedge,
+        .dot,
+        .left_contraction,
+        .right_contraction,
+        .join,
+        .add,
+        => 1,
+    };
+}
+
+fn infixOperator(tag: anytype, kind: InfixOperatorKind) pratt.Operator(@TypeOf(tag)) {
+    return .{
+        .tag = tag,
+        .binding_power = infixOperatorBindingPower(kind),
+    };
+}
+
+fn infixOperatorKindForTag(tag: anytype) ?InfixOperatorKind {
+    return switch (tag) {
+        .inverse => .inverse,
+        .number, .blade, .placeholder, .lparen => .implicit_gp,
+        .star => .gp,
+        .slash => .divide,
+        .wedge => .wedge,
+        .dot => .dot,
+        .left_contraction => .left_contraction,
+        .right_contraction => .right_contraction,
+        .join => .join,
+        .plus => .add,
+        .minus => .sub,
+        else => null,
+    };
+}
+
 fn ParserPrattContext(
     comptime T: type,
     comptime sig: blades.MetricSignature,
@@ -992,21 +1056,21 @@ fn ParserPrattContext(
         pub const NodeIndex = usize;
         pub const ParseError = Parser.ParserError;
         const TokenTag = ParserTypes(T, sig).TokenTag;
-        const operator_table: []const pratt.Operator(TokenTag) = &.{
-            pratt.postfixOperator(TokenTag.inverse, 9),
-            pratt.leftAssocOperator(TokenTag.number, 7),
-            pratt.leftAssocOperator(TokenTag.blade, 7),
-            pratt.leftAssocOperator(TokenTag.placeholder, 7),
-            pratt.leftAssocOperator(TokenTag.lparen, 7),
-            pratt.leftAssocOperator(TokenTag.star, 5),
-            pratt.leftAssocOperator(TokenTag.slash, 5),
-            pratt.leftAssocOperator(TokenTag.wedge, 5),
-            pratt.leftAssocOperator(TokenTag.dot, 5),
-            pratt.leftAssocOperator(TokenTag.left_contraction, 5),
-            pratt.leftAssocOperator(TokenTag.right_contraction, 5),
-            pratt.leftAssocOperator(TokenTag.join, 4),
-            pratt.leftAssocOperator(TokenTag.plus, 3),
-            pratt.leftAssocOperator(TokenTag.minus, 3),
+        pub const operator_table: []const pratt.Operator(TokenTag) = &.{
+            infixOperator(TokenTag.inverse, .inverse),
+            infixOperator(TokenTag.number, .implicit_gp),
+            infixOperator(TokenTag.blade, .implicit_gp),
+            infixOperator(TokenTag.placeholder, .implicit_gp),
+            infixOperator(TokenTag.lparen, .implicit_gp),
+            infixOperator(TokenTag.star, .gp),
+            infixOperator(TokenTag.slash, .divide),
+            infixOperator(TokenTag.wedge, .wedge),
+            infixOperator(TokenTag.dot, .dot),
+            infixOperator(TokenTag.left_contraction, .left_contraction),
+            infixOperator(TokenTag.right_contraction, .right_contraction),
+            infixOperator(TokenTag.join, .join),
+            infixOperator(TokenTag.plus, .add),
+            infixOperator(TokenTag.minus, .sub),
         };
 
         parser: *Parser,
@@ -1015,39 +1079,40 @@ fn ParserPrattContext(
             return parserParsePrefix(T, sig, self.parser);
         }
 
-        pub fn currentBindingPower(self: Self) ?pratt.BindingPower {
-            return pratt.bindingPowerFor(std.meta.activeTag(self.parser.current), operator_table);
+        pub fn currentTokenTag(self: Self) TokenTag {
+            return std.meta.activeTag(self.parser.current);
         }
 
         pub fn parseInfix(self: *Self, lhs: NodeIndex, bp: pratt.BindingPower) ParseError!NodeIndex {
             const current_token = self.parser.current;
+            const token_tag = std.meta.activeTag(current_token);
+            const operator_kind = infixOperatorKindForTag(token_tag) orelse return error.UnexpectedToken;
 
-            return switch (current_token) {
+            return switch (operator_kind) {
+                .implicit_gp => blk: {
+                    const rhs = try pratt.parseExpression(Self, self, bp.right);
+                    break :blk parserBuildGp(T, sig, self.parser, lhs, rhs);
+                },
                 .inverse => blk: {
                     try parserAdvance(T, sig, self.parser);
                     break :blk parserBuildInverse(T, sig, self.parser, lhs);
                 },
-                .star, .slash, .wedge, .dot, .left_contraction, .right_contraction, .join, .plus, .minus => blk: {
+                .gp, .divide, .wedge, .dot, .left_contraction, .right_contraction, .join, .add, .sub => blk: {
                     try parserAdvance(T, sig, self.parser);
                     const rhs = try pratt.parseExpression(Self, self, bp.right);
-                    break :blk switch (current_token) {
-                        .star => parserBuildGp(T, sig, self.parser, lhs, rhs),
-                        .slash => parserBuildGp(T, sig, self.parser, lhs, try parserBuildInverse(T, sig, self.parser, rhs)),
+                    break :blk switch (operator_kind) {
+                        .gp => parserBuildGp(T, sig, self.parser, lhs, rhs),
+                        .divide => parserBuildGp(T, sig, self.parser, lhs, try parserBuildInverse(T, sig, self.parser, rhs)),
                         .wedge => parserBuildWedge(T, sig, self.parser, lhs, rhs),
                         .dot => parserBuildDot(T, sig, self.parser, lhs, rhs),
                         .left_contraction => parserBuildLeftContraction(T, sig, self.parser, lhs, rhs),
                         .right_contraction => parserBuildRightContraction(T, sig, self.parser, lhs, rhs),
                         .join => parserBuildJoin(T, sig, self.parser, lhs, rhs),
-                        .plus => parserBuildAdd(T, sig, self.parser, lhs, rhs),
-                        .minus => parserBuildSub(T, sig, self.parser, lhs, rhs),
+                        .add => parserBuildAdd(T, sig, self.parser, lhs, rhs),
+                        .sub => parserBuildSub(T, sig, self.parser, lhs, rhs),
                         else => unreachable,
                     };
                 },
-                .number, .blade, .placeholder, .lparen => blk: {
-                    const rhs = try pratt.parseExpression(Self, self, bp.right);
-                    break :blk parserBuildGp(T, sig, self.parser, lhs, rhs);
-                },
-                else => error.UnexpectedToken,
             };
         }
     };
@@ -1069,15 +1134,16 @@ const CompilerStorageCaps = struct {
     max_placeholders: usize,
 };
 
+fn tokenTagStartsImplicitGp(tag: anytype) bool {
+    return infixOperatorKindForTag(tag) == .implicit_gp;
+}
+
 fn tokenStartsImplicitGp(
     comptime T: type,
     comptime sig: blades.MetricSignature,
     token: ParserTypes(T, sig).Token,
 ) bool {
-    return switch (token) {
-        .number, .blade, .placeholder, .lparen => true,
-        else => false,
-    };
+    return tokenTagStartsImplicitGp(std.meta.activeTag(token));
 }
 
 fn compilerStorageCaps(
@@ -1137,7 +1203,7 @@ fn compilerStorageCaps(
         }
 
         if (!expecting_prefix and tokenStartsImplicitGp(T, sig, token)) {
-            operator_node_count += 1;
+            operator_node_count += infixOperatorNodeCost(.implicit_gp);
             expecting_prefix = true;
         }
 
@@ -1174,13 +1240,9 @@ fn compilerStorageCaps(
         }
 
         switch (token) {
-            .inverse => operator_node_count += 1,
-            .star, .wedge, .join, .dot, .left_contraction, .right_contraction, .plus => {
-                operator_node_count += 1;
-                expecting_prefix = true;
-            },
-            .slash, .minus => {
-                operator_node_count += 2;
+            .inverse => operator_node_count += infixOperatorNodeCost(.inverse),
+            .star, .slash, .wedge, .join, .dot, .left_contraction, .right_contraction, .plus, .minus => {
+                operator_node_count += infixOperatorNodeCost(infixOperatorKindForTag(std.meta.activeTag(token)).?);
                 expecting_prefix = true;
             },
             .rparen => {},

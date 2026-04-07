@@ -63,8 +63,19 @@ pub fn ensureContext(comptime Context: type) void {
     if (!@hasDecl(Context, "NodeIndex")) @compileError(@typeName(Context) ++ " must declare `NodeIndex`");
     if (!@hasDecl(Context, "ParseError")) @compileError(@typeName(Context) ++ " must declare `ParseError`");
     if (!@hasDecl(Context, "parsePrefix")) @compileError(@typeName(Context) ++ " must declare `parsePrefix`");
-    if (!@hasDecl(Context, "currentBindingPower")) @compileError(@typeName(Context) ++ " must declare `currentBindingPower`");
     if (!@hasDecl(Context, "parseInfix")) @compileError(@typeName(Context) ++ " must declare `parseInfix`");
+    if (!@hasDecl(Context, "currentBindingPower")) {
+        if (!@hasDecl(Context, "currentTokenTag")) @compileError(@typeName(Context) ++ " must declare `currentBindingPower` or `currentTokenTag`");
+        if (!@hasDecl(Context, "operator_table")) @compileError(@typeName(Context) ++ " must declare `operator_table` when using `currentTokenTag`");
+    }
+}
+
+fn contextBindingPower(comptime Context: type, context: anytype) ?BindingPower {
+    if (@hasDecl(Context, "currentBindingPower")) {
+        return context.currentBindingPower();
+    }
+
+    return bindingPowerFor(context.currentTokenTag(), Context.operator_table);
 }
 
 pub fn parseExpression(
@@ -76,7 +87,7 @@ pub fn parseExpression(
 
     var lhs = try context.parsePrefix();
 
-    while (context.currentBindingPower()) |bp| {
+    while (contextBindingPower(Context, context)) |bp| {
         if (bp.left < min_bp) break;
         lhs = try context.parseInfix(lhs, bp);
     }
@@ -121,7 +132,7 @@ test "pratt loop handles precedence, prefix recursion, and postfix operators" {
         pub const NodeIndex = i32;
         pub const ParseError = error{UnexpectedToken};
         const TokenTag = std.meta.Tag(Token);
-        const operator_table: []const Operator(TokenTag) = &.{
+        pub const operator_table: []const Operator(TokenTag) = &.{
             leftAssocOperator(TokenTag.plus, 3),
             leftAssocOperator(TokenTag.star, 5),
             postfixOperator(TokenTag.bang, 9),
@@ -156,8 +167,8 @@ test "pratt loop handles precedence, prefix recursion, and postfix operators" {
             };
         }
 
-        pub fn currentBindingPower(self: @This()) ?BindingPower {
-            return bindingPowerFor(std.meta.activeTag(self.tokens[self.index]), operator_table);
+        pub fn currentTokenTag(self: @This()) TokenTag {
+            return std.meta.activeTag(self.tokens[self.index]);
         }
 
         pub fn parseInfix(self: *@This(), lhs: NodeIndex, bp: BindingPower) ParseError!NodeIndex {
@@ -220,7 +231,7 @@ test "pratt loop can express right-associative operators with a table" {
         pub const NodeIndex = i32;
         pub const ParseError = error{UnexpectedToken};
         const TokenTag = std.meta.Tag(Token);
-        const operator_table: []const Operator(TokenTag) = &.{
+        pub const operator_table: []const Operator(TokenTag) = &.{
             rightAssocOperator(TokenTag.caret, 7),
         };
 
@@ -251,8 +262,8 @@ test "pratt loop can express right-associative operators with a table" {
             };
         }
 
-        pub fn currentBindingPower(self: @This()) ?BindingPower {
-            return bindingPowerFor(std.meta.activeTag(self.tokens[self.index]), operator_table);
+        pub fn currentTokenTag(self: @This()) TokenTag {
+            return std.meta.activeTag(self.tokens[self.index]);
         }
 
         pub fn parseInfix(self: *@This(), lhs: NodeIndex, bp: BindingPower) ParseError!NodeIndex {
