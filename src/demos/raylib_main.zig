@@ -807,6 +807,143 @@ fn drawPolygonOutline(points: []const rl.Vector2, line_width: f32, color: rl.Col
     }
 }
 
+fn drawNativeGround(app: *const demo.App, viewport: rl.Rectangle) void {
+    const screen = curved.Screen{
+        .width = canvas_width * subpixel_x,
+        .height = canvas_height * subpixel_y,
+        .zoom = demo.modeZoom(app.angle, app.mode, app.camera),
+    };
+
+    if (isNativeEuclideanMode(app.mode)) {
+        drawNativeEuclideanGround(app, viewport, screen);
+    } else if (isCurvedMode(app.mode)) {
+        drawNativeCurvedGround(app, viewport, screen);
+    }
+}
+
+fn drawNativeEuclideanGround(app: *const demo.App, viewport: rl.Rectangle, screen: curved.Screen) void {
+    const cell_size: f32 = 4.0;
+    const ground_y: f32 = -4.0;
+    const basis = app.camera.euclideanCameraBasis();
+    const projection_mode: projection.EuclideanProjection = if (app.mode == .perspective) .perspective else .isometric;
+
+    // We can optimize by only drawing in the bottom half of the screen if the camera is level,
+    // but for simplicity and correctness with pitch, we'll iterate over the full viewport.
+    // To keep it fast, we can use a larger step size or just draw rects.
+    const step_x: usize = 4;
+    const step_y: usize = 4;
+
+    var yi: usize = 0;
+    while (yi < screen.height) : (yi += step_y) {
+        var xi: usize = 0;
+        while (xi < screen.width) : (xi += step_x) {
+            const screen_p = [2]f32{ @floatFromInt(xi), @floatFromInt(yi) };
+            const dir_cam = projection.inverseProjectEuclidean(screen_p, screen.width, screen.height, screen.zoom, projection_mode);
+
+            const dir = basis.right.scale(dir_cam.coeffNamed("e1"))
+                .add(basis.up.scale(dir_cam.coeffNamed("e2")))
+                .add(basis.forward.scale(dir_cam.coeffNamed("e3")));
+
+            var t: f32 = 0.0;
+            var hx: f32 = 0.0;
+            var hz: f32 = 0.0;
+
+            if (projection_mode == .perspective) {
+                const eye_y = basis.eye.coeffNamed("e2");
+                const dy = dir.coeffNamed("e2");
+                if (@abs(dy) < 1e-6) { xi += step_x; continue; }
+                t = (ground_y - eye_y) / dy;
+                if (t <= 0.0 or t > demo.far_clip_z) { xi += step_x; continue; }
+                const hit = basis.eye.add(dir.scale(t));
+                hx = hit.coeffNamed("e1");
+                hz = hit.coeffNamed("e3");
+            } else {
+                const z_offset = projection.euclideanProjectionDepthOffset(.isometric);
+                const aspect = @as(f32, @floatFromInt(screen.width)) / @as(f32, @floatFromInt(screen.height * 2));
+                const x_unit = (@as(f32, @floatFromInt(xi)) / (@as(f32, @floatFromInt(screen.width)) / 2.0)) - 1.0;
+                const y_unit = 1.0 - (@as(f32, @floatFromInt(yi)) / (@as(f32, @floatFromInt(screen.height)) / 2.0));
+                const scale = screen.zoom / z_offset;
+                const origin = basis.eye
+                    .add(basis.right.scale(x_unit * aspect / scale))
+                    .add(basis.up.scale(y_unit / scale));
+                const ray_dir = basis.forward;
+                const eye_y = origin.coeffNamed("e2");
+                const dy = ray_dir.coeffNamed("e2");
+                if (@abs(dy) < 1e-6) { xi += step_x; continue; }
+                t = (ground_y - eye_y) / dy;
+                if (t + z_offset <= 0.0 or t + z_offset > demo.far_clip_z) { xi += step_x; continue; }
+                const hit = origin.add(ray_dir.scale(t));
+                hx = hit.coeffNamed("e1");
+                hz = hit.coeffNamed("e3");
+                t += z_offset;
+            }
+
+            const checker = ((@as(i32, @intFromFloat(@floor(hx / cell_size))) + @as(i32, @intFromFloat(@floor(hz / cell_size)))) & 1) == 0;
+            const color = if (checker) rl.Color{ .r = 60, .g = 70, .b = 90, .a = 255 } else rl.Color{ .r = 40, .g = 50, .b = 70, .a = 255 };
+            
+            // Fog / Distance fade
+            const fog = 1.0 - std.math.clamp(t / (demo.far_clip_z * 0.8), 0.0, 1.0);
+            const final_color = rl.Color{ 
+                .r = @intFromFloat(@as(f32, @floatFromInt(color.r)) * fog),
+                .g = @intFromFloat(@as(f32, @floatFromInt(color.g)) * fog),
+                .b = @intFromFloat(@as(f32, @floatFromInt(color.b)) * fog),
+                .a = 255,
+            };
+
+            const p0 = samplePointToViewport(viewport, .{ @floatFromInt(xi), @floatFromInt(yi) }, screen.width, screen.height);
+            const p1 = samplePointToViewport(viewport, .{ @floatFromInt(xi + step_x), @floatFromInt(yi + step_y) }, screen.width, screen.height);
+            rl.DrawRectangleV(p0, .{ .x = p1.x - p0.x, .y = p1.y - p0.y }, final_color);
+            
+            xi += step_x;
+        }
+        yi += step_y;
+    }
+}
+
+fn drawNativeCurvedGround(app: *const demo.App, viewport: rl.Rectangle, screen: curved.Screen) void {
+    switch (app.mode) {
+        .hyperbolic => drawNativeCurvedGroundForView(app.camera.hyper, viewport, screen),
+        .spherical => drawNativeCurvedGroundForView(app.camera.spherical, viewport, screen),
+        else => unreachable,
+    }
+}
+
+fn drawNativeCurvedGroundForView(view: anytype, viewport: rl.Rectangle, screen: curved.Screen) void {
+    const basis = curved_ground.typedWalkGroundBasis(view, 0.0) orelse return;
+    const cell_size: f32 = 0.5;
+    
+    const step_x: usize = 4;
+    const step_y: usize = 4;
+
+    var yi: usize = 0;
+    while (yi < screen.height) : (yi += step_y) {
+        var xi: usize = 0;
+        while (xi < screen.width) : (xi += step_x) {
+            const hit = curved_ground.curvedGroundHitForScreenPoint(view, basis, screen, .{ @floatFromInt(xi), @floatFromInt(yi) }) orelse {
+                xi += step_x;
+                continue;
+            };
+            const checker = ((curved_ground.checkerCoord(hit.lateral, cell_size) + curved_ground.checkerCoord(hit.forward, cell_size)) & 1) == 0;
+            const color = if (checker) rl.Color{ .r = 60, .g = 70, .b = 90, .a = 255 } else rl.Color{ .r = 40, .g = 50, .b = 70, .a = 255 };
+            
+            const fog = 1.0 - std.math.clamp(hit.distance / (view.clip.far * 0.8), 0.0, 1.0);
+            const final_color = rl.Color{ 
+                .r = @intFromFloat(@as(f32, @floatFromInt(color.r)) * fog),
+                .g = @intFromFloat(@as(f32, @floatFromInt(color.g)) * fog),
+                .b = @intFromFloat(@as(f32, @floatFromInt(color.b)) * fog),
+                .a = 255,
+            };
+
+            const p0 = samplePointToViewport(viewport, .{ @floatFromInt(xi), @floatFromInt(yi) }, screen.width, screen.height);
+            const p1 = samplePointToViewport(viewport, .{ @floatFromInt(xi + step_x), @floatFromInt(yi + step_y) }, screen.width, screen.height);
+            rl.DrawRectangleV(p0, .{ .x = p1.x - p0.x, .y = p1.y - p0.y }, final_color);
+            
+            xi += step_x;
+        }
+        yi += step_y;
+    }
+}
+
 fn drawNativeScene(app: *const demo.App, viewport: rl.Rectangle, overlay_texture: ?rl.Texture2D) bool {
     if (isNativeEuclideanMode(app.mode)) {
         drawNativeEuclideanScene(app, viewport, overlay_texture);
@@ -837,6 +974,9 @@ fn drawNativeEuclideanScene(app: *const demo.App, viewport: rl.Rectangle, overla
         @min(viewport.width, viewport.height) * 0.24,
         viewport_glow,
     );
+
+    // Draw ground after the Euclidean backdrop
+    drawNativeGround(app, viewport);
 
     if (overlay_texture) |texture| {
         drawCanvasTexture(texture, viewport);
@@ -2517,6 +2657,10 @@ fn drawNativeCurvedScene(app: *const demo.App, viewport: rl.Rectangle, spherical
             else
                 hyper.view;
             drawCurvedSceneBackdrop(render_view, viewport);
+
+            // Draw native ground after backdrop
+            drawNativeGround(app, viewport);
+
             if (app.camera.movement_mode == .walk) {
                 const ground_basis = curved_ground.typedWalkGroundBasis(hyper.view, app.camera.euclid_pitch) orelse
                     curved_ground.typedWorldGroundBasis(.hyperbolic);
@@ -2548,6 +2692,9 @@ fn drawNativeCurvedScene(app: *const demo.App, viewport: rl.Rectangle, spherical
             const backdrop_start = benchStart();
             drawCurvedSceneBackdrop(render_view, viewport);
             benchAdd(.spherical_backdrop, backdrop_start);
+
+            drawNativeGround(app, viewport);
+
             if (spherical.view.projection == .wrapped) {
                 if (app.camera.movement_mode == .walk) {
                     const ground_start = benchStart();

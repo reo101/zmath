@@ -214,7 +214,7 @@ pub const CameraState = struct {
         return h.Vector.init(.{ self.euclid_eye_x, self.euclid_eye_y, self.euclid_eye_z });
     }
 
-    fn euclideanCameraBasis(self: CameraState) EuclideanCameraBasis {
+    pub fn euclideanCameraBasis(self: CameraState) EuclideanCameraBasis {
         return euclideanCameraBasisFromAngles(self.euclidEyeVector(), self.euclid_rotation, self.euclid_pitch);
     }
 };
@@ -875,7 +875,7 @@ fn sceneRotor(angle: f32, mode: DemoMode) h.Rotor {
     };
 }
 
-fn modeZoom(angle: f32, mode: DemoMode, camera: CameraState) f32 {
+pub fn modeZoom(angle: f32, mode: DemoMode, camera: CameraState) f32 {
     return switch (mode) {
         .perspective => std.math.clamp(5.75 + 0.20 * @sin(angle * 0.10), 5.2, 6.1),
         .isometric => std.math.clamp(0.82 + 0.04 * @sin(angle * 0.12), 0.75, 0.92),
