@@ -2,16 +2,16 @@ const std = @import("std");
 const geometry = @import("../geometry.zig");
 
 const curved = struct {
-    pub const Vec3 = geometry.curved_types.Vec3;
-    pub const CameraModel = geometry.curved_types.CameraModel;
-    pub const SphericalView = geometry.curved_view.SphericalView;
-    pub const TypedCamera = geometry.curved_types.TypedCamera;
-    pub const AmbientFor = geometry.curved_types.AmbientFor;
-    pub const ambientFromTypedTangentBasisPoint = geometry.curved_surface.ambientFromTypedTangentBasisPoint;
-    pub const modelPointForTypedAmbientWithCamera = geometry.curved_sampling.modelPointForTypedAmbientWithCamera;
-    pub const vec3 = geometry.curved_charts.vec3;
-    pub const vec3x = geometry.curved_charts.vec3x;
-    pub const vec3z = geometry.curved_charts.vec3z;
+    pub const Vec3 = geometry.curved.Vec3;
+    pub const CameraModel = geometry.curved.CameraModel;
+    pub const SphericalView = geometry.curved.SphericalView;
+    pub const TypedCamera = geometry.curved.TypedCamera;
+    pub const AmbientFor = geometry.curved.AmbientFor;
+    pub const ambientFromTypedTangentBasisPoint = geometry.curved.ambientFromTypedTangentBasisPoint;
+    pub const modelPointForTypedAmbientWithCamera = geometry.curved.modelPointForTypedAmbientWithCamera;
+    pub const vec3 = geometry.curved.vec3;
+    pub const vec3x = geometry.curved.vec3x;
+    pub const vec3z = geometry.curved.vec3z;
 };
 const Round = curved.AmbientFor(.spherical);
 

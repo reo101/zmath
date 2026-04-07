@@ -1,4 +1,5 @@
 const curved_charts = @import("curved_charts.zig");
+const curved_ambient = @import("curved_ambient.zig");
 const curved_sampling = @import("curved_sampling.zig");
 const curved_surface = @import("curved_surface.zig");
 const curved_types = @import("curved_types.zig");
@@ -19,6 +20,7 @@ pub const ProjectedSample = curved_types.ProjectedSample;
 pub const CameraError = curved_view.CameraError;
 
 pub const Vec3 = curved_types.Vec3;
+pub const Coords4 = curved_ambient.Coords4;
 pub const AmbientFor = curved_types.AmbientFor;
 pub const TypedCamera = curved_types.TypedCamera;
 pub const TypedWalkBasis = curved_types.TypedWalkBasis;

@@ -5,18 +5,18 @@ const curved_canvas = @import("curved_canvas.zig");
 const nav_geom = @import("curved_navigator_geometry.zig");
 
 const curved = struct {
-    pub const Metric = geometry.curved_types.Metric;
-    pub const Screen = geometry.curved_types.Screen;
-    pub const Vec3 = geometry.curved_types.Vec3;
-    pub const HyperView = geometry.curved_view.HyperView;
-    pub const EllipticView = geometry.curved_view.EllipticView;
-    pub const SphericalView = geometry.curved_view.SphericalView;
-    pub const vec3 = geometry.curved_charts.vec3;
-    pub const vec3x = geometry.curved_charts.vec3x;
-    pub const vec3y = geometry.curved_charts.vec3y;
-    pub const vec3z = geometry.curved_charts.vec3z;
-    pub const vec3Coords = geometry.curved_charts.vec3Coords;
-    pub const ambientFromTypedTangentBasisPoint = geometry.curved_surface.ambientFromTypedTangentBasisPoint;
+    pub const Metric = geometry.curved.Metric;
+    pub const Screen = geometry.curved.Screen;
+    pub const Vec3 = geometry.curved.Vec3;
+    pub const HyperView = geometry.curved.HyperView;
+    pub const EllipticView = geometry.curved.EllipticView;
+    pub const SphericalView = geometry.curved.SphericalView;
+    pub const vec3 = geometry.curved.vec3;
+    pub const vec3x = geometry.curved.vec3x;
+    pub const vec3y = geometry.curved.vec3y;
+    pub const vec3z = geometry.curved.vec3z;
+    pub const vec3Coords = geometry.curved.vec3Coords;
+    pub const ambientFromTypedTangentBasisPoint = geometry.curved.ambientFromTypedTangentBasisPoint;
 };
 
 const NavigatorAxes = struct {

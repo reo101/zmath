@@ -3,20 +3,20 @@ const geometry = @import("../geometry.zig");
 const projection = @import("projection.zig");
 
 const curved = struct {
-    pub const Metric = geometry.curved_types.Metric;
-    pub const Screen = geometry.curved_types.Screen;
-    pub const Vec3 = geometry.curved_types.Vec3;
-    pub const SphericalRenderPass = geometry.curved_view.SphericalRenderPass;
-    pub const HyperView = geometry.curved_view.HyperView;
-    pub const EllipticView = geometry.curved_view.EllipticView;
-    pub const SphericalView = geometry.curved_view.SphericalView;
-    pub const AmbientFor = geometry.curved_types.AmbientFor;
-    pub const TypedCamera = geometry.curved_types.TypedCamera;
-    pub const ambientFromTypedTangentBasisPoint = geometry.curved_surface.ambientFromTypedTangentBasisPoint;
-    pub const vec3 = geometry.curved_charts.vec3;
-    pub const vec3x = geometry.curved_charts.vec3x;
-    pub const vec3y = geometry.curved_charts.vec3y;
-    pub const vec3z = geometry.curved_charts.vec3z;
+    pub const Metric = geometry.curved.Metric;
+    pub const Screen = geometry.curved.Screen;
+    pub const Vec3 = geometry.curved.Vec3;
+    pub const SphericalRenderPass = geometry.curved.SphericalRenderPass;
+    pub const HyperView = geometry.curved.HyperView;
+    pub const EllipticView = geometry.curved.EllipticView;
+    pub const SphericalView = geometry.curved.SphericalView;
+    pub const AmbientFor = geometry.curved.AmbientFor;
+    pub const TypedCamera = geometry.curved.TypedCamera;
+    pub const ambientFromTypedTangentBasisPoint = geometry.curved.ambientFromTypedTangentBasisPoint;
+    pub const vec3 = geometry.curved.vec3;
+    pub const vec3x = geometry.curved.vec3x;
+    pub const vec3y = geometry.curved.vec3y;
+    pub const vec3z = geometry.curved.vec3z;
 };
 const Round = curved.AmbientFor(.spherical);
 
