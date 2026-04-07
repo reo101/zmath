@@ -1,7 +1,7 @@
 const std = @import("std");
 const ga = @import("../ga.zig");
-const blade_parsing = @import("../ga/blade_parsing.zig");
-const blades = @import("../ga/blades.zig");
+const blade_parsing = ga.blade_parsing;
+const blades = ga.blades;
 
 pub const Coords4 = struct {
     w: f32,

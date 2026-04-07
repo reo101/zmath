@@ -1,9 +1,9 @@
 const std = @import("std");
 const ga = @import("zmath").ga;
-const blade_parsing = @import("../../src/ga/blade_parsing.zig");
-const blades = @import("../../src/ga/blades.zig");
+const blade_parsing = ga.blade_parsing;
+const blades = ga.blades;
 const expression = ga.expression;
-const multivector = @import("../../src/ga/multivector.zig");
+const multivector = ga.multivector;
 
 fn smithedScalar(smith: *std.testing.Smith) f32 {
     return @as(f32, @floatFromInt(smith.value(i8))) / 8.0;

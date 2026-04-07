@@ -2,8 +2,9 @@ const std = @import("std");
 const blades = @import("blades.zig");
 const blade_parsing = @import("blade_parsing.zig");
 const multivector = @import("multivector.zig");
-const node_storage = @import("../parse/node_storage.zig");
-const pratt = @import("../parse/pratt.zig");
+const parse = @import("../parse.zig");
+const node_storage = parse.node_storage;
+const pratt = parse.pratt;
 
 pub const BladeMask = blades.BladeMask;
 
@@ -430,6 +431,7 @@ fn ParserTypes(comptime T: type, comptime sig: blades.MetricSignature) type {
             blade: blade_parsing.SignedBladeSpec,
             placeholder: []const u8,
         };
+        pub const TokenTag = std.meta.Tag(Token);
 
         pub const Binary = struct {
             lhs: usize,
@@ -989,6 +991,23 @@ fn ParserPrattContext(
         const Self = @This();
         pub const NodeIndex = usize;
         pub const ParseError = Parser.ParserError;
+        const TokenTag = ParserTypes(T, sig).TokenTag;
+        const operator_table: []const pratt.Operator(TokenTag) = &.{
+            pratt.postfixOperator(TokenTag.inverse, 9),
+            pratt.leftAssocOperator(TokenTag.number, 7),
+            pratt.leftAssocOperator(TokenTag.blade, 7),
+            pratt.leftAssocOperator(TokenTag.placeholder, 7),
+            pratt.leftAssocOperator(TokenTag.lparen, 7),
+            pratt.leftAssocOperator(TokenTag.star, 5),
+            pratt.leftAssocOperator(TokenTag.slash, 5),
+            pratt.leftAssocOperator(TokenTag.wedge, 5),
+            pratt.leftAssocOperator(TokenTag.dot, 5),
+            pratt.leftAssocOperator(TokenTag.left_contraction, 5),
+            pratt.leftAssocOperator(TokenTag.right_contraction, 5),
+            pratt.leftAssocOperator(TokenTag.join, 4),
+            pratt.leftAssocOperator(TokenTag.plus, 3),
+            pratt.leftAssocOperator(TokenTag.minus, 3),
+        };
 
         parser: *Parser,
 
@@ -997,14 +1016,7 @@ fn ParserPrattContext(
         }
 
         pub fn currentBindingPower(self: Self) ?pratt.BindingPower {
-            return switch (self.parser.current) {
-                .inverse => .{ .left = 9, .right = 10 },
-                .star, .slash, .wedge, .dot, .left_contraction, .right_contraction => .{ .left = 5, .right = 6 },
-                .join => .{ .left = 4, .right = 5 },
-                .plus, .minus => .{ .left = 3, .right = 4 },
-                .number, .blade, .placeholder, .lparen => .{ .left = 7, .right = 8 },
-                else => null,
-            };
+            return pratt.bindingPowerFor(std.meta.activeTag(self.parser.current), operator_table);
         }
 
         pub fn parseInfix(self: *Self, lhs: NodeIndex, bp: pratt.BindingPower) ParseError!NodeIndex {
