@@ -51,23 +51,52 @@ pub fn postfixOperator(tag: anytype, precedence: u8) Operator(@TypeOf(tag)) {
     };
 }
 
-pub fn bindingPowerFor(tag: anytype, operator_table: []const Operator(@TypeOf(tag))) ?BindingPower {
-    for (operator_table) |entry| {
-        if (entry.tag == tag) return entry.binding_power;
+pub fn initTable(comptime TokenTag: type, values: std.enums.EnumFieldStruct(TokenTag, ?BindingPower, null)) std.enums.EnumArray(TokenTag, ?BindingPower) {
+    return std.enums.EnumArray(TokenTag, ?BindingPower).init(values);
+}
+
+pub fn bindingPowerFor(tag: anytype, table: anytype) ?BindingPower {
+    const TableType = @TypeOf(table);
+    const info = @typeInfo(TableType);
+
+    if (comptime info == .pointer) {
+        if (comptime info.pointer.size != .one) {
+            if (comptime std.meta.Elem(TableType) == Operator(@TypeOf(tag))) {
+                for (table) |entry| {
+                    if (entry.tag == tag) return entry.binding_power;
+                }
+                return null;
+            }
+        }
     }
 
-    return null;
+    // std.enums.EnumArray lookup
+    if (comptime @hasDecl(TableType, "get")) {
+        return table.get(tag);
+    }
+
+    // Fallback to array indexing if it's a raw array
+    if (comptime info == .array) {
+        return table[@intFromEnum(tag)];
+    }
+
+    @compileError("Unsupported table type: " ++ @typeName(TableType));
+}
+
+pub fn validate(comptime Context: type) void {
+    if (!@hasDecl(Context, "NodeIndex")) @compileError(@typeName(Context) ++ " must declare `NodeIndex` internal to the struct");
+    if (!@hasDecl(Context, "ParseError")) @compileError(@typeName(Context) ++ " must declare `ParseError` internal to the struct");
+    if (!@hasDecl(Context, "parsePrefix")) @compileError(@typeName(Context) ++ " must declare `parsePrefix` internal to the struct");
+    if (!@hasDecl(Context, "parseInfix")) @compileError(@typeName(Context) ++ " must declare `parseInfix` internal to the struct");
+
+    if (!@hasDecl(Context, "currentBindingPower")) {
+        if (!@hasDecl(Context, "currentTokenTag")) @compileError(@typeName(Context) ++ " must declare `currentBindingPower` or `currentTokenTag` internal to the struct");
+        if (!@hasDecl(Context, "operator_table")) @compileError(@typeName(Context) ++ " must declare `operator_table` when using `currentTokenTag` internal to the struct");
+    }
 }
 
 pub fn ensureContext(comptime Context: type) void {
-    if (!@hasDecl(Context, "NodeIndex")) @compileError(@typeName(Context) ++ " must declare `NodeIndex`");
-    if (!@hasDecl(Context, "ParseError")) @compileError(@typeName(Context) ++ " must declare `ParseError`");
-    if (!@hasDecl(Context, "parsePrefix")) @compileError(@typeName(Context) ++ " must declare `parsePrefix`");
-    if (!@hasDecl(Context, "parseInfix")) @compileError(@typeName(Context) ++ " must declare `parseInfix`");
-    if (!@hasDecl(Context, "currentBindingPower")) {
-        if (!@hasDecl(Context, "currentTokenTag")) @compileError(@typeName(Context) ++ " must declare `currentBindingPower` or `currentTokenTag`");
-        if (!@hasDecl(Context, "operator_table")) @compileError(@typeName(Context) ++ " must declare `operator_table` when using `currentTokenTag`");
-    }
+    comptime validate(Context);
 }
 
 fn contextBindingPower(comptime Context: type, context: anytype) ?BindingPower {
@@ -116,6 +145,21 @@ test "operator table lookup returns matching binding powers" {
     try std.testing.expect(bindingPowerFor(@as(Tag, .plus), empty) == null);
 }
 
+test "static operator table lookup works" {
+    const Tag = enum { plus, star, bang, eof };
+    const table = initTable(Tag, .{
+        .plus = leftAssoc(3),
+        .star = leftAssoc(5),
+        .bang = postfix(9),
+        .eof = null,
+    });
+
+    try std.testing.expectEqual(leftAssoc(3), bindingPowerFor(Tag.plus, table).?);
+    try std.testing.expectEqual(leftAssoc(5), bindingPowerFor(Tag.star, table).?);
+    try std.testing.expectEqual(postfix(9), bindingPowerFor(Tag.bang, table).?);
+    try std.testing.expect(bindingPowerFor(Tag.eof, table) == null);
+}
+
 test "pratt loop handles precedence, prefix recursion, and postfix operators" {
     const Token = union(enum) {
         eof: void,
@@ -132,11 +176,20 @@ test "pratt loop handles precedence, prefix recursion, and postfix operators" {
         pub const NodeIndex = i32;
         pub const ParseError = error{UnexpectedToken};
         const TokenTag = std.meta.Tag(Token);
-        pub const operator_table: []const Operator(TokenTag) = &.{
-            leftAssocOperator(TokenTag.plus, 3),
-            leftAssocOperator(TokenTag.star, 5),
-            postfixOperator(TokenTag.bang, 9),
-        };
+        pub const operator_table = initTable(TokenTag, .{
+            .plus = leftAssoc(3),
+            .star = leftAssoc(5),
+            .bang = postfix(9),
+            .eof = null,
+            .number = null,
+            .minus = null,
+            .lparen = null,
+            .rparen = null,
+        });
+
+        comptime {
+            validate(@This());
+        }
 
         tokens: []const Token,
         index: usize = 0,
@@ -231,9 +284,11 @@ test "pratt loop can express right-associative operators with a table" {
         pub const NodeIndex = i32;
         pub const ParseError = error{UnexpectedToken};
         const TokenTag = std.meta.Tag(Token);
-        pub const operator_table: []const Operator(TokenTag) = &.{
-            rightAssocOperator(TokenTag.caret, 7),
-        };
+        pub const operator_table = initTable(TokenTag, .{
+            .caret = rightAssoc(7),
+            .eof = null,
+            .number = null,
+        });
 
         tokens: []const Token,
         index: usize = 0,

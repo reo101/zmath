@@ -1056,22 +1056,28 @@ fn ParserPrattContext(
         pub const NodeIndex = usize;
         pub const ParseError = Parser.ParserError;
         const TokenTag = ParserTypes(T, sig).TokenTag;
-        pub const operator_table: []const pratt.Operator(TokenTag) = &.{
-            infixOperator(TokenTag.inverse, .inverse),
-            infixOperator(TokenTag.number, .implicit_gp),
-            infixOperator(TokenTag.blade, .implicit_gp),
-            infixOperator(TokenTag.placeholder, .implicit_gp),
-            infixOperator(TokenTag.lparen, .implicit_gp),
-            infixOperator(TokenTag.star, .gp),
-            infixOperator(TokenTag.slash, .divide),
-            infixOperator(TokenTag.wedge, .wedge),
-            infixOperator(TokenTag.dot, .dot),
-            infixOperator(TokenTag.left_contraction, .left_contraction),
-            infixOperator(TokenTag.right_contraction, .right_contraction),
-            infixOperator(TokenTag.join, .join),
-            infixOperator(TokenTag.plus, .add),
-            infixOperator(TokenTag.minus, .sub),
-        };
+        pub const operator_table = pratt.initTable(TokenTag, .{
+            .inverse = infixOperatorBindingPower(.inverse),
+            .number = infixOperatorBindingPower(.implicit_gp),
+            .blade = infixOperatorBindingPower(.implicit_gp),
+            .placeholder = infixOperatorBindingPower(.implicit_gp),
+            .lparen = infixOperatorBindingPower(.implicit_gp),
+            .star = infixOperatorBindingPower(.gp),
+            .slash = infixOperatorBindingPower(.divide),
+            .wedge = infixOperatorBindingPower(.wedge),
+            .dot = infixOperatorBindingPower(.dot),
+            .left_contraction = infixOperatorBindingPower(.left_contraction),
+            .right_contraction = infixOperatorBindingPower(.right_contraction),
+            .join = infixOperatorBindingPower(.join),
+            .plus = infixOperatorBindingPower(.add),
+            .minus = infixOperatorBindingPower(.sub),
+            .eof = null,
+            .rparen = null,
+        });
+
+        comptime {
+            pratt.validate(@This());
+        }
 
         parser: *Parser,
 
