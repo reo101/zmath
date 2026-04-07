@@ -1,10 +1,10 @@
 const std = @import("std");
 
-const blades = @import("ga/blades.zig");
-const blade_parsing = @import("ga/blade_parsing.zig");
+pub const blades = @import("ga/blades.zig");
+pub const blade_parsing = @import("ga/blade_parsing.zig");
 pub const expression = @import("ga/expression.zig");
 pub const family = @import("ga/family.zig");
-const multivector = @import("ga/multivector.zig");
+pub const multivector = @import("ga/multivector.zig");
 pub const rotors = @import("ga/rotors.zig");
 
 pub const MetricSignature = blades.MetricSignature;
