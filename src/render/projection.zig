@@ -1,5 +1,6 @@
 const std = @import("std");
-const multivector = @import("../ga/multivector.zig");
+const ga = @import("../ga.zig");
+const multivector = ga.multivector;
 
 const stereographic_extent_limit_factor: f32 = 4.0;
 

@@ -1,10 +1,10 @@
 const std = @import("std");
 
 pub const ga = @import("../ga.zig");
-const blade_parsing = @import("../ga/blade_parsing.zig");
-const blades = @import("../ga/blades.zig");
-const family = @import("../ga/family.zig");
-const multivector = @import("../ga/multivector.zig");
+const blade_parsing = ga.blade_parsing;
+const blades = ga.blades;
+const family = ga.family;
+const multivector = ga.multivector;
 const projective_helpers = @import("projective_helpers.zig");
 
 /// PGA signature `Cl(3, 0, 1)`: three positive basis vectors and one

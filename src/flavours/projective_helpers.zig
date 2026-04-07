@@ -1,4 +1,5 @@
-const multivector = @import("../ga/multivector.zig");
+const ga = @import("../ga.zig");
+const multivector = ga.multivector;
 
 pub const RoundMetric = enum {
     hyperbolic,

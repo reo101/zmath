@@ -1,6 +1,6 @@
 const std = @import("std");
 const ga = @import("../ga.zig");
-const family = @import("../ga/family.zig");
+const family = ga.family;
 const conformal_helpers = @import("conformal_helpers.zig");
 
 /// CGA signature `Cl(4, 1, 0)`: four positive basis vectors and one negative.

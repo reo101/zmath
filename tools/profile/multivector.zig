@@ -1,7 +1,7 @@
 const zmath = @import("zmath");
 const ga = zmath.ga;
-const blades = @import("../../src/ga/blades.zig");
-const multivector = @import("../../src/ga/multivector.zig");
+const blades = ga.blades;
+const multivector = ga.multivector;
 
 const Sig8 = ga.euclideanSignature(8);
 const Cl8 = ga.Algebra(Sig8).Instantiate(f64);

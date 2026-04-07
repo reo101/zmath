@@ -1,7 +1,7 @@
 const std = @import("std");
 
 pub const ga = @import("../ga.zig");
-const family = @import("../ga/family.zig");
+const family = ga.family;
 const projective_helpers = @import("projective_helpers.zig");
 
 /// Hyperbolic projective algebra signature `Cl(3, 1, 0)`: three positive

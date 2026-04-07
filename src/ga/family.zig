@@ -1,7 +1,7 @@
 const std = @import("std");
 const ga = @import("../ga.zig");
-const blades = @import("blades.zig");
-const blade_parsing = @import("blade_parsing.zig");
+const blades = ga.blades;
+const blade_parsing = ga.blade_parsing;
 
 pub fn withNamingOptions(
     comptime metric_sig: blades.MetricSignature,

@@ -1,9 +1,9 @@
 const std = @import("std");
 
 pub const ga = @import("../ga.zig");
-const family = @import("../ga/family.zig");
-const multivector = @import("../ga/multivector.zig");
-const rotors = @import("../ga/rotors.zig");
+const family = ga.family;
+const multivector = ga.multivector;
+const rotors = ga.rotors;
 
 /// STA signature `Cl(1, 3, 0)`: one positive timelike basis vector and
 /// three negative spacelike basis vectors.
