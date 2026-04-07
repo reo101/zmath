@@ -47,6 +47,17 @@ pub const RoundCoords = struct {
 fn coerceCoords4(values: anytype) Coords4 {
     const T = @TypeOf(values);
     if (T == Coords4) return values;
+    if (T == HyperCoords) return values.inner;
+    if (T == RoundCoords) return values.inner;
+
+    if (comptime @typeInfo(T) == .@"struct") {
+        if (comptime @hasDecl(T, "coeffsArray")) {
+            return coerceCoords4(values.coeffsArray());
+        }
+        if (comptime @hasField(T, "coeffs")) {
+            return coerceCoords4(values.coeffs);
+        }
+    }
 
     return switch (@typeInfo(T)) {
         .array => |array| blk: {

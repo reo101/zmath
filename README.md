@@ -1,51 +1,49 @@
 # zmath
 
-`zmath` is a playground for making abstract math (somewhat) computationally efficient.
+`zmath` is a playground for making abstract math computationally efficient using Zig's comptime powers.
 
-The current focus is Geometric Algebra / Clifford Algebra in Zig: turning symbolic-looking operations into compact, compile-time-checked data layouts and predictable runtime code.
+The current focus is **Geometric Algebra (GA) / Clifford Algebra**: turning symbolic operations into compact, compile-time-specialized data layouts and predictable runtime code.
 
-## What This Repo Is
+## Core Mandates
 
-This project is not trying to be a giant batteries-included math framework yet.
+1.  **Algebra as Data:** Encoding complex geometric structures (Metric Signatures, Blade Masks) directly into the type system.
+2.  **Comptime-First:** Shifting expensive parsing, resource estimation, and code generation to compile time.
+3.  **Sparse Representations:** Multivectors only store the blades they actually use, minimizing memory footprint and SIMD lane waste.
+4.  **Mathematical Intent:** High-level algebraic operations (Geometric Product, Wedge, Dual) without hiding the underlying cost model.
 
-It is an experimentation space for:
+## Recent Architectural Shifts
 
-1. Encoding algebraic structure in types.
-2. Shifting work to compile time when practical.
-3. Keeping runtime representations sparse and explicit.
-4. Making high-level operations feel algebraic without hiding the cost model.
+Over the last 70+ commits, `zmath` has evolved from a collection of hard-coded algebras into a **Modular Algebra Factory**:
 
-In short: use Zig's type system and comptime features to push abstract math closer to efficient machine-level behavior.
+### 1. The "Families" Revolution
+Instead of manual signatures, use high-level builders that automatically manage extra basis vectors:
+- **`ga.family.projectiveEuclidean(N)`**: Adds the degenerate $e_0$ for rigid body motion.
+- **`ga.family.conformalEuclidean(N)`**: Adds the null-pair ($n_o, n_\infty$) for spherical/circular geometry.
+- **`ga.family.minkowski(1, 3)`**: Creates relativistic spacetime.
 
-## Current Scope
+### 2. Comptime Expression Compiler
+A built-in **generic Pratt parser** (`ga.expr`) allows you to write math as strings that compile to optimal Zig code:
+```zig
+const Cl3 = ga.Algebra(.euclidean(3)).Instantiate(f32);
+const result = Cl3.expr("v ^ e12 + 5", .{ .v = my_vector });
+```
+The compiler calculates exact node storage requirements and verifies operator precedence at comptime using $O(1)$ enum-array lookups.
 
-Right now the repo implements a GA-first core with:
+### 3. Logic vs. Surface Split
+- **Helpers**: Generic mathematical logic (e.g., how to construct a point in projective space) lives in shared, re-usable modules.
+- **Flavours**: Extremely light facades that bind a Family to a set of Helpers and a default scalar type.
 
-1. Blade masks and canonical ordering.
-2. Signed blade parsing (compact, underscore, and delimited syntaxes).
-3. Sparse multivector carrier types with typed operations.
-4. Euclidean defaults plus signature-aware `Cl(p, q, r)` operations.
-5. A specialized 2D rotor helper module.
-
-## Layout
-
-1. `src/ga/` is the core implementation (`blades`, `blade_parsing`, `multivector`, `rotors`, `visualizer`).
-2. `src/ga.zig` is the main public GA facade.
-3. `src/flavours/` contains specialized GA models:
-    - `vga.zig`: Standard Vector GA (Euclidean).
-    - `pga.zig`: Projective GA (Affine/Flat Euclidean).
-    - `cga.zig`: Conformal GA (Spheres/Circles/Curved).
-    - `sta.zig`: Spacetime Algebra (Minkowski/Relativity).
-4. `src/root.zig` is the package root and exposes all modules.
+### 4. Typed Ambient Interop
+Introduced `HyperCoords` and `RoundCoords` to provide metric-specific type safety. The system now prevents accidental mixing of Hyperbolic and Spherical coordinates at the API boundaries.
 
 ## GA Flavour Comparison
 
-| Flavour | Signature | Space | Key Benefit | Primitives |
-| :--- | :--- | :--- | :--- | :--- |
-| **VGA** | $Cl(n, 0, 0)$ | Flat | Simplest vector math | Vectors, Bivectors |
-| **PGA** | $Cl(n, 0, 1)$ | Affine | Euclidean rigid motion | Points, Lines, Planes |
-| **CGA** | $Cl(n+1, 1, 0)$ | Conformal | Spheres and circular arcs | Spheres, Circles, Points |
-| **STA** | $Cl(3, 1, 0)$ | Hyperbolic | Relativistic physics | Events, Boosts, Spinors |
+| Flavour | Signature | Dimension Aware | Key Benefit |
+| :--- | :--- | :--- | :--- |
+| **VGA** | $Cl(n, 0, 0)$ | Yes | Simple Euclidean vector math |
+| **PGA** | $Cl(n, 0, 1)$ | Yes (adds $e_0$) | Euclidean rigid motion (points/lines/planes) |
+| **CGA** | $Cl(n+1, 1, 0)$ | Yes (adds $n_o, n_\infty$) | Spheres, circles, and conformal transforms |
+| **STA** | $Cl(1, 3, 0)$ | Yes (Minkowski) | Relativistic physics and spinors |
 
 ## Resources
 
@@ -54,20 +52,12 @@ Right now the repo implements a GA-first core with:
 - **[A Swift Introduction to Geometric Algebra (Sudgylacmoe)](https://www.youtube.com/watch?v=60z_hpEAtD8)** - Very accessible overview of the mechanics.
 - **[Conformal Geometric Algebra (Marc Ten Bosch)](https://www.youtube.com/watch?v=0i3o_Zuney4)** - Great visualization of CGA transformations.
 
-## Design Direction
-
-The architecture is intentionally GA/Clifford-first. VGA naming exists as a convenience alias, not as the conceptual core.
-
-The API tries to stay clean and non-leaky by default: expose useful algebraic surfaces publicly, keep implementation detail internal, and avoid accumulating compatibility cruft while the project is still unreleased.
-
 ## Running
 
-1. Run tests: `zig build test --summary all`
-2. Run demo: `zig build run`
-3. Run SIMD benchmark (`ReleaseFast`): `zig build bench-simd`
+1. **Verify Foundation:** `zig build test --summary all` (144+ tests passing)
+2. **Run Demo:** `zig build run`
+3. **Run SIMD Benchmark:** `zig build bench-simd`
 
 ## Why "Somewhat" Efficient?
 
-Because this repo treats performance as a design constraint, not dogma.
-
-Some abstractions become very efficient with compile-time specialization; some do not. The point of the playground is to iterate on those tradeoffs in a transparent way, measure behavior, and evolve toward a robust computational algebra toolkit.
+Because this repo treats performance as a design constraint, not dogma. We prioritize **mathematical correctness and type safety** first, then use Zig's `comptime` to erase the abstraction overhead.

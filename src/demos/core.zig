@@ -573,7 +573,7 @@ fn curvedMetricOf(view: anytype) curved.Metric {
 }
 
 fn ambientCoords(v: anytype) curved.Coords4 {
-    return curved.Coords4.init(if (@TypeOf(v) == curved.Coords4) v else v.coeffsArray());
+    return curved.Coords4.init(v);
 }
 
 fn dumpCurvedViewState(label: []const u8, view: anytype) void {
