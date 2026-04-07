@@ -175,17 +175,37 @@ fn absValue(value: anytype) @TypeOf(value) {
     return if (isNegative(value)) -value else value;
 }
 
-fn writeBlade(writer: *std.Io.Writer, comptime dimension: usize, mask: BladeMask) !void {
+fn writeBlade(
+    writer: *std.Io.Writer,
+    comptime dimension: usize,
+    mask: BladeMask,
+    comptime options: blade_parsing.SignedBladeNamingOptions,
+) !void {
     if (mask.bitset.mask == 0) {
         try writer.writeAll("1");
         return;
     }
 
-    try writer.writeByte('e');
+    try writer.writeByte(options.basis_prefix);
+    const first_bit = @ctz(mask.toInt());
     var bit_index: usize = 0;
     while (bit_index < dimension) : (bit_index += 1) {
         if (!mask.bitset.isSet(bit_index)) continue;
-        try writer.print("{}", .{bit_index + 1});
+
+        if (dimension >= 10 and bit_index > first_bit) {
+            try writer.writeByte('_');
+        }
+
+        const named_index = options.basis_spans.resolveInternalToNamed(bit_index + 1, dimension).?;
+        if (named_index < options.basis_names.len) {
+            if (options.basis_names[named_index]) |name| {
+                try writer.writeAll(name);
+            } else {
+                try writer.print("{}", .{named_index});
+            }
+        } else {
+            try writer.print("{}", .{named_index});
+        }
     }
 }
 
@@ -209,27 +229,14 @@ fn bladeName(comptime mask: BladeMask, comptime dimension: usize, comptime prefi
 }
 
 /// Writes any multivector value through a generic writer interface.
-pub fn renderMultivector(writer: anytype, value: anytype) !void {
+pub fn renderMultivector(writer: *std.Io.Writer, value: anytype) !void {
     comptime {
         if (!isMultivectorType(@TypeOf(value))) {
             @compileError("expected a multivector value");
         }
     }
 
-    var writer_ptr: *std.Io.Writer = undefined;
-    if (comptime @TypeOf(writer) == *std.Io.Writer) {
-        writer_ptr = writer;
-    } else if (comptime @hasDecl(@TypeOf(writer), "any")) {
-        var any_writer = writer.any();
-        writer_ptr = &any_writer;
-    } else {
-        // Fallback for types that might not follow the full interface
-        // or where we can't easily get a type-erased pointer.
-        try value.write(writer);
-        return;
-    }
-
-    try value.write(writer_ptr);
+    try value.write(writer);
 }
 
 /// Returns the compact multivector type for a named signed blade.
@@ -480,7 +487,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
                     if (mag != coeffOne(T)) {
                         try writer.print("{}*", .{mag});
                     }
-                    try writeBlade(writer, dimensions, mask);
+                    try writeBlade(writer, dimensions, mask, naming_options);
                 }
 
                 wrote_any = true;
