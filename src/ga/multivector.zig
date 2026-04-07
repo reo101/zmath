@@ -176,7 +176,7 @@ fn absValue(value: anytype) @TypeOf(value) {
 }
 
 fn writeBlade(
-    writer: *std.Io.Writer,
+    writer: anytype,
     comptime dimension: usize,
     mask: BladeMask,
     comptime options: blade_parsing.SignedBladeNamingOptions,
@@ -465,8 +465,8 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             return FullType.init(raw.coeffsArray());
         }
 
-        /// Writes this multivector value through the standard Io writer interface.
-        pub fn write(self: Self, writer: *std.Io.Writer) !void {
+        /// Writes this multivector value through a generic writer interface.
+        pub fn write(self: Self, writer: anytype) !void {
             var wrote_any = false;
             const coeffs_array = self.coeffsArray();
 

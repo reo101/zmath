@@ -4,7 +4,7 @@
 //! working with multivectors, and using the comptime expression compiler.
 
 const std = @import("std");
-const zmath = @import("zmath");
+const zmath = @import("root.zig");
 const ga = zmath.ga;
 
 /// Define a 3D Euclidean Algebra bound to f64 coefficients.
@@ -51,6 +51,14 @@ pub fn main(init: std.process.Init) !void {
     // Invalid basis names or dimension mismatches result in compile errors.
     const e123 = Cl3.signedBlade("e123");
     try stdout.print("Pseudoscalar e123: {any}\n", .{e123.named()});
+
+    // CGA Naming Demo
+    const cga = zmath.flavours.cga;
+    const p = cga.Point.init(1, 2, 3);
+    try stdout.writeAll("\nCGA Naming Demo:\n");
+    try stdout.print("  Point p (struct): {any}\n", .{p.named()});
+    try stdout.print("  Point p (string): {f}\n", .{p});
+
     try stdout.flush();
 }
 
