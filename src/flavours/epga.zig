@@ -20,11 +20,10 @@ pub const dimension = bindings.dimension;
 pub const Algebra = bindings.Algebra;
 pub const Instantiate = bindings.Instantiate;
 pub const h = bindings.h;
-const naming_options = bindings.naming_options;
 
 pub fn InstantiateHelpers(comptime T: type) type {
     const H = Instantiate(T);
-    return projective_helpers.RoundProjectiveHelpers(T, H, naming_options, .elliptic);
+    return projective_helpers.RoundProjectiveHelpers(T, H, .elliptic);
 }
 
 const default_helpers = InstantiateHelpers(default_scalar);
@@ -60,4 +59,16 @@ test "epga helpers are instantiatable by scalar type" {
     const p = Helpers.Point.proper(0.4, -0.3, 0.2);
 
     try std.testing.expectApproxEqAbs(@as(f64, -1.0), p.gp(p).scalarCoeff(), 1e-8);
+}
+
+test "epga helpers support non-3d families through coordinate arrays" {
+    const Helpers = projective_helpers.RoundProjectiveHelpers(f32, EuclideanFamily(2).Instantiate(f32), .elliptic);
+    const p = Helpers.Point.properFromCoords(.{ 0.4, -0.3 });
+    const coords = Helpers.ambientCoords(p);
+    const inv: f32 = 1.0 / @sqrt(1.0 + 0.4 * 0.4 + 0.3 * 0.3);
+
+    try std.testing.expectApproxEqAbs(@as(f32, -1.0), p.gp(p).scalarCoeff(), 1e-5);
+    try std.testing.expectApproxEqAbs(inv, coords[0], 1e-5);
+    try std.testing.expectApproxEqAbs(0.4 * inv, coords[1], 1e-5);
+    try std.testing.expectApproxEqAbs(-0.3 * inv, coords[2], 1e-5);
 }
