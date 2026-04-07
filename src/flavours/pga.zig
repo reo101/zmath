@@ -181,7 +181,7 @@ test "euclidean point representation and join" {
 
 test "fullSignedBladeFromIndicesWithSignature respects degenerate square" {
     // Repeated degenerate index should give zero
-    const result = ga.multivector.fullSignedBladeFromIndicesWithSignature(f64, metric_signature, &.{ dimension, dimension });
+    const result = h.Basis.fromIndices(&.{ dimension, dimension });
     // e0*e0 = 0, so the scalar part must be zero
     try std.testing.expectEqual(@as(f64, 0.0), result.scalarCoeff());
 }

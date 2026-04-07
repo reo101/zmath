@@ -1,11 +1,10 @@
 const std = @import("std");
 const zmath = @import("zmath");
-const Flat3 = zmath.geometry.curved_ambient.Flat3;
 const projection = zmath.render.projection;
 const sdf = zmath.render.sdf;
 pub const demo_core = @import("core.zig");
 const demo = demo_core;
-const Vec3 = Flat3.Vector;
+const Vec3 = zmath.geometry.curved.Vec3;
 
 fn normalizeSdfVec3(v: Vec3) Vec3 {
     const length = v.magnitude();
