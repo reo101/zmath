@@ -25,8 +25,8 @@ pub const Instantiate = bindings.Instantiate;
 pub const h = bindings.h;
 const naming_options = bindings.naming_options;
 
-pub fn InstantiateHelpers(comptime T: type) type {
-    const H = Instantiate(T);
+fn HelpersFor(comptime H: type, comptime T: type) type {
+    const dimension_count = H.Full.dimensions;
 
     return struct {
         const Self = @This();
@@ -78,18 +78,15 @@ pub fn InstantiateHelpers(comptime T: type) type {
         }
 
         /// Computes the action of the spacetime gradient (Dirac operator) ∇ on a multivector.
-        pub fn applyGradient(comptime MType: type, partial_derivatives: [4]MType) H.Full {
+        pub fn applyGradient(comptime MType: type, partial_derivatives: [dimension_count]MType) H.Full {
             const E = H.Basis;
             var result = H.Full.zero();
-
-            const basis_vectors = [4]H.Vector{
-                E.e(0).gradePart(1),
-                E.e(1).negate().gradePart(1),
-                E.e(2).negate().gradePart(1),
-                E.e(3).negate().gradePart(1),
-            };
-
-            inline for (basis_vectors, partial_derivatives) |gamma_mu, partial_mu| {
+            inline for (partial_derivatives, 0..) |partial_mu, i| {
+                const class = H.Full.metric_signature.basisSquareClass(i + 1);
+                const gamma_mu = switch (class) {
+                    .negative => E.e(i).negate().gradePart(1),
+                    .positive, .degenerate => E.e(i).gradePart(1),
+                };
                 result = result.add(gamma_mu.gp(partial_mu));
             }
 
@@ -97,7 +94,7 @@ pub fn InstantiateHelpers(comptime T: type) type {
         }
 
         /// Maxwell's equation in STA: ∇F = J
-        pub fn maxwellSource(f_derivatives: [4]H.Bivector) H.Full {
+        pub fn maxwellSource(f_derivatives: [dimension_count]H.Bivector) H.Full {
             return Self.applyGradient(H.Bivector, f_derivatives);
         }
 
@@ -152,6 +149,14 @@ pub fn InstantiateHelpers(comptime T: type) type {
             return term1.sub(term2);
         }
     };
+}
+
+pub fn FamilyHelpers(comptime FamilyType: type, comptime T: type) type {
+    return HelpersFor(FamilyType.Instantiate(T), T);
+}
+
+pub fn InstantiateHelpers(comptime T: type) type {
+    return HelpersFor(Instantiate(T), T);
 }
 
 const default_helpers = InstantiateHelpers(default_scalar);
@@ -209,6 +214,21 @@ test "sta helpers are instantiatable by scalar type" {
     const u = Helpers.fourVelocity(v);
 
     try std.testing.expectApproxEqAbs(@as(f32, 1.0), u.scalarProduct(u), 1e-5);
+}
+
+test "sta helpers can be instantiated for other Minkowski families" {
+    const Helpers = FamilyHelpers(MinkowskiFamily(2, 2), f32);
+    const E = Helpers.h.Basis;
+    const derivs = [Helpers.h.Full.dimensions]Helpers.h.Bivector{
+        Helpers.h.Bivector.zero(),
+        E.signedBlade("e20").scale(0.1).gradePart(2),
+        Helpers.h.Bivector.zero(),
+        Helpers.h.Bivector.zero(),
+    };
+    const source = Helpers.maxwellSource(derivs);
+
+    try std.testing.expectEqual(@as(usize, 4), Helpers.h.Full.dimensions);
+    try std.testing.expect(std.math.isFinite(source.scalarCoeff()));
 }
 
 test "sta basis vectors square to minkowski signs" {
