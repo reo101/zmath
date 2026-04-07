@@ -34,11 +34,86 @@ pub const HyperGroundBasis = TypedGroundBasis(.hyperbolic);
 pub const EllipticGroundBasis = TypedGroundBasis(.elliptic);
 pub const SphericalGroundBasis = TypedGroundBasis(.spherical);
 
-pub const SphericalGroundHit = struct {
+pub const GroundHit = struct {
     distance: f32,
     lateral: f32,
     forward: f32,
 };
+
+pub const HyperGroundHit = GroundHit;
+pub const SphericalGroundHit = GroundHit;
+
+pub fn hyperbolicGroundBasis(basis: anytype) HyperGroundBasis {
+    return switch (@TypeOf(basis)) {
+        HyperGroundBasis => basis,
+        else => @compileError("expected `HyperGroundBasis`"),
+    };
+}
+
+fn hyperbolicView(view: anytype) curved.HyperView {
+    return switch (@TypeOf(view)) {
+        curved.HyperView => view,
+        else => @compileError("expected `HyperView`"),
+    };
+}
+
+pub fn hyperbolicGroundHitForScreenPoint(
+    view: anytype,
+    basis: HyperGroundBasis,
+    screen: curved.Screen,
+    point: [2]f32,
+) ?HyperGroundHit {
+    const hyper = hyperbolicView(view);
+    const Hyper = curved.AmbientFor(.hyperbolic);
+    const local_dir = inverseGroundScreenDirection(hyper.projection, screen, point) orelse return null;
+    const direction = Hyper.add(
+        Hyper.add(
+            Hyper.scale(hyper.camera.right, curved.vec3x(local_dir)),
+            Hyper.scale(hyper.camera.up, curved.vec3y(local_dir)),
+        ),
+        Hyper.scale(hyper.camera.forward, curved.vec3z(local_dir)),
+    );
+
+    const a = Hyper.dot(hyper.camera.position, basis.up);
+    const b = Hyper.dot(direction, basis.up);
+
+    // Hyperbolic ray: P(theta) = C*cosh(theta) + D*sinh(theta)
+    // Hit ground plane (N): P(theta) . N = 0
+    // C.N*cosh(theta) + D.N*sinh(theta) = 0  =>  tanh(theta) = -C.N / D.N
+    const tanh_theta = -a / b;
+    if (tanh_theta <= 0.0 or tanh_theta >= 1.0) return null;
+
+    const theta = std.math.atanh(tanh_theta);
+    const ambient = Hyper.add(
+        Hyper.scale(hyper.camera.position, std.math.cosh(theta)),
+        Hyper.scale(direction, std.math.sinh(theta)),
+    );
+
+    const origin_coord = Hyper.dot(ambient, basis.origin);
+    const lateral_coord = Hyper.dot(ambient, basis.right);
+    const forward_coord = Hyper.dot(ambient, basis.forward);
+
+    // Coordinate mapping for the Poincare/Exp model ground
+    const planar_norm = @sqrt(@max(0.0, lateral_coord * lateral_coord + forward_coord * forward_coord));
+    if (planar_norm <= 1e-6) {
+        return .{
+            .distance = theta * hyper.params.radius,
+            .lateral = 0.0,
+            .forward = 0.0,
+        };
+    }
+
+    // In the hyperboloid model, the tangent distance is related to the scale
+    // needed to project back to the origin basis.
+    const tangent_radius = std.math.atanh(std.math.clamp(planar_norm / origin_coord, 0.0, 0.9999)) * hyper.params.radius;
+    const tangent_scale = tangent_radius / planar_norm;
+
+    return .{
+        .distance = theta * hyper.params.radius,
+        .lateral = lateral_coord * tangent_scale,
+        .forward = forward_coord * tangent_scale,
+    };
+}
 
 pub fn sphericalGroundBasis(basis: anytype) SphericalGroundBasis {
     return switch (@TypeOf(basis)) {
@@ -251,6 +326,19 @@ pub fn checkerCoord(value: f32, cell_size: f32) i32 {
     return @as(i32, @intFromFloat(@floor(value / cell_size)));
 }
 
+pub fn curvedGroundHitForScreenPoint(
+    view: anytype,
+    basis: anytype,
+    screen: curved.Screen,
+    point: [2]f32,
+) ?GroundHit {
+    return switch (@TypeOf(view)) {
+        curved.HyperView => hyperbolicGroundHitForScreenPoint(view, basis, screen, point),
+        curved.SphericalView => sphericalGroundHitForScreenPoint(view, basis, screen, point),
+        else => @compileError("unsupported view type for ground hit"),
+    };
+}
+
 pub fn gridLineStrength(value: f32, cell_size: f32, line_half_width: f32) f32 {
     const wrapped = @mod(value, cell_size);
     const distance = @min(wrapped, cell_size - wrapped);
@@ -306,4 +394,21 @@ test "sphericalGroundHitForScreenPoint returns centered finite hit" {
     try std.testing.expect(hit.distance > 0.0);
     try std.testing.expectApproxEqAbs(0.0, hit.lateral, 1e-4);
     try std.testing.expect(std.math.isFinite(hit.forward));
+}
+
+test "hyperbolicGroundHitForScreenPoint returns centered hit" {
+    const params = curved.Params{ .radius = 0.32, .angular_zoom = 0.72, .chart_model = .conformal };
+    const view = try curved.HyperView.init(
+        params,
+        .gnomonic,
+        .{ .near = 0.08, .far = 1.55 },
+        curved.vec3(0.0, 0.0, -params.radius * 0.78),
+        curved.vec3(0.0, 0.0, 0.0),
+    );
+    const basis = typedWorldGroundBasis(.hyperbolic);
+    const screen = curved.Screen{ .width = 160, .height = 90, .zoom = params.angular_zoom };
+    const hit = hyperbolicGroundHitForScreenPoint(view, basis, screen, .{ 80.0, 45.0 }) orelse return error.TestUnexpectedResult;
+
+    try std.testing.expect(hit.distance > 0.0);
+    try std.testing.expectApproxEqAbs(0.0, hit.lateral, 1e-4);
 }

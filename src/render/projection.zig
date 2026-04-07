@@ -1,6 +1,7 @@
 const std = @import("std");
 const ga = @import("../ga.zig");
 const multivector = ga.multivector;
+const h = ga.Algebra(ga.euclideanSignature(3)).Instantiate(f32);
 
 const stereographic_extent_limit_factor: f32 = 4.0;
 
@@ -56,6 +57,31 @@ pub fn projectEuclidean(
     const x = (x_raw * scale / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
     const y = (1.0 - y_raw * scale) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);
     return .{ x, y };
+}
+
+pub fn inverseProjectEuclidean(
+    point: [2]f32,
+    canvas_width: usize,
+    canvas_height: usize,
+    zoom: f32,
+    projection: EuclideanProjection,
+) h.Vector {
+    const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
+    const x_unit = (point[0] / (@as(f32, @floatFromInt(canvas_width)) / 2.0)) - 1.0;
+    const y_unit = 1.0 - (point[1] / (@as(f32, @floatFromInt(canvas_height)) / 2.0));
+
+    return switch (projection) {
+        .perspective => h.Vector.init(.{
+            x_unit * aspect / zoom,
+            y_unit / zoom,
+            1.0,
+        }),
+        .isometric => h.Vector.init(.{
+            x_unit * aspect / zoom,
+            y_unit / zoom,
+            0.0,
+        }),
+    };
 }
 
 pub fn projectDirection(
