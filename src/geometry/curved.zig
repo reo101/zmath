@@ -21,6 +21,8 @@ pub const CameraError = curved_view.CameraError;
 
 pub const Vec3 = curved_types.Vec3;
 pub const Coords4 = curved_ambient.Coords4;
+pub const HyperCoords = curved_ambient.HyperCoords;
+pub const RoundCoords = curved_ambient.RoundCoords;
 pub const AmbientFor = curved_types.AmbientFor;
 pub const TypedCamera = curved_types.TypedCamera;
 pub const TypedWalkBasis = curved_types.TypedWalkBasis;
