@@ -8,6 +8,7 @@ const curved_projection = zmath.render.curved_projection;
 const projection = zmath.render.projection;
 const sdf = zmath.render.sdf;
 const geometry = zmath.geometry;
+const Flat3 = geometry.curved_ambient.Flat3;
 const curved = struct {
     pub const Metric = geometry.curved_types.Metric;
     pub const Params = geometry.curved_types.Params;
@@ -32,6 +33,7 @@ const curved = struct {
     pub const shouldBreakProjectedSegment = curved_projection.shouldBreakProjectedSegment;
 };
 const Round = curved.AmbientFor(.spherical);
+const EuclideanVec3 = Flat3.Vector;
 const demo = @import("core.zig");
 const euclidean_sdf_renderer = @import("euclidean_sdf.zig");
 
@@ -646,7 +648,7 @@ fn nativeStrokeColor(fill: rl.Color, avg_depth: f32) rl.Color {
     return colorWithAlpha(mixColor(fill, white, 0.28 - depth_t * 0.10), 255);
 }
 
-fn cubeFaceIndexFromLocalNormal(normal: sdf.Vec3) usize {
+fn cubeFaceIndexFromLocalNormal(normal: EuclideanVec3) usize {
     const ax = @abs(normal.named().e1);
     const ay = @abs(normal.named().e2);
     const az = @abs(normal.named().e3);
@@ -655,7 +657,7 @@ fn cubeFaceIndexFromLocalNormal(normal: sdf.Vec3) usize {
     return if (normal.named().e3 >= 0.0) 4 else 5;
 }
 
-fn nativeEuclideanSdfColor(face_index: usize, normal: sdf.Vec3, depth: f32, steps: usize) rl.Color {
+fn nativeEuclideanSdfColor(face_index: usize, normal: EuclideanVec3, depth: f32, steps: usize) rl.Color {
     var fill = nativeFaceColor(
         face_index,
         demo.H.Vector.init(.{ normal.named().e1, normal.named().e2, normal.named().e3 }),
