@@ -1,5 +1,10 @@
 const ga = @import("../ga.zig");
 
+pub const RoundMetric = enum {
+    hyperbolic,
+    elliptic,
+};
+
 pub fn initHomogeneousPoint3(comptime H: type, w: anytype, x: anytype, y: anytype, z: anytype) H.Full {
     return H.exprAs(
         H.Full,
@@ -40,5 +45,44 @@ pub fn ambientCoords3(comptime T: type, comptime naming_options: ga.blade_parsin
         @floatCast(p.coeffNamedWithOptions("e320", naming_options)),
         @floatCast(p.coeffNamedWithOptions("e130", naming_options)),
         @floatCast(p.coeffNamedWithOptions("e210", naming_options)),
+    };
+}
+
+pub fn RoundProjectiveHelpers(
+    comptime T: type,
+    comptime H: type,
+    comptime naming_options: ga.blade_parsing.SignedBladeNamingOptions,
+    comptime metric: RoundMetric,
+) type {
+    return struct {
+        pub const h = H;
+
+        pub const Point = struct {
+            pub fn initHomogeneous(w: T, x: T, y: T, z: T) H.Full {
+                return initHomogeneousPoint3(H, w, x, y, z);
+            }
+
+            pub fn init(x: T, y: T, z: T) H.Full {
+                return initPoint3(H, x, y, z);
+            }
+
+            pub fn proper(
+                x: T,
+                y: T,
+                z: T,
+            ) switch (metric) {
+                .hyperbolic => ?H.Full,
+                .elliptic => H.Full,
+            } {
+                return switch (metric) {
+                    .hyperbolic => properHyperbolicPoint3(H, x, y, z),
+                    .elliptic => properEllipticPoint3(H, x, y, z),
+                };
+            }
+        };
+
+        pub fn ambientCoords(p: anytype) [4]T {
+            return ambientCoords3(T, naming_options, p);
+        }
     };
 }
