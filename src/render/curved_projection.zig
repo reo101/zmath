@@ -37,15 +37,15 @@ pub const ProjectedSample = struct {
 };
 
 fn vec3x(v: Vec3) f32 {
-    return v.coeffNamed("e1");
+    return v.named().e1;
 }
 
 fn vec3y(v: Vec3) f32 {
-    return v.coeffNamed("e2");
+    return v.named().e2;
 }
 
 fn vec3z(v: Vec3) f32 {
-    return v.coeffNamed("e3");
+    return v.named().e3;
 }
 
 pub fn projectSample(

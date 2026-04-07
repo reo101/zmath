@@ -13,15 +13,15 @@ pub fn vec3(x: f32, y: f32, z: f32) Vec3 {
 }
 
 pub fn vec3x(v: Vec3) f32 {
-    return v.coeffNamed("e1");
+    return v.named().e1;
 }
 
 pub fn vec3y(v: Vec3) f32 {
-    return v.coeffNamed("e2");
+    return v.named().e2;
 }
 
 pub fn vec3z(v: Vec3) f32 {
-    return v.coeffNamed("e3");
+    return v.named().e3;
 }
 
 pub fn vec3Coords(v: Vec3) [3]f32 {
