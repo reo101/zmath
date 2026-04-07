@@ -40,9 +40,10 @@ pub fn projectEuclidean(
 ) ?[2]f32 {
     ga.multivector.ensureMultivector(@TypeOf(p));
 
-    const x_raw = p.coeffNamed("e1");
-    const y_raw = p.coeffNamed("e2");
-    const z_raw = p.coeffNamed("e3");
+    const n = p.named();
+    const x_raw = n.e1;
+    const y_raw = n.e2;
+    const z_raw = n.e3;
 
     const z_offset = euclideanProjectionDepthOffset(projection);
     const dist = z_raw + z_offset;
@@ -239,12 +240,13 @@ pub fn projectPGA(camera: anytype, p: anytype, canvas_width: usize, canvas_heigh
     const ray = camera.eye.join(p);
     const p_prime_mv = ray.wedge(camera.screen);
     const p_prime = p_prime_mv.gradePart(3);
+    const n = p_prime.named();
 
-    const w = p_prime.coeffNamed("e123");
+    const w = n.e123;
     if (@abs(w) < 1e-6) return null;
 
-    const x_coord = p_prime.coeffNamed("e234") / w;
-    const y_coord = p_prime.coeffNamed("e314") / w;
+    const x_coord = n.e234 / w;
+    const y_coord = n.e314 / w;
     const aspect = @as(f32, @floatFromInt(canvas_width)) / @as(f32, @floatFromInt(canvas_height * 2));
     const x = (x_coord * zoom / aspect + 1.0) * (@as(f32, @floatFromInt(canvas_width)) / 2.0);
     const y = (1.0 - y_coord * zoom) * (@as(f32, @floatFromInt(canvas_height)) / 2.0);

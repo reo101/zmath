@@ -73,10 +73,11 @@ pub fn FamilyHelpers(comptime FamilyType: type, comptime T: type) type {
             var mat: [4][4]T = undefined;
             inline for (basis_vectors, 0..) |v, j| {
                 const v_prime = mv.gp(v).gp(mv.reverse()).gradePart(1);
-                mat[0][j] = @floatCast(v_prime.coeffNamed("e1"));
-                mat[1][j] = @floatCast(v_prime.coeffNamed("e2"));
-                mat[2][j] = @floatCast(v_prime.coeffNamed("e3"));
-                mat[3][j] = @floatCast(v_prime.coeffNamedWithOptions("e0", bindings.naming_options));
+                const n = v_prime.named();
+                mat[0][j] = @floatCast(n.e1);
+                mat[1][j] = @floatCast(n.e2);
+                mat[2][j] = @floatCast(n.e3);
+                mat[3][j] = @floatCast(n.e0);
             }
             return mat;
         }
