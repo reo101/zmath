@@ -2,6 +2,8 @@ const std = @import("std");
 
 pub const ga = @import("../ga.zig");
 const family = @import("../ga/family.zig");
+const multivector = @import("../ga/multivector.zig");
+const rotors = @import("../ga/rotors.zig");
 
 /// STA signature `Cl(1, 3, 0)`: one positive timelike basis vector and
 /// three negative spacelike basis vectors.
@@ -41,7 +43,7 @@ fn HelpersFor(comptime H: type, comptime T: type) type {
         ///
         /// x*gamma0 = (x . gamma0) + (x ^ gamma0) = t + x_vec
         pub fn spacetimeSplit(x: anytype) struct { time: T, space: H.Bivector } {
-            comptime ga.multivector.ensureMultivector(@TypeOf(x));
+            comptime multivector.ensureMultivector(@TypeOf(x));
             const E = H.Basis;
             const g0 = E.e(0);
             const split = x.gp(g0);
@@ -54,8 +56,8 @@ fn HelpersFor(comptime H: type, comptime T: type) type {
         /// Constructs a Faraday bivector `F = E + I*B` from electric and magnetic field components.
         pub fn faradayBivector(electric: anytype, magnetic: anytype) H.Bivector {
             comptime {
-                ga.multivector.ensureMultivector(@TypeOf(electric));
-                ga.multivector.ensureMultivector(@TypeOf(magnetic));
+                multivector.ensureMultivector(@TypeOf(electric));
+                multivector.ensureMultivector(@TypeOf(magnetic));
             }
             const I = H.Pseudoscalar.init(.{1});
             return electric.add(I.gp(magnetic).gradePart(2));
@@ -100,7 +102,7 @@ fn HelpersFor(comptime H: type, comptime T: type) type {
 
         /// Performs a duality rotation on a Faraday bivector F by angle theta.
         pub fn dualityRotate(f: anytype, theta: T) @TypeOf(f.gp(H.Scalar.init(.{0}))) {
-            comptime ga.multivector.ensureMultivector(@TypeOf(f));
+            comptime multivector.ensureMultivector(@TypeOf(f));
             const I = H.Pseudoscalar.init(.{1});
             const cos_t = std.math.cos(theta);
             const sin_t = std.math.sin(theta);
@@ -110,7 +112,7 @@ fn HelpersFor(comptime H: type, comptime T: type) type {
 
         /// Decomposes a spinor into its scalar and pseudoscalar invariants.
         pub fn spinorInvariants(psi: anytype) struct { @"ρ": T, @"β": T } {
-            comptime ga.multivector.ensureMultivector(@TypeOf(psi));
+            comptime multivector.ensureMultivector(@TypeOf(psi));
             const rho_exp_ib = psi.gp(psi.reverse());
             const re = rho_exp_ib.scalarCoeff();
             const im = rho_exp_ib.coeff(H.Pseudoscalar.blades[0]);
@@ -273,8 +275,8 @@ test "lorentz boost transforms vectors correctly" {
     const expected_e0 = std.math.cosh(phi);
     const expected_e1 = std.math.sinh(phi);
 
-    try std.testing.expect(ga.rotors.nearlyEqual(e0_prime.coeffNamedWithOptions("e0", naming_options), expected_e0, 1e-12));
-    try std.testing.expect(ga.rotors.nearlyEqual(e0_prime.coeffNamedWithOptions("e1", naming_options), expected_e1, 1e-12));
+    try std.testing.expect(rotors.nearlyEqual(e0_prime.coeffNamedWithOptions("e0", naming_options), expected_e0, 1e-12));
+    try std.testing.expect(rotors.nearlyEqual(e0_prime.coeffNamedWithOptions("e1", naming_options), expected_e1, 1e-12));
 }
 
 test "faraday bivector construction" {
@@ -317,7 +319,7 @@ test "duality rotation preserves field invariants" {
     const p_prime = F_prime2.coeff(h.Pseudoscalar.blades[0]);
     const mag_prime = @sqrt(s_prime * s_prime + p_prime * p_prime);
 
-    try std.testing.expect(ga.rotors.nearlyEqual(mag_prime, 75.0, 1e-12));
+    try std.testing.expect(rotors.nearlyEqual(mag_prime, 75.0, 1e-12));
 }
 
 test "spinor invariants extract rho and beta" {
@@ -332,8 +334,8 @@ test "spinor invariants extract rho and beta" {
     const inv = spinorInvariants(psi);
 
     // Use UTF-8 field names
-    try std.testing.expect(ga.rotors.nearlyEqual(inv.@"ρ", rho, 1e-12));
-    try std.testing.expect(ga.rotors.nearlyEqual(inv.@"β", beta, 1e-12));
+    try std.testing.expect(rotors.nearlyEqual(inv.@"ρ", rho, 1e-12));
+    try std.testing.expect(rotors.nearlyEqual(inv.@"β", beta, 1e-12));
 }
 
 test "4-velocity squares to 1" {
@@ -343,12 +345,12 @@ test "4-velocity squares to 1" {
     const u = fourVelocity(v);
 
     // u^2 should be 1
-    try std.testing.expect(ga.rotors.nearlyEqual(u.scalarProduct(u), 1.0, 1e-12));
+    try std.testing.expect(rotors.nearlyEqual(u.scalarProduct(u), 1.0, 1e-12));
 
     // Check components: gamma = 1/sqrt(1-0.36) = 1/0.8 = 1.25
     // u = 1.25*e0 + 1.25*0.6*e1 = 1.25*e0 + 0.75*e1
-    try std.testing.expect(ga.rotors.nearlyEqual(u.coeffNamedWithOptions("e0", naming_options), 1.25, 1e-12));
-    try std.testing.expect(ga.rotors.nearlyEqual(u.coeffNamedWithOptions("e1", naming_options), 0.75, 1e-12));
+    try std.testing.expect(rotors.nearlyEqual(u.coeffNamedWithOptions("e0", naming_options), 1.25, 1e-12));
+    try std.testing.expect(rotors.nearlyEqual(u.coeffNamedWithOptions("e1", naming_options), 0.75, 1e-12));
 }
 
 test "stress-energy of a static perfect fluid" {

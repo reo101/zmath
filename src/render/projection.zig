@@ -1,5 +1,5 @@
 const std = @import("std");
-const ga = @import("../ga.zig");
+const multivector = @import("../ga/multivector.zig");
 
 const stereographic_extent_limit_factor: f32 = 4.0;
 
@@ -38,7 +38,7 @@ pub fn projectEuclidean(
     zoom: f32,
     projection: EuclideanProjection,
 ) ?[2]f32 {
-    ga.multivector.ensureMultivector(@TypeOf(p));
+    multivector.ensureMultivector(@TypeOf(p));
 
     const n = p.named();
     const x_raw = n.e1;
@@ -235,7 +235,7 @@ test "stereographic projection rejects points too close to the pole singularity"
 /// Projects a point using PGA universal projection formula.
 /// P' = (Eye v Point) ^ Screen
 pub fn projectPGA(camera: anytype, p: anytype, canvas_width: usize, canvas_height: usize, zoom: f32) ?[2]f32 {
-    ga.multivector.ensureMultivector(@TypeOf(p));
+    multivector.ensureMultivector(@TypeOf(p));
 
     const ray = camera.eye.join(p);
     const p_prime_mv = ray.wedge(camera.screen);

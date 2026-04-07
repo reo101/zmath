@@ -1,4 +1,4 @@
-const ga = @import("../ga.zig");
+const multivector = @import("../ga/multivector.zig");
 
 pub const RoundMetric = enum {
     hyperbolic,
@@ -51,7 +51,7 @@ pub fn properEllipticPoint3(comptime H: type, x: anytype, y: anytype, z: anytype
 }
 
 pub fn homogeneousCoords(comptime T: type, comptime H: type, p: anytype) [H.Full.dimensions]T {
-    ga.multivector.ensureMultivector(@TypeOf(p));
+    multivector.ensureMultivector(@TypeOf(p));
     const dual = p.dual().cast(H.Vector);
     var coords: [H.Full.dimensions]T = undefined;
 

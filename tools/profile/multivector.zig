@@ -1,4 +1,7 @@
-const ga = @import("zmath").ga;
+const zmath = @import("zmath");
+const ga = zmath.ga;
+const blades = @import("../../src/ga/blades.zig");
+const multivector = @import("../../src/ga/multivector.zig");
 
 const Sig8 = ga.euclideanSignature(8);
 const Cl8 = ga.Algebra(Sig8).Instantiate(f64);
@@ -7,26 +10,26 @@ const Rotor8 = Cl8.Rotor;
 const Vector8 = Cl8.Vector;
 
 // Direct mask builders. These isolate the blade-set combinator cost.
-const Full8BladeIndex = ga.blades.bladeIndexByMask(Sig8.dimension(), Full8.blades);
-const Full8GeometricMasks = ga.blades.geometricProductMasks(Sig8.dimension(), Full8.blades, Full8.blades);
-const Full8OuterMasks = ga.blades.outerProductMasks(Sig8.dimension(), Full8.blades, Full8.blades);
-const Full8LeftContractionMasks = ga.blades.leftContractionMasks(Sig8.dimension(), Full8.blades, Full8.blades);
-const Full8RightContractionMasks = ga.blades.rightContractionMasks(Sig8.dimension(), Full8.blades, Full8.blades);
-const Full8DualMasks = ga.blades.dualMasks(Sig8.dimension(), Full8.blades);
+const Full8BladeIndex = blades.bladeIndexByMask(Sig8.dimension(), Full8.blades);
+const Full8GeometricMasks = blades.geometricProductMasks(Sig8.dimension(), Full8.blades, Full8.blades);
+const Full8OuterMasks = blades.outerProductMasks(Sig8.dimension(), Full8.blades, Full8.blades);
+const Full8LeftContractionMasks = blades.leftContractionMasks(Sig8.dimension(), Full8.blades, Full8.blades);
+const Full8RightContractionMasks = blades.rightContractionMasks(Sig8.dimension(), Full8.blades, Full8.blades);
+const Full8DualMasks = blades.dualMasks(Sig8.dimension(), Full8.blades);
 
 // Result carriers. These are the declarations users tend to name directly.
-const Full8Add = ga.multivector.AddResultType(f64, Full8.blades, Full8.blades, Sig8);
-const Full8Geometric = ga.multivector.GeometricProductResultType(f64, Full8.blades, Full8.blades, Sig8);
-const Full8Outer = ga.multivector.OuterProductResultType(f64, Full8.blades, Full8.blades, Sig8);
-const Full8LeftContraction = ga.multivector.LeftContractionResultType(f64, Full8.blades, Full8.blades, Sig8);
-const Full8RightContraction = ga.multivector.RightContractionResultType(f64, Full8.blades, Full8.blades, Sig8);
-const Full8Dot = ga.multivector.DotProductResultType(f64, Full8.blades, Full8.blades, Sig8);
-const Full8Join = ga.multivector.JoinResultType(f64, Full8.blades, Full8.blades, Sig8);
+const Full8Add = multivector.AddResultType(f64, Full8.blades, Full8.blades, Sig8);
+const Full8Geometric = multivector.GeometricProductResultType(f64, Full8.blades, Full8.blades, Sig8);
+const Full8Outer = multivector.OuterProductResultType(f64, Full8.blades, Full8.blades, Sig8);
+const Full8LeftContraction = multivector.LeftContractionResultType(f64, Full8.blades, Full8.blades, Sig8);
+const Full8RightContraction = multivector.RightContractionResultType(f64, Full8.blades, Full8.blades, Sig8);
+const Full8Dot = multivector.DotProductResultType(f64, Full8.blades, Full8.blades, Sig8);
+const Full8Join = multivector.JoinResultType(f64, Full8.blades, Full8.blades, Sig8);
 
 // Representative smaller shapes help distinguish "full/full is expensive"
 // from "all product builders are expensive".
-const Rotor8Geometric = ga.multivector.GeometricProductResultType(f64, Rotor8.blades, Rotor8.blades, Sig8);
-const Vector8Geometric = ga.multivector.GeometricProductResultType(
+const Rotor8Geometric = multivector.GeometricProductResultType(f64, Rotor8.blades, Rotor8.blades, Sig8);
+const Vector8Geometric = multivector.GeometricProductResultType(
     f64,
     Vector8.blades,
     Vector8.blades,

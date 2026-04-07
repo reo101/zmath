@@ -1,12 +1,15 @@
 const std = @import("std");
 
-pub const blades = @import("ga/blades.zig");
-pub const blade_parsing = @import("ga/blade_parsing.zig");
+const blades = @import("ga/blades.zig");
+const blade_parsing = @import("ga/blade_parsing.zig");
 pub const expression = @import("ga/expression.zig");
 pub const family = @import("ga/family.zig");
-pub const multivector = @import("ga/multivector.zig");
+const multivector = @import("ga/multivector.zig");
 pub const rotors = @import("ga/rotors.zig");
 
+pub const MetricSignature = blades.MetricSignature;
+pub const BasisIndexSpans = blades.BasisIndexSpans;
+pub const NamingOptions = blade_parsing.SignedBladeNamingOptions;
 pub const euclideanSignature = blades.euclideanSignature;
 
 /// Returns a signature-baked algebra namespace for a fixed `Cl(p, q, r)`.
@@ -196,16 +199,10 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
     };
 }
 
-test "ga facade exposes core and specialized modules" {
+test "ga facade exposes canonical family and rotor surface" {
     _ = expression;
 
-    try std.testing.expectEqual(@as(usize, 10), blades.choose(5, 2));
-    try std.testing.expectEqual(@as(usize, 8), blades.bladeCount(3));
-    try std.testing.expect(blade_parsing.isSignedBlade("e(1,2)", 2, null));
-
-    const sig: blades.MetricSignature = .{ .p = 1, .q = 1 };
-    const value = multivector.fullSignedBladeFromIndicesWithSignature(i32, sig, &.{ 2, 2 });
-    try std.testing.expectEqual(@as(i32, -1), value.scalarCoeff());
+    try std.testing.expectEqual(@as(usize, 5), family.euclidean(5).dimension);
 
     const E2 = Algebra(.euclidean(2)).Basis(f64);
     const e1 = E2.e(1);
