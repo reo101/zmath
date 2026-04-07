@@ -21,8 +21,8 @@ pub const Algebra = bindings.Algebra;
 pub const Instantiate = bindings.Instantiate;
 pub const h = bindings.h;
 
-pub fn InstantiateHelpers(comptime T: type) type {
-    const H = Instantiate(T);
+pub fn FamilyHelpers(comptime FamilyType: type, comptime T: type) type {
+    const H = FamilyType.Instantiate(T);
     const Shared = projective_helpers.EuclideanProjectiveHelpers(T, H);
 
     return struct {
@@ -85,6 +85,10 @@ pub fn InstantiateHelpers(comptime T: type) type {
             return Shared.ambientCoords(p);
         }
     };
+}
+
+pub fn InstantiateHelpers(comptime T: type) type {
+    return FamilyHelpers(Family, T);
 }
 
 const default_helpers = InstantiateHelpers(default_scalar);
@@ -229,7 +233,7 @@ test "pga helpers are instantiatable by scalar type" {
 }
 
 test "pga helpers support non-3d families through coordinate arrays" {
-    const Helpers = projective_helpers.EuclideanProjectiveHelpers(f32, EuclideanFamily(2).Instantiate(f32));
+    const Helpers = FamilyHelpers(EuclideanFamily(2), f32);
     const p = Helpers.Point.fromCoords(.{ 1.0, 2.0 });
     const coords = Helpers.ambientCoords(p);
 

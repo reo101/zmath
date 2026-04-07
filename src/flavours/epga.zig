@@ -21,9 +21,12 @@ pub const Algebra = bindings.Algebra;
 pub const Instantiate = bindings.Instantiate;
 pub const h = bindings.h;
 
+pub fn FamilyHelpers(comptime FamilyType: type, comptime T: type) type {
+    return projective_helpers.RoundProjectiveHelpers(T, FamilyType.Instantiate(T), .elliptic);
+}
+
 pub fn InstantiateHelpers(comptime T: type) type {
-    const H = Instantiate(T);
-    return projective_helpers.RoundProjectiveHelpers(T, H, .elliptic);
+    return FamilyHelpers(Family, T);
 }
 
 const default_helpers = InstantiateHelpers(default_scalar);
@@ -62,7 +65,7 @@ test "epga helpers are instantiatable by scalar type" {
 }
 
 test "epga helpers support non-3d families through coordinate arrays" {
-    const Helpers = projective_helpers.RoundProjectiveHelpers(f32, EuclideanFamily(2).Instantiate(f32), .elliptic);
+    const Helpers = FamilyHelpers(EuclideanFamily(2), f32);
     const p = Helpers.Point.properFromCoords(.{ 0.4, -0.3 });
     const coords = Helpers.ambientCoords(p);
     const inv: f32 = 1.0 / @sqrt(1.0 + 0.4 * 0.4 + 0.3 * 0.3);

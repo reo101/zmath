@@ -22,9 +22,12 @@ pub const Algebra = bindings.Algebra;
 pub const Instantiate = bindings.Instantiate;
 pub const h = bindings.h;
 
+pub fn FamilyHelpers(comptime FamilyType: type, comptime T: type) type {
+    return conformal_helpers.ConformalEuclideanHelpers(T, FamilyType.Instantiate(T));
+}
+
 pub fn InstantiateHelpers(comptime T: type) type {
-    const H = Instantiate(T);
-    return conformal_helpers.ConformalEuclideanHelpers(T, H);
+    return FamilyHelpers(Family, T);
 }
 
 const default_helpers = InstantiateHelpers(default_scalar);
@@ -57,7 +60,7 @@ test "cga exposes configurable Euclidean families" {
 }
 
 test "cga helpers support non-3d conformal families through coordinate arrays" {
-    const Helpers = conformal_helpers.ConformalEuclideanHelpers(f32, EuclideanFamily(2).Instantiate(f32));
+    const Helpers = FamilyHelpers(EuclideanFamily(2), f32);
     const p = Helpers.Point.fromCoords(.{ 0.25, -0.5 });
     const plane = Helpers.Plane.fromNormal(.{ 1.0, 0.0 }, 0.25);
 
