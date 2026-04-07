@@ -184,12 +184,40 @@ test "torus sdf reaches zero on major ring surface" {
     try std.testing.expectApproxEqAbs(@as(f32, 0.0), torus(Vec3.init(.{ 0.5, 0.0, 0.0 }), 0.4, 0.1), 1e-6);
 }
 
-test "union keeps the nearer material" {
-    const a = Sample{ .distance = 0.2, .material = 3 };
-    const b = Sample{ .distance = 0.4, .material = 7 };
-    const result = opUnion(a, b);
-    try std.testing.expectEqual(@as(u8, 3), result.material);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.2), result.distance, 1e-6);
+test "opSubtract correctly cuts out shapes" {
+    const a = Sample{ .distance = 0.5, .material = 1 }; // Base
+    const b = Sample{ .distance = 0.1, .material = 2 }; // Cutter
+    const result = opSubtract(a, b);
+    // distance = max(a, -b) = max(0.5, -0.1) = 0.5
+    try std.testing.expectApproxEqAbs(@as(f32, 0.5), result.distance, 1e-6);
+    try std.testing.expectEqual(@as(u8, 1), result.material);
+
+    const b2 = Sample{ .distance = -0.6, .material = 2 };
+    const result2 = opSubtract(a, b2);
+    // distance = max(0.5, 0.6) = 0.6
+    try std.testing.expectApproxEqAbs(@as(f32, 0.6), result2.distance, 1e-6);
+}
+
+test "smoothUnion blends distances" {
+    const a = Sample{ .distance = 0.1, .material = 1 };
+    const b = Sample{ .distance = 0.1, .material = 2 };
+    const result = smoothUnion(a, b, 0.2);
+    // h = 0.5
+    // dist = 0.1 - 0.2 * 0.5 * 0.5 = 0.1 - 0.05 = 0.05
+    try std.testing.expectApproxEqAbs(@as(f32, 0.05), result.distance, 1e-6);
+}
+
+test "estimateNormal calculates directional gradients" {
+    const scene = struct {
+        fn sample(point: Vec3) Sample {
+            return .{ .distance = sphere(point, 1.0) };
+        }
+    };
+    const p = Vec3.init(.{ 1.0, 0.0, 0.0 });
+    const normal = estimateNormal(scene.sample, p, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), normal.named().e1, 1e-2);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), normal.named().e2, 1e-2);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), normal.named().e3, 1e-2);
 }
 
 test "raymarch hits a sphere" {

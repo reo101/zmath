@@ -18,6 +18,32 @@ pub const Coords4 = struct {
     }
 };
 
+/// Type-safe ambient coordinates for Hyperbolic space.
+pub const HyperCoords = struct {
+    inner: Coords4,
+
+    pub fn init(values: anytype) HyperCoords {
+        return .{ .inner = Coords4.init(values) };
+    }
+
+    pub fn asArray(self: HyperCoords) [4]f32 {
+        return self.inner.asArray();
+    }
+};
+
+/// Type-safe ambient coordinates for Round (Spherical/Elliptic) space.
+pub const RoundCoords = struct {
+    inner: Coords4,
+
+    pub fn init(values: anytype) RoundCoords {
+        return .{ .inner = Coords4.init(values) };
+    }
+
+    pub fn asArray(self: RoundCoords) [4]f32 {
+        return self.inner.asArray();
+    }
+};
+
 fn coerceCoords4(values: anytype) Coords4 {
     const T = @TypeOf(values);
     if (T == Coords4) return values;
@@ -61,11 +87,13 @@ pub const Flat3 = ga.Algebra(.euclidean(3)).Instantiate(f32);
 fn AmbientFamily(
     comptime metric_signature: blades.MetricSignature,
     comptime naming_options_value: blade_parsing.SignedBladeNamingOptions,
+    comptime Coords: type,
 ) type {
     return struct {
         pub const naming_options = naming_options_value;
         pub const Algebra = ga.AlgebraWithNamingOptions(metric_signature, naming_options).Instantiate(f32);
         pub const Vector = Algebra.Vector;
+        pub const CoordsType = Coords;
 
         pub const Camera = struct {
             position: Vector,
@@ -75,7 +103,7 @@ fn AmbientFamily(
         };
 
         pub fn fromCoords(coords_input: anytype) Vector {
-            const coords = coerceCoords4(coords_input);
+            const coords = if (@TypeOf(coords_input) == Coords) coords_input.inner else coerceCoords4(coords_input);
             const E = Algebra.Basis;
             return E.e(0).scale(coords.w)
                 .add(E.e(1).scale(coords.x))
@@ -87,14 +115,14 @@ fn AmbientFamily(
             return fromCoords(.{ 1.0, 0.0, 0.0, 0.0 });
         }
 
-        pub fn toCoords(v: Vector) Coords4 {
+        pub fn toCoords(v: Vector) Coords {
             const n = v.named();
-            return .{
+            return Coords.init(.{
                 n.e0,
                 n.e1,
                 n.e2,
                 n.e3,
-            };
+            });
         }
 
         pub fn add(a: Vector, b: Vector) Vector {
@@ -144,6 +172,7 @@ pub const Hyper = AmbientFamily(
         .positive = .range(1, 3),
         .negative = .singleton(0),
     })),
+    HyperCoords,
 );
 
 pub const Round = AmbientFamily(
@@ -151,6 +180,7 @@ pub const Round = AmbientFamily(
     blade_parsing.SignedBladeNamingOptions.withBasisSpans(blades.BasisIndexSpans.init(.{
         .positive = .range(0, 3),
     })),
+    RoundCoords,
 );
 
 fn expectCoordsApproxEq(expected: Coords4, actual: Coords4, tolerance: f32) !void {
@@ -160,13 +190,13 @@ fn expectCoordsApproxEq(expected: Coords4, actual: Coords4, tolerance: f32) !voi
 }
 
 test "hyper ambient coords round-trip through typed GA vectors" {
-    const coords = Coords4.init(.{ 1.25, -0.5, 0.75, 2.0 });
-    try expectCoordsApproxEq(coords, Hyper.toCoords(Hyper.fromCoords(coords)), 1e-6);
+    const coords = HyperCoords.init(.{ 1.25, -0.5, 0.75, 2.0 });
+    try expectCoordsApproxEq(coords.inner, Hyper.toCoords(Hyper.fromCoords(coords)).inner, 1e-6);
 }
 
 test "round ambient coords round-trip through typed GA vectors" {
-    const coords = Coords4.init(.{ 0.25, -1.0, 0.5, 1.75 });
-    try expectCoordsApproxEq(coords, Round.toCoords(Round.fromCoords(coords)), 1e-6);
+    const coords = RoundCoords.init(.{ 0.25, -1.0, 0.5, 1.75 });
+    try expectCoordsApproxEq(coords.inner, Round.toCoords(Round.fromCoords(coords)).inner, 1e-6);
 }
 
 test "ambient signatures keep their scalar products distinct" {
