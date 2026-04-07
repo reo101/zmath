@@ -24,6 +24,8 @@ test "flavour facades expose canonical binding metadata" {
             try std.testing.expect(@hasDecl(Flavour, "Algebra"));
             try std.testing.expect(@hasDecl(Flavour, "Instantiate"));
             try std.testing.expect(@hasDecl(Flavour, "h"));
+            try std.testing.expect(@hasDecl(Flavour, "FamilyHelpers"));
+            try std.testing.expect(@hasDecl(Flavour, "InstantiateHelpers"));
         }
 
         try std.testing.expectEqual(Flavour.metric_signature.dimension(), Flavour.dimension);
