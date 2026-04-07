@@ -22,6 +22,7 @@ const curved = struct {
     pub const chartCoordsTyped = geometry.curved.chartCoordsTyped;
     pub const sphericalAmbientFromGroundHeightPoint = geometry.curved.sphericalAmbientFromGroundHeightPoint;
     pub const shouldBreakProjectedSegment = curved_projection.shouldBreakProjectedSegment;
+    pub const ground = zmath.render.curved_ground;
 };
 const HyperAmbient = curved.AmbientFor(.hyperbolic);
 const RoundAmbient = curved.AmbientFor(.spherical);
@@ -349,15 +350,74 @@ pub const App = struct {
         return false;
     }
 
-    pub fn render(self: *App, canvas: *canvas_api.Canvas, width: usize, height: usize) FrameInfo {
-        canvas.clear();
+    fn renderCurvedGround(
+        self: *App,
+        canvas: *canvas_api.Canvas,
+        view: anytype,
+        screen: curved.Screen,
+    ) void {
+        _ = self;
+        const basis = curved.ground.typedWalkGroundBasis(view, 0.0) orelse return;
+        const cell_size: f32 = 0.5;
 
-        const rotor = sceneRotor(self.angle, self.mode);
-        const zoom = modeZoom(self.angle, self.mode, self.camera);
+        for (0..screen.height) |yi| {
+        for (0..screen.width) |xi| {
+            const hit = curved.ground.curvedGroundHitForScreenPoint(view, basis, screen, .{ @floatFromInt(xi), @floatFromInt(yi) }) orelse continue;
+            const checker = ((curved.ground.checkerCoord(hit.lateral, cell_size) + curved.ground.checkerCoord(hit.forward, cell_size)) & 1) == 0;
+            const tone = if (checker) @as(u8, 237) else @as(u8, 236);
+            canvas.setFill(@floatFromInt(xi), @floatFromInt(yi), 1, tone, hit.distance);
+        }
+    }
+}
 
-        switch (self.mode) {
-            .perspective, .isometric => {
-                const projection_mode: projection.EuclideanProjection = if (self.mode == .perspective) .perspective else .isometric;
+fn renderEuclideanGround(
+    self: *App,
+    canvas: *canvas_api.Canvas,
+    width: usize,
+    height: usize,
+    zoom: f32,
+    projection_mode: projection.EuclideanProjection,
+) void {
+    const cell_size: f32 = 4.0;
+    const ground_y: f32 = 4.0;
+    const basis = euclideanCameraBasis(self.camera);
+
+    for (0..height) |yi| {
+        for (0..width) |xi| {
+            const screen_p = [2]f32{ @floatFromInt(xi), @floatFromInt(yi) };
+            const dir = projection.inverseProjectEuclidean(screen_p, width, height, zoom, projection_mode);
+
+            // Ray: P(t) = eye + t*dir
+            // Hit ground: P(t).y = ground_y  => eye.y + t*dir.y = ground_y
+            const eye = basis.eye.coeffNamed("e2");
+            const dy = dir.coeffNamed("e2");
+
+            if (@abs(dy) < 1e-6) continue;
+            const t = (ground_y - eye) / dy;
+            if (t <= 0.0 or t > far_clip_z) continue;
+
+            const hit = basis.eye.add(dir.scale(t));
+            const hx = hit.coeffNamed("e1");
+            const hz = hit.coeffNamed("e3");
+
+            const checker = ((@as(i32, @intFromFloat(@floor(hx / cell_size))) + @as(i32, @intFromFloat(@floor(hz / cell_size)))) & 1) == 0;
+            const tone = if (checker) @as(u8, 237) else @as(u8, 236);
+            canvas.setFill(@floatFromInt(xi), @floatFromInt(yi), 1, tone, t);
+        }
+    }
+}
+
+pub fn render(self: *App, canvas: *canvas_api.Canvas, width: usize, height: usize) FrameInfo {
+    canvas.clear();
+
+    const rotor = sceneRotor(self.angle, self.mode);
+    const zoom = modeZoom(self.angle, self.mode, self.camera);
+
+    switch (self.mode) {
+        .perspective, .isometric => {
+            const projection_mode: projection.EuclideanProjection = if (self.mode == .perspective) .perspective else .isometric;
+            self.renderEuclideanGround(canvas, width, height, zoom, projection_mode);
+
                 const world_cube_vertices = rotatedScaledCubeVertices(euclidean_cube_scale, rotor);
                 var view_cube_vertices: [unit_cube_vertices.len]h.Vector = undefined;
                 for (world_cube_vertices, 0..) |vertex, i| {
@@ -410,6 +470,7 @@ pub const App = struct {
             .hyperbolic => {
                 const chart_prism_vertices = hyperbolicPrismVertices(rotor);
                 const screen = curvedScreen(width, height, zoom);
+                self.renderCurvedGround(canvas, self.camera.hyper, screen);
                 const chart_vertices = vec3ArrayFromVectors(chart_prism_vertices.len, chart_prism_vertices);
                 const mesh = curved_canvas_renderer.Mesh{
                     .vertices = chart_vertices[0..],
@@ -429,6 +490,7 @@ pub const App = struct {
                     self.camera.spherical.params,
                 );
                 const screen = curvedScreen(width, height, zoom);
+                self.renderCurvedGround(canvas, self.camera.spherical, screen);
                 const chart_vertices = vec3ArrayFromVectors(chart_cube_vertices.len, chart_cube_vertices);
                 const mesh = curved_canvas_renderer.Mesh{
                     .vertices = chart_vertices[0..],

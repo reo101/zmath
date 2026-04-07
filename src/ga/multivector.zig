@@ -505,6 +505,17 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             try self.write(writer);
         }
 
+        /// Returns the sum of the squares of all stored coefficients.
+        /// This is a robust measure of raw numerical magnitude, regardless of metric.
+        pub fn sumCoeffsSquared(self: Self) T {
+            var sum: T = coeffZero(T);
+            const coeffs_array = self.coeffsArray();
+            for (coeffs_array) |c| {
+                sum += c * c;
+            }
+            return sum;
+        }
+
         /// Returns the coefficient of a (comptime/runtime) blade mask.
         pub fn coeff(self: Self, mask: BladeMask) T {
             if (@inComptime()) {

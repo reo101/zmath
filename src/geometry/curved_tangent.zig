@@ -18,7 +18,11 @@ pub fn tryNormalizeTangent(comptime metric: Metric, v: AmbientFor(metric).Vector
     const Ambient = AmbientFor(metric);
     if (!Ambient.isFinite(v)) return null;
     const n2 = Ambient.dot(v, v);
-    if (!std.math.isFinite(n2) or n2 <= 1e-6) return null;
+    // Use a scale-aware epsilon for normalization.
+    // When coordinates are in the thousands, 1e-6 is far below the machine epsilon for f32.
+    const magnitude_sq = v.sumCoeffsSquared();
+    const epsilon = @max(1e-6, magnitude_sq * 1e-7);
+    if (!std.math.isFinite(n2) or n2 <= epsilon) return null;
     return Ambient.scale(v, 1.0 / @sqrt(n2));
 }
 
