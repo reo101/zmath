@@ -339,7 +339,11 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
                 var names: [dimensions][]const u8 = undefined;
                 for (0..dimensions) |i| {
                     const named_index = naming_options.basis_spans.resolveInternalToNamed(i + 1, dimensions).?;
-                    names[i] = std.fmt.comptimePrint("{d}", .{named_index});
+                    if (named_index < naming_options.basis_names.len and naming_options.basis_names[named_index] != null) {
+                        names[i] = naming_options.basis_names[named_index].?;
+                    } else {
+                        names[i] = std.fmt.comptimePrint("{d}", .{named_index});
+                    }
                 }
                 break :blk names;
             };

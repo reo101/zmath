@@ -7,9 +7,38 @@ const conformal_helpers = @import("conformal_helpers.zig");
 /// Typically used to model 3D Euclidean space conformally.
 ///
 /// 3D points are mapped to null vectors in 5D.
-const default_family = family.conformalEuclidean(3);
+const default_family = b: {
+    const sig = ga.blades.MetricSignature{ .p = 4, .q = 1, .r = 0 };
+    const spans = ga.blades.BasisIndexSpans.fromSignature(sig);
+    // Use default naming for e1, e2, e3 (1, 2, 3).
+    // Use 'o' for e4 (Origin) and '∞' for e5 (Infinity).
+    var opts = ga.NamingOptions.withBasisSpans(spans);
+    opts.basis_names = &.{ null, null, null, null, "o", "∞" };
+    break :b ga.family.withNamingOptions(sig, opts);
+};
+
+fn makeCgaBasisNames(comptime o_idx: usize, comptime inf_idx: usize) []const ?[]const u8 {
+    const S = struct {
+        fn make(comptime oi: usize, comptime infi: usize) [32]?[]const u8 {
+            var n = std.mem.zeroes([32]?[]const u8);
+            n[oi] = "o";
+            n[infi] = "∞";
+            return n;
+        }
+    };
+    const names = comptime S.make(o_idx, inf_idx);
+    return names[0 .. inf_idx + 1];
+}
+
 pub fn EuclideanFamily(comptime euclidean_dimensions: usize) type {
-    return family.conformalEuclidean(euclidean_dimensions);
+    const sig = ga.blades.MetricSignature{ .p = @intCast(euclidean_dimensions + 1), .q = 1, .r = 0 };
+    const spans = ga.blades.BasisIndexSpans.fromSignature(sig);
+    var opts = ga.NamingOptions.withBasisSpans(spans);
+    // The last two indices are always Origin and Infinity
+    const o_idx = euclidean_dimensions + 1;
+    const inf_idx = euclidean_dimensions + 2;
+    opts.basis_names = makeCgaBasisNames(o_idx, inf_idx);
+    return ga.family.withNamingOptions(sig, opts);
 }
 
 const bindings = family.defaultBindings(default_family, f32);
@@ -73,4 +102,13 @@ test "cga helpers are instantiatable by scalar type" {
     const p = Helpers.Point.init(1.0, 2.0, 3.0);
 
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), Helpers.h.normSquared(p), 1e-8);
+}
+
+test "cga basis naming uses custom aliases" {
+    const E = h.Basis;
+    const eo = E.e(4);
+    const einf = E.e(5);
+
+    try std.testing.expectEqual(@as(f32, 1.0), eo.named().eo);
+    try std.testing.expectEqual(@as(f32, 1.0), einf.named().@"e∞");
 }
