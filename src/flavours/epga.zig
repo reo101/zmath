@@ -24,29 +24,7 @@ const naming_options = bindings.naming_options;
 
 pub fn InstantiateHelpers(comptime T: type) type {
     const H = Instantiate(T);
-
-    return struct {
-        pub const h = H;
-
-        pub const Point = struct {
-            pub fn initHomogeneous(w: T, x: T, y: T, z: T) H.Full {
-                return projective_helpers.initHomogeneousPoint3(H, w, x, y, z);
-            }
-
-            pub fn init(x: T, y: T, z: T) H.Full {
-                return projective_helpers.initPoint3(H, x, y, z);
-            }
-
-            /// Returns a normalized elliptic point on the unit 3-sphere chart.
-            pub fn proper(x: T, y: T, z: T) H.Full {
-                return projective_helpers.properEllipticPoint3(H, x, y, z);
-            }
-        };
-
-        pub fn ambientCoords(p: anytype) [4]T {
-            return projective_helpers.ambientCoords3(T, naming_options, p);
-        }
-    };
+    return projective_helpers.RoundProjectiveHelpers(T, H, naming_options, .elliptic);
 }
 
 const default_helpers = InstantiateHelpers(default_scalar);
