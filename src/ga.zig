@@ -43,7 +43,7 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
     return struct {
         pub const Self = @This();
         pub const metric_signature = sig;
-        pub const dimension = metric_signature.dimension();
+        pub const dimensions = metric_signature.dimensions();
         pub const naming = naming_options;
 
         /// Creates a generic multivector type restricted to specific blades.
@@ -58,22 +58,22 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
 
         /// Multivector carrier containing all possible blades for this algebra.
         pub fn FullMultivector(comptime T: type) type {
-            return Self.Multivector(T, &blades.allBladeMasks(dimension));
+            return Self.Multivector(T, &blades.allBladeMasks(dimensions));
         }
 
         /// Grade-restricted multivector carrier (e.g., only Vectors, only Bivectors).
         pub fn KVector(comptime T: type, comptime grade: usize) type {
-            return Self.Multivector(T, &blades.gradeBladeMasks(dimension, grade));
+            return Self.Multivector(T, &blades.gradeBladeMasks(dimensions, grade));
         }
 
         /// Multivector containing only even-grade blades (e.g., Scalars + Bivectors).
         pub fn EvenMultivector(comptime T: type) type {
-            return Self.Multivector(T, &blades.evenBladeMasks(dimension));
+            return Self.Multivector(T, &blades.evenBladeMasks(dimensions));
         }
 
         /// Multivector containing only odd-grade blades (e.g., Vectors + Trivectors).
         pub fn OddMultivector(comptime T: type) type {
-            return Self.Multivector(T, &blades.oddBladeMasks(dimension));
+            return Self.Multivector(T, &blades.oddBladeMasks(dimensions));
         }
 
         /// Scalar type (Grade 0).
@@ -98,7 +98,7 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
 
         /// Pseudoscalar type (Top Grade).
         pub fn Pseudoscalar(comptime T: type) type {
-            return Self.KVector(T, dimension);
+            return Self.KVector(T, dimensions);
         }
 
         /// Rotor type (Even Multivectors).
@@ -118,16 +118,16 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
         pub fn basisVector(
             comptime T: type,
             comptime one_based_index: usize,
-        ) Self.Multivector(T, &.{blades.basisVectorMask(dimension, one_based_index)}) {
-            return Self.basisBlade(T, blades.basisVectorMask(dimension, one_based_index));
+        ) Self.Multivector(T, &.{blades.basisVectorMask(dimensions, one_based_index)}) {
+            return Self.basisBlade(T, blades.basisVectorMask(dimensions, one_based_index));
         }
 
         /// Constructs a signed blade from a name string (e.g., "e1", "-e12", "e(1,2)").
         pub fn signedBlade(
             comptime T: type,
             comptime name: []const u8,
-        ) Self.Multivector(T, &.{blade_parsing.parseSignedBlade(name, dimension, naming, true).mask}) {
-            const spec = comptime blade_parsing.parseSignedBlade(name, dimension, naming, true);
+        ) Self.Multivector(T, &.{blade_parsing.parseSignedBlade(name, dimensions, naming, true).mask}) {
+            const spec = comptime blade_parsing.parseSignedBlade(name, dimensions, naming, true);
             return Self.basisBlade(T, spec.mask).scale(@intFromEnum(spec.sign));
         }
 
@@ -170,12 +170,12 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
                 }
 
                 /// Constructs a basis vector from a one-based index.
-                pub fn basisVector(comptime index: usize) Self.Multivector(T, &.{blades.basisVectorMask(dimension, index)}) {
+                pub fn basisVector(comptime index: usize) Self.Multivector(T, &.{blades.basisVectorMask(dimensions, index)}) {
                     return Self.basisVector(T, index);
                 }
 
                 /// Constructs a signed blade from a name string.
-                pub fn signedBlade(comptime name: []const u8) Self.Multivector(T, &.{blade_parsing.parseSignedBlade(name, dimension, naming, true).mask}) {
+                pub fn signedBlade(comptime name: []const u8) Self.Multivector(T, &.{blade_parsing.parseSignedBlade(name, dimensions, naming, true).mask}) {
                     return Self.signedBlade(T, name);
                 }
 
@@ -241,7 +241,7 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
 test "ga facade exposes canonical family and rotor surface" {
     _ = expression;
 
-    try std.testing.expectEqual(@as(usize, 5), family.euclidean(5).dimension);
+    try std.testing.expectEqual(@as(usize, 5), family.euclidean(5).dimensions);
 
     const E2 = Algebra(.euclidean(2)).Basis(f64);
     const e1 = E2.e(1);
@@ -270,11 +270,11 @@ test "algebra naming options can expose span-mapped named indices" {
         .basis_spans = spans,
     };
 
-    const parsed = try blade_parsing.parseSignedBlade("e0", sig.dimension(), opts, false);
+    const parsed = try blade_parsing.parseSignedBlade("e0", sig.dimensions(), opts, false);
     try std.testing.expectEqual(blades.SignedBladeSpec{ .sign = .positive, .mask = .init(0b1000) }, parsed);
 
     const Cl301 = AlgebraWithNamingOptions(sig, opts);
     const E = Cl301.Basis(f64);
     try std.testing.expect(E.signedBlade("e0").eql(E.e(0)));
-    try std.testing.expectError(error.InvalidBasisIndex, blade_parsing.parseSignedBlade("e4", sig.dimension(), opts, false));
+    try std.testing.expectError(error.InvalidBasisIndex, blade_parsing.parseSignedBlade("e4", sig.dimensions(), opts, false));
 }

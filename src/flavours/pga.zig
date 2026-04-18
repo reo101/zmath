@@ -18,8 +18,8 @@ const bindings = family.defaultBindings(default_family, f32);
 pub const Family = bindings.Family;
 pub const default_scalar = bindings.default_scalar;
 pub const metric_signature = bindings.metric_signature;
-/// Ambient dimension of the PGA algebra (4).
-pub const dimension = bindings.dimension;
+/// Ambient dimensions of the PGA algebra (4).
+pub const dimensions = bindings.dimensions;
 pub const Algebra = bindings.Algebra;
 pub const Instantiate = bindings.Instantiate;
 pub const h = bindings.h;
@@ -105,7 +105,7 @@ fn namedBasisIndex(comptime named_index: usize) usize {
     return bindings.resolveNamedBasisIndex(named_index);
 }
 
-test "pga signature has correct dimension and basis-vector squares" {
+test "pga signature has correct dimensions and basis-vector squares" {
     // e1² = e2² = e3² = +1 (positive)
     try std.testing.expectEqual(.positive, metric_signature.basisSquareClass(namedBasisIndex(1)));
     try std.testing.expectEqual(.positive, metric_signature.basisSquareClass(namedBasisIndex(2)));
@@ -184,20 +184,20 @@ test "euclidean point representation and join" {
 
 test "fullSignedBladeFromIndicesWithSignature respects degenerate square" {
     // Repeated degenerate index should give zero
-    const result = h.Basis.fromIndices(&.{ dimension, dimension });
+    const result = h.Basis.fromIndices(&.{ dimensions, dimensions });
     // e0*e0 = 0, so the scalar part must be zero
     try std.testing.expectEqual(@as(f64, 0.0), result.scalarCoeff());
 }
 
 test "pga signed blade parser accepts e0 alias for degenerate basis" {
-    const parsed = blade_parsing.parseSignedBlade("e0", dimension, bindings.naming_options, false);
+    const parsed = blade_parsing.parseSignedBlade("e0", dimensions, bindings.naming_options, false);
     try std.testing.expectEqual(blades.SignedBladeSpec{ .sign = .positive, .mask = .init(0b1000) }, try parsed);
 
     const E = h.Basis;
     try std.testing.expect(E.signedBlade("e0").eql(E.e(0)));
-    try std.testing.expectError(error.InvalidBasisIndex, blade_parsing.resolveNamedBasisIndex(4, dimension, bindings.naming_options, false));
-    try std.testing.expectError(error.InvalidBasisIndex, blade_parsing.parseSignedBlade("e4", dimension, bindings.naming_options, false));
-    try std.testing.expectError(error.InvalidBasisIndex, blade_parsing.parseSignedBlade("e14", dimension, bindings.naming_options, false));
+    try std.testing.expectError(error.InvalidBasisIndex, blade_parsing.resolveNamedBasisIndex(4, dimensions, bindings.naming_options, false));
+    try std.testing.expectError(error.InvalidBasisIndex, blade_parsing.parseSignedBlade("e4", dimensions, bindings.naming_options, false));
+    try std.testing.expectError(error.InvalidBasisIndex, blade_parsing.parseSignedBlade("e14", dimensions, bindings.naming_options, false));
 }
 
 test "Point.init correctly constructs trivectors" {
@@ -224,7 +224,7 @@ test "toMatrix4x4 with identity rotor" {
 test "pga exposes configurable Euclidean families" {
     const P2 = EuclideanFamily(2).Instantiate(f32);
 
-    try std.testing.expectEqual(@as(usize, 3), EuclideanFamily(2).dimension);
+    try std.testing.expectEqual(@as(usize, 3), EuclideanFamily(2).dimensions);
     try std.testing.expectEqual(@as(f32, 0.0), P2.Basis.e(0).gp(P2.Basis.e(0)).scalarCoeff());
 }
 

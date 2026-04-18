@@ -38,7 +38,7 @@ Introduced `HyperCoords` and `RoundCoords` to provide metric-specific type safet
 
 ## GA Flavour Comparison
 
-| Flavour | Signature | Dimension Aware | Key Benefit |
+| Flavour | Signature | Dimensions Aware | Key Benefit |
 | :--- | :--- | :--- | :--- |
 | **VGA** | $Cl(n, 0, 0)$ | Yes | Simple Euclidean vector math |
 | **PGA** | $Cl(n, 0, 1)$ | Yes (adds $e_0$) | Euclidean rigid motion (points/lines/planes) |

@@ -69,9 +69,9 @@ pub const SignedBladeNamingOptions = struct {
         return .{ .basis_spans = basis_spans };
     }
 
-    /// Default strict one-based naming (`e1..eN`) for dimension-only usage.
-    pub fn euclidean(comptime dimension: usize) SignedBladeNamingOptions {
-        return withBasisSpans(.init(.{ .positive = .range(1, dimension) }));
+    /// Default strict one-based naming (`e1..eN`) for dimensions-only usage.
+    pub fn euclidean(comptime dimensions: usize) SignedBladeNamingOptions {
+        return withBasisSpans(.init(.{ .positive = .range(1, dimensions) }));
     }
 
     /// Default strict one-based naming derived from a metric signature.
@@ -79,30 +79,30 @@ pub const SignedBladeNamingOptions = struct {
         return withBasisSpans(.fromSignature(sig));
     }
 
-    fn assertValid(self: SignedBladeNamingOptions, comptime dimension: usize) void {
-        self.basis_spans.assertValidForDimension(dimension);
+    fn assertValid(self: SignedBladeNamingOptions, comptime dimensions: usize) void {
+        self.basis_spans.assertValidForDimensions(dimensions);
     }
 
-    fn validate(self: SignedBladeNamingOptions, dimension: usize) SignedBladeParseError!void {
-        self.basis_spans.validateForDimension(dimension) catch return error.InvalidBasisConfiguration;
+    fn validate(self: SignedBladeNamingOptions, dimensions: usize) SignedBladeParseError!void {
+        self.basis_spans.validateForDimensions(dimensions) catch return error.InvalidBasisConfiguration;
     }
 
     fn resolveNamedBasisIndexComptime(
         comptime self: SignedBladeNamingOptions,
         named_index: usize,
-        comptime dimension: usize,
+        comptime dimensions: usize,
     ) SignedBladeParseError!usize {
-        self.assertValid(dimension);
-        return self.basis_spans.resolveNamedBasisIndex(named_index, dimension) orelse error.InvalidBasisIndex;
+        self.assertValid(dimensions);
+        return self.basis_spans.resolveNamedBasisIndex(named_index, dimensions) orelse error.InvalidBasisIndex;
     }
 
     fn resolveNamedBasisIndexRuntime(
         self: SignedBladeNamingOptions,
         named_index: usize,
-        dimension: usize,
+        dimensions: usize,
     ) SignedBladeParseError!usize {
-        try self.validate(dimension);
-        const resolved = self.basis_spans.resolveNamedBasisIndexRuntime(named_index, dimension) catch return error.InvalidBasisConfiguration;
+        try self.validate(dimensions);
+        const resolved = self.basis_spans.resolveNamedBasisIndexRuntime(named_index, dimensions) catch return error.InvalidBasisConfiguration;
         return resolved orelse error.InvalidBasisIndex;
     }
 };
@@ -111,16 +111,16 @@ fn isDigit(char: u8) bool {
     return std.ascii.isDigit(char);
 }
 
-fn runtimeDefaultOptions(dimension: usize) SignedBladeNamingOptions {
+fn runtimeDefaultOptions(dimensions: usize) SignedBladeNamingOptions {
     return SignedBladeNamingOptions.withBasisSpans(.init(.{
-        .positive = .range(1, dimension),
+        .positive = .range(1, dimensions),
     }));
 }
 
 fn parseBasisIndex(
     name: []const u8,
     position: *usize,
-    dimension: usize,
+    dimensions: usize,
     options: SignedBladeNamingOptions,
 ) SignedBladeParseError!usize {
     if (position.* >= name.len or !isDigit(name[position.*])) {
@@ -135,15 +135,15 @@ fn parseBasisIndex(
 
     if (position.* - start > 1 and name[start] == '0') return error.InvalidBasisIndex;
 
-    return options.resolveNamedBasisIndexRuntime(value, dimension);
+    return options.resolveNamedBasisIndexRuntime(value, dimensions);
 }
 
 fn applyParsedIndex(
     spec: *SignedBladeSpec,
     basis_index: usize,
-    dimension: usize,
+    dimensions: usize,
 ) void {
-    blades.applyBasisIndexRuntime(spec, basis_index, dimension);
+    blades.applyBasisIndexRuntime(spec, basis_index, dimensions);
 }
 
 const SeparatedBladeSyntax = struct {
@@ -156,7 +156,7 @@ const SeparatedBladeSyntax = struct {
 
 fn parseSeparatedSignedBlade(
     name: []const u8,
-    dimension: usize,
+    dimensions: usize,
     syntax: SeparatedBladeSyntax,
     options: SignedBladeNamingOptions,
 ) SignedBladeParseError!SignedBladeSpec {
@@ -169,8 +169,8 @@ fn parseSeparatedSignedBlade(
     if (position >= syntax.end) return error.EmptySignedBlade;
 
     while (true) {
-        const basis_index = try parseBasisIndex(name, &position, dimension, options);
-        applyParsedIndex(&spec, basis_index, dimension);
+        const basis_index = try parseBasisIndex(name, &position, dimensions, options);
+        applyParsedIndex(&spec, basis_index, dimensions);
 
         if (position == syntax.end) return spec;
         if (name[position] != syntax.separator) return error.InvalidBasisSeparator;
@@ -184,23 +184,23 @@ fn hasUnderscoreSyntax(name: []const u8) bool {
     return if (name.len <= 1) false else std.mem.indexOfScalar(u8, name[1..], '_') != null;
 }
 
-fn invalidSignedBladeCompileError(comptime name: []const u8, comptime dimension: usize, comptime err: SignedBladeParseError) noreturn {
+fn invalidSignedBladeCompileError(comptime name: []const u8, comptime dimensions: usize, comptime err: SignedBladeParseError) noreturn {
     @compileError(std.fmt.comptimePrint(
-        "invalid signed blade `{s}` for this algebra of dimension {d}: {s}",
-        .{ name, dimension, @errorName(err) },
+        "invalid signed blade `{s}` for this algebra of dimensions {d}: {s}",
+        .{ name, dimensions, @errorName(err) },
     ));
 }
 
-fn invalidBasisIndexCompileError(comptime named_index: usize, comptime dimension: usize, comptime err: SignedBladeParseError) noreturn {
+fn invalidBasisIndexCompileError(comptime named_index: usize, comptime dimensions: usize, comptime err: SignedBladeParseError) noreturn {
     @compileError(std.fmt.comptimePrint(
-        "invalid basis index `{d}` for this algebra of dimension {d}: {s}",
-        .{ named_index, dimension, @errorName(err) },
+        "invalid basis index `{d}` for this algebra of dimensions {d}: {s}",
+        .{ named_index, dimensions, @errorName(err) },
     ));
 }
 
 fn parseCompactSignedBlade(
     name: []const u8,
-    dimension: usize,
+    dimensions: usize,
     options: SignedBladeNamingOptions,
 ) SignedBladeParseError!SignedBladeSpec {
     var spec = SignedBladeSpec{ .sign = .positive, .mask = .init(0) };
@@ -213,9 +213,9 @@ fn parseCompactSignedBlade(
             '0'...'9' => @as(usize, char - '0'),
             else => return error.InvalidBasisIndex,
         };
-        const basis_index = try options.resolveNamedBasisIndexRuntime(named_index, dimension);
+        const basis_index = try options.resolveNamedBasisIndexRuntime(named_index, dimensions);
 
-        applyParsedIndex(&spec, basis_index, dimension);
+        applyParsedIndex(&spec, basis_index, dimensions);
     }
 
     return spec;
@@ -223,12 +223,12 @@ fn parseCompactSignedBlade(
 
 fn parseUnderscoreSignedBlade(
     name: []const u8,
-    dimension: usize,
+    dimensions: usize,
     options: SignedBladeNamingOptions,
 ) SignedBladeParseError!SignedBladeSpec {
     if (name.len < 3) return error.EmptySignedBlade;
 
-    return parseSeparatedSignedBlade(name, dimension, .{
+    return parseSeparatedSignedBlade(name, dimensions, .{
         .start = 1,
         .end = name.len,
         .separator = '_',
@@ -239,7 +239,7 @@ fn parseUnderscoreSignedBlade(
 
 fn parseDelimitedSignedBlade(
     name: []const u8,
-    dimension: usize,
+    dimensions: usize,
     open: u8,
     close: u8,
     separator: u8,
@@ -248,7 +248,7 @@ fn parseDelimitedSignedBlade(
     if (name.len < 5) return error.EmptySignedBlade;
     if (name[1] != open or name[name.len - 1] != close) return error.InvalidBasisDelimiter;
 
-    return parseSeparatedSignedBlade(name, dimension, .{
+    return parseSeparatedSignedBlade(name, dimensions, .{
         .start = 2,
         .end = name.len - 1,
         .separator = separator,
@@ -260,22 +260,22 @@ fn parseDelimitedSignedBlade(
 /// Returns whether `name` is a valid signed-blade spelling under naming options.
 pub fn isSignedBlade(
     comptime name: []const u8,
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime options: ?SignedBladeNamingOptions,
 ) bool {
-    const opts = comptime options orelse SignedBladeNamingOptions.euclidean(dimension);
-    _ = parseSignedBladeImpl(name, dimension, opts) catch return false;
+    const opts = comptime options orelse SignedBladeNamingOptions.euclidean(dimensions);
+    _ = parseSignedBladeImpl(name, dimensions, opts) catch return false;
     return true;
 }
 
 /// Runtime-capable counterpart to `isSignedBlade`.
 pub fn isSignedBladeRuntime(
     name: []const u8,
-    dimension: usize,
+    dimensions: usize,
     options: ?SignedBladeNamingOptions,
 ) bool {
-    const opts = options orelse runtimeDefaultOptions(dimension);
-    _ = parseSignedBladeImpl(name, dimension, opts) catch return false;
+    const opts = options orelse runtimeDefaultOptions(dimensions);
+    _ = parseSignedBladeImpl(name, dimensions, opts) catch return false;
     return true;
 }
 
@@ -283,15 +283,15 @@ pub fn isSignedBladeRuntime(
 /// If `panicking` is true, invalid blades will trigger a compile error instead of returning an error union.
 pub fn parseSignedBlade(
     comptime name: []const u8,
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime options: ?SignedBladeNamingOptions,
     comptime panicking: bool,
 ) if (panicking) SignedBladeSpec else SignedBladeParseError!SignedBladeSpec {
-    const opts = comptime options orelse SignedBladeNamingOptions.euclidean(dimension);
+    const opts = comptime options orelse SignedBladeNamingOptions.euclidean(dimensions);
     if (panicking) {
-        return comptime parseSignedBladeImpl(name, dimension, opts) catch |err| invalidSignedBladeCompileError(name, dimension, err);
+        return comptime parseSignedBladeImpl(name, dimensions, opts) catch |err| invalidSignedBladeCompileError(name, dimensions, err);
     } else {
-        return parseSignedBladeImpl(name, dimension, opts);
+        return parseSignedBladeImpl(name, dimensions, opts);
     }
 }
 
@@ -304,30 +304,30 @@ fn resolveAlias(name: []const u8, options: SignedBladeNamingOptions) ?SignedBlad
 
 fn parseSignedBladeImpl(
     name: []const u8,
-    dimension: usize,
+    dimensions: usize,
     options: SignedBladeNamingOptions,
 ) SignedBladeParseError!SignedBladeSpec {
     if (resolveAlias(name, options)) |spec| return spec;
     if (name.len == 0 or name[0] != options.basis_prefix) return error.MissingBasisPrefix;
     if (name.len < 2) return error.EmptySignedBlade;
-    try options.validate(dimension);
+    try options.validate(dimensions);
 
     return switch (name[1]) {
         '(' => if (options.allow_parenthesized_form)
-            parseDelimitedSignedBlade(name, dimension, '(', ')', ',', options)
+            parseDelimitedSignedBlade(name, dimensions, '(', ')', ',', options)
         else
             error.InvalidBasisDelimiter,
         '[' => if (options.allow_bracketed_form)
-            parseDelimitedSignedBlade(name, dimension, '[', ']', ',', options)
+            parseDelimitedSignedBlade(name, dimensions, '[', ']', ',', options)
         else
             error.InvalidBasisDelimiter,
         else => if (hasUnderscoreSyntax(name))
             if (options.allow_underscore_form)
-                parseUnderscoreSignedBlade(name, dimension, options)
+                parseUnderscoreSignedBlade(name, dimensions, options)
             else
                 error.InvalidBasisSeparator
         else if (options.allow_compact_form)
-            parseCompactSignedBlade(name, dimension, options)
+            parseCompactSignedBlade(name, dimensions, options)
         else
             error.InvalidBasisSeparator,
     };
@@ -380,11 +380,11 @@ fn scanSignedBladeTokenEnd(
 /// Runtime-capable counterpart to `parseSignedBlade`.
 pub fn parseSignedBladeRuntime(
     name: []const u8,
-    dimension: usize,
+    dimensions: usize,
     options: ?SignedBladeNamingOptions,
 ) SignedBladeParseError!SignedBladeSpec {
-    const opts = options orelse runtimeDefaultOptions(dimension);
-    return parseSignedBladeImpl(name, dimension, opts);
+    const opts = options orelse runtimeDefaultOptions(dimensions);
+    return parseSignedBladeImpl(name, dimensions, opts);
 }
 
 /// Parses a signed blade starting at `start` inside a larger source string and
@@ -392,17 +392,17 @@ pub fn parseSignedBladeRuntime(
 pub fn parseSignedBladePrefix(
     comptime source: []const u8,
     comptime start: usize,
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime options: ?SignedBladeNamingOptions,
     comptime panicking: bool,
 ) if (panicking) SignedBladePrefixParseResult else SignedBladeParseError!SignedBladePrefixParseResult {
-    const opts = comptime options orelse SignedBladeNamingOptions.euclidean(dimension);
+    const opts = comptime options orelse SignedBladeNamingOptions.euclidean(dimensions);
 
     if (panicking) {
-        const end = comptime scanSignedBladeTokenEnd(source, start, opts) catch |err| invalidSignedBladeCompileError(source[start..], dimension, err);
+        const end = comptime scanSignedBladeTokenEnd(source, start, opts) catch |err| invalidSignedBladeCompileError(source[start..], dimensions, err);
         const token = source[start..end];
         return .{
-            .spec = comptime parseSignedBladeImpl(token, dimension, opts) catch |err| invalidSignedBladeCompileError(token, dimension, err),
+            .spec = comptime parseSignedBladeImpl(token, dimensions, opts) catch |err| invalidSignedBladeCompileError(token, dimensions, err),
             .end = end,
         };
     }
@@ -410,7 +410,7 @@ pub fn parseSignedBladePrefix(
     const end = comptime scanSignedBladeTokenEnd(source, start, opts) catch |err| return err;
     const token = source[start..end];
     return .{
-        .spec = try parseSignedBladeImpl(token, dimension, opts),
+        .spec = try parseSignedBladeImpl(token, dimensions, opts),
         .end = end,
     };
 }
@@ -419,14 +419,14 @@ pub fn parseSignedBladePrefix(
 pub fn parseSignedBladePrefixRuntime(
     source: []const u8,
     start: usize,
-    dimension: usize,
+    dimensions: usize,
     options: ?SignedBladeNamingOptions,
 ) SignedBladeParseError!SignedBladePrefixParseResult {
-    const opts = options orelse runtimeDefaultOptions(dimension);
+    const opts = options orelse runtimeDefaultOptions(dimensions);
     const end = try scanSignedBladeTokenEnd(source, start, opts);
     const token = source[start..end];
     return .{
-        .spec = try parseSignedBladeImpl(token, dimension, opts),
+        .spec = try parseSignedBladeImpl(token, dimensions, opts),
         .end = end,
     };
 }
@@ -435,26 +435,26 @@ pub fn parseSignedBladePrefixRuntime(
 /// If `panicking` is true, invalid indices will trigger a compile error instead of returning an error union.
 pub fn resolveNamedBasisIndex(
     comptime named_index: usize,
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime options: ?SignedBladeNamingOptions,
     comptime panicking: bool,
 ) if (panicking) usize else SignedBladeParseError!usize {
-    const opts = comptime options orelse SignedBladeNamingOptions.euclidean(dimension);
+    const opts = comptime options orelse SignedBladeNamingOptions.euclidean(dimensions);
     if (panicking) {
-        return comptime opts.resolveNamedBasisIndexComptime(named_index, dimension) catch |err| invalidBasisIndexCompileError(named_index, dimension, err);
+        return comptime opts.resolveNamedBasisIndexComptime(named_index, dimensions) catch |err| invalidBasisIndexCompileError(named_index, dimensions, err);
     } else {
-        return opts.resolveNamedBasisIndexComptime(named_index, dimension);
+        return opts.resolveNamedBasisIndexComptime(named_index, dimensions);
     }
 }
 
 /// Runtime-capable counterpart to `resolveNamedBasisIndex`.
 pub fn resolveNamedBasisIndexRuntime(
     named_index: usize,
-    dimension: usize,
+    dimensions: usize,
     options: ?SignedBladeNamingOptions,
 ) SignedBladeParseError!usize {
-    const opts = options orelse runtimeDefaultOptions(dimension);
-    return opts.resolveNamedBasisIndexRuntime(named_index, dimension);
+    const opts = options orelse runtimeDefaultOptions(dimensions);
+    return opts.resolveNamedBasisIndexRuntime(named_index, dimensions);
 }
 
 test "signed blades keep compact and multi-digit forms distinct" {

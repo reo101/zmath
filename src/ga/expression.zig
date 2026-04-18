@@ -759,7 +759,7 @@ fn parserLexBlade(
     const parsed = try blade_parsing.parseSignedBladePrefixRuntime(
         self.source,
         self.position,
-        sig.dimension(),
+        sig.dimensions(),
         self.naming_options,
     );
     self.position = parsed.end;

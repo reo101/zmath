@@ -10,12 +10,12 @@ const Rotor8 = Cl8.Rotor;
 const Vector8 = Cl8.Vector;
 
 // Direct mask builders. These isolate the blade-set combinator cost.
-const Full8BladeIndex = blades.bladeIndexByMask(Sig8.dimension(), Full8.blades);
-const Full8GeometricMasks = blades.geometricProductMasks(Sig8.dimension(), Full8.blades, Full8.blades);
-const Full8OuterMasks = blades.outerProductMasks(Sig8.dimension(), Full8.blades, Full8.blades);
-const Full8LeftContractionMasks = blades.leftContractionMasks(Sig8.dimension(), Full8.blades, Full8.blades);
-const Full8RightContractionMasks = blades.rightContractionMasks(Sig8.dimension(), Full8.blades, Full8.blades);
-const Full8DualMasks = blades.dualMasks(Sig8.dimension(), Full8.blades);
+const Full8BladeIndex = blades.bladeIndexByMask(Sig8.dimensions(), Full8.blades);
+const Full8GeometricMasks = blades.geometricProductMasks(Sig8.dimensions(), Full8.blades, Full8.blades);
+const Full8OuterMasks = blades.outerProductMasks(Sig8.dimensions(), Full8.blades, Full8.blades);
+const Full8LeftContractionMasks = blades.leftContractionMasks(Sig8.dimensions(), Full8.blades, Full8.blades);
+const Full8RightContractionMasks = blades.rightContractionMasks(Sig8.dimensions(), Full8.blades, Full8.blades);
+const Full8DualMasks = blades.dualMasks(Sig8.dimensions(), Full8.blades);
 
 // Result carriers. These are the declarations users tend to name directly.
 const Full8Add = multivector.AddResultType(f64, Full8.blades, Full8.blades, Sig8);

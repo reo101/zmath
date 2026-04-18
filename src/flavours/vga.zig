@@ -3,8 +3,8 @@ const std = @import("std");
 pub const ga = @import("../ga.zig");
 const family = ga.family;
 
-pub fn EuclideanFamily(comptime dimensions: usize) type {
-    return family.euclidean(dimensions);
+pub fn EuclideanFamily(comptime euclidean_dimentions: usize) type {
+    return family.euclidean(euclidean_dimentions);
 }
 
 const default_family = EuclideanFamily(2);
@@ -12,7 +12,7 @@ const bindings = family.defaultBindings(default_family, f64);
 pub const Family = bindings.Family;
 pub const default_scalar = bindings.default_scalar;
 pub const metric_signature = bindings.metric_signature;
-pub const dimension = bindings.dimension;
+pub const dimensions = bindings.dimensions;
 pub const Algebra = bindings.Algebra;
 pub const Instantiate = bindings.Instantiate;
 pub const h = bindings.h;

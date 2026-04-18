@@ -10,7 +10,7 @@ pub fn withNamingOptions(
     return struct {
         pub const signature = metric_sig;
         pub const metric_signature = metric_sig;
-        pub const dimension = metric_sig.dimension();
+        pub const dimensions = metric_sig.dimensions();
         pub const naming_options = naming_opts;
         pub const Algebra = ga.AlgebraWithNamingOptions(metric_sig, naming_opts);
 
@@ -90,7 +90,7 @@ pub fn defaultBindings(comptime DefaultFamily: type, comptime DefaultScalar: typ
         pub const Family = DefaultFamily;
         pub const default_scalar = DefaultScalar;
         pub const metric_signature = Family.metric_signature;
-        pub const dimension = Family.dimension;
+        pub const dimensions = Family.dimensions;
         pub const naming_options = Family.naming_options;
         pub const Algebra = Family.Algebra;
 
@@ -99,7 +99,7 @@ pub fn defaultBindings(comptime DefaultFamily: type, comptime DefaultScalar: typ
         }
 
         pub fn resolveNamedBasisIndex(comptime named_index: usize) usize {
-            return comptime blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
+            return comptime blade_parsing.resolveNamedBasisIndex(named_index, dimensions, naming_options, true);
         }
 
         pub const h = Instantiate(DefaultScalar);
@@ -116,7 +116,7 @@ test "family builder exposes named algebra metadata" {
     );
     const H = Family.Instantiate(f32);
 
-    try std.testing.expectEqual(@as(usize, 3), Family.dimension);
+    try std.testing.expectEqual(@as(usize, 3), Family.dimensions);
     try std.testing.expectEqual(@as(f32, -1.0), H.Basis.e(0).gp(H.Basis.e(0)).scalarCoeff());
     try std.testing.expectEqual(@as(f32, 1.0), H.Basis.e(1).gp(H.Basis.e(1)).scalarCoeff());
 }
@@ -125,7 +125,7 @@ test "euclidean family builder matches default euclidean naming" {
     const E4 = euclidean(4).Instantiate(f32);
     const v = E4.Vector.init(.{ 1, 2, 3, 4 });
 
-    try std.testing.expectEqual(@as(usize, 4), euclidean(4).dimension);
+    try std.testing.expectEqual(@as(usize, 4), euclidean(4).dimensions);
     try std.testing.expectEqual(@as(f32, 4.0), v.coeffNamed("e4"));
 }
 
@@ -134,14 +134,14 @@ test "default bindings expose a canonical family surface" {
     const E3 = Bindings.Instantiate(f32);
     const v = E3.Vector.init(.{ 1, 2, 3 });
 
-    try std.testing.expectEqual(@as(usize, 3), Bindings.Family.dimension);
+    try std.testing.expectEqual(@as(usize, 3), Bindings.Family.dimensions);
     try std.testing.expectEqual(@as(f32, 3.0), v.coeffNamed("e3"));
 }
 
 test "minkowski family exposes split basis spans" {
     const M22 = minkowski(2, 2).Instantiate(f32);
 
-    try std.testing.expectEqual(@as(usize, 4), minkowski(2, 2).dimension);
+    try std.testing.expectEqual(@as(usize, 4), minkowski(2, 2).dimensions);
     try std.testing.expectEqual(@as(f32, 1.0), M22.Basis.e(0).gp(M22.Basis.e(0)).scalarCoeff());
     try std.testing.expectEqual(@as(f32, 1.0), M22.Basis.e(1).gp(M22.Basis.e(1)).scalarCoeff());
     try std.testing.expectEqual(@as(f32, -1.0), M22.Basis.e(2).gp(M22.Basis.e(2)).scalarCoeff());

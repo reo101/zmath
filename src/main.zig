@@ -48,7 +48,7 @@ pub fn main(init: std.process.Init) !void {
     // 4. Proactive Validation
     // -------------------------------------------------------------------------
     // All signatures and operations are checked for consistency.
-    // Invalid basis names or dimension mismatches result in compile errors.
+    // Invalid basis names or dimensions mismatches result in compile errors.
     const e123 = Cl3.signedBlade("e123");
     try stdout.print("Pseudoscalar e123: {any}\n", .{e123.named()});
 

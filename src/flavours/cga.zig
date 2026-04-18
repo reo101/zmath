@@ -45,8 +45,8 @@ const bindings = family.defaultBindings(default_family, f32);
 pub const Family = bindings.Family;
 pub const default_scalar = bindings.default_scalar;
 pub const metric_signature = bindings.metric_signature;
-/// Ambient dimension of the CGA algebra (5).
-pub const dimension = bindings.dimension;
+/// Ambient dimensions of the CGA algebra (5).
+pub const dimensions = bindings.dimensions;
 pub const Algebra = bindings.Algebra;
 pub const Instantiate = bindings.Instantiate;
 pub const h = bindings.h;
@@ -84,7 +84,7 @@ test "cga exposes configurable Euclidean families" {
     const C2 = EuclideanFamily(2).Instantiate(f32);
     const e4 = C2.Basis.e(4);
 
-    try std.testing.expectEqual(@as(usize, 4), EuclideanFamily(2).dimension);
+    try std.testing.expectEqual(@as(usize, 4), EuclideanFamily(2).dimensions);
     try std.testing.expectEqual(@as(f32, -1.0), e4.gp(e4).scalarCoeff());
 }
 
