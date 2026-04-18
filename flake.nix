@@ -2,7 +2,7 @@
   description = "zmath Zig development environment";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
     flake-parts = {
       url = "github:hercules-ci/flake-parts";
@@ -11,15 +11,15 @@
 
     systems.url = "github:nix-systems/default";
 
-    zig-overlay = {
-      url = "github:mitchellh/zig-overlay";
+    zig-flake = {
+      url = "github:silversquirl/zig-flake";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
     zls = {
-      url = "github:zigtools/zls";
+      url = "github:zigtools/zls/0.16.0";
       inputs.nixpkgs.follows = "nixpkgs";
-      inputs.zig-overlay.follows = "zig-overlay";
+      inputs.zig-flake.follows = "zig-flake";
     };
   };
 
@@ -38,7 +38,7 @@
             ...
           }:
           let
-            zig = pkgs.zigpkgs.master;
+            zig = inputs'.zig-flake.packages.zig_0_16_0;
             raylibBuildInputs = [
               pkgs.libGL
               pkgs.xorg.libX11
@@ -55,13 +55,6 @@
             raylibPkgConfigPath = lib.makeSearchPathOutput "dev" "lib/pkgconfig" raylibBuildInputs;
           in
           {
-            _module.args.pkgs = import inputs.nixpkgs {
-              inherit system;
-              overlays = [
-                inputs.zig-overlay.overlays.default
-              ];
-            };
-
             devShells.default = pkgs.mkShell {
               packages = [
                 zig
@@ -70,10 +63,12 @@
               ];
               buildInputs = raylibBuildInputs;
 
-              PKG_CONFIG_PATH = raylibPkgConfigPath;
-              C_INCLUDE_PATH = raylibIncludePath;
-              LIBRARY_PATH = raylibLibraryPath;
-              LD_LIBRARY_PATH = raylibLibraryPath;
+              env = {
+                PKG_CONFIG_PATH = raylibPkgConfigPath;
+                C_INCLUDE_PATH = raylibIncludePath;
+                LIBRARY_PATH = raylibLibraryPath;
+                LD_LIBRARY_PATH = raylibLibraryPath;
+              };
             };
           };
       }
