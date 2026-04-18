@@ -203,10 +203,10 @@ pub fn tryRotorFromTo(from: anytype, to: anytype) RotorError!multivector.Rotor(@
 
 /// Applies the sandwich product `R v ~R` and returns the rotated vector.
 ///
-/// Works for any algebra dimension/signature as long as:
+/// Works for any algebra dimensions/signature as long as:
 /// - `vector` is grade-1,
 /// - `rotor` has even parity blades,
-/// - both share coefficient type, dimension, and metric signature.
+/// - both share coefficient type, dimensions, and metric signature.
 pub fn rotated(vector: anytype, rotor: anytype) multivector.Vector(@TypeOf(vector).Coefficient, @TypeOf(vector).metric_signature) {
     const Vector = @TypeOf(vector);
     const RotorType = @TypeOf(rotor);

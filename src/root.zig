@@ -8,8 +8,8 @@ pub const render = @import("render.zig");
 pub const visualizer = @import("ga/visualizer.zig");
 
 test "root surface links ga and flavours entrypoints" {
-    try std.testing.expectEqual(@as(usize, 3), ga.family.euclidean(3).dimension);
-    try std.testing.expectEqual(@as(usize, 4), ga.Algebra(.euclidean(4)).dimension);
+    try std.testing.expectEqual(@as(usize, 3), ga.family.euclidean(3).dimensions);
+    try std.testing.expectEqual(@as(usize, 4), ga.Algebra(.euclidean(4)).dimensions);
 
     const E2 = flavours.vga.h.Basis;
     const e1 = E2.e(1);

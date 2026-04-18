@@ -24,8 +24,8 @@ inline fn maskIndex(mask: BladeMask) usize {
     return mask.index();
 }
 
-fn assertMaskWithinDimensions(comptime mask: BladeMask, comptime dimension: usize) void {
-    if (maskInt(mask) >= blade_ops.bladeCount(dimension)) {
+fn assertMaskWithinDimensions(comptime mask: BladeMask, comptime dimensions: usize) void {
+    if (maskInt(mask) >= blade_ops.bladeCount(dimensions)) {
         @compileError("blade mask has bits set outside the algebra dimensions");
     }
 }
@@ -106,7 +106,7 @@ fn scalarProductSigns(comptime T: type, comptime masks: []const BladeMask, compt
     return signs;
 }
 
-fn countMarkedMasks(comptime dimension: usize, comptime marked: [blade_ops.bladeCount(dimension)]bool) usize {
+fn countMarkedMasks(comptime dimensions: usize, comptime marked: [blade_ops.bladeCount(dimensions)]bool) usize {
     var count: usize = 0;
     inline for (marked) |is_marked| {
         if (is_marked) count += 1;
@@ -114,8 +114,8 @@ fn countMarkedMasks(comptime dimension: usize, comptime marked: [blade_ops.blade
     return count;
 }
 
-fn collectMarkedMasks(comptime dimension: usize, comptime marked: [blade_ops.bladeCount(dimension)]bool) [countMarkedMasks(dimension, marked)]BladeMask {
-    var masks: [countMarkedMasks(dimension, marked)]BladeMask = undefined;
+fn collectMarkedMasks(comptime dimensions: usize, comptime marked: [blade_ops.bladeCount(dimensions)]bool) [countMarkedMasks(dimensions, marked)]BladeMask {
+    var masks: [countMarkedMasks(dimensions, marked)]BladeMask = undefined;
     var cursor: usize = 0;
 
     inline for (marked, 0..) |is_marked, mask| {
@@ -177,7 +177,7 @@ fn absValue(value: anytype) @TypeOf(value) {
 
 fn writeBlade(
     writer: anytype,
-    comptime dimension: usize,
+    comptime dimensions: usize,
     mask: BladeMask,
     comptime options: blade_parsing.SignedBladeNamingOptions,
 ) !void {
@@ -189,14 +189,14 @@ fn writeBlade(
     try writer.writeByte(options.basis_prefix);
     const first_bit = @ctz(mask.toInt());
     var bit_index: usize = 0;
-    while (bit_index < dimension) : (bit_index += 1) {
+    while (bit_index < dimensions) : (bit_index += 1) {
         if (!mask.bitset.isSet(bit_index)) continue;
 
-        if (dimension >= 10 and bit_index > first_bit) {
+        if (dimensions >= 10 and bit_index > first_bit) {
             try writer.writeByte('_');
         }
 
-        const named_index = options.basis_spans.resolveInternalToNamed(bit_index + 1, dimension).?;
+        const named_index = options.basis_spans.resolveInternalToNamed(bit_index + 1, dimensions).?;
         if (named_index < options.basis_names.len) {
             if (options.basis_names[named_index]) |name| {
                 try writer.writeAll(name);
@@ -209,17 +209,17 @@ fn writeBlade(
     }
 }
 
-fn bladeName(comptime mask: BladeMask, comptime dimension: usize, comptime prefix: u8, comptime basis_names: []const []const u8) []const u8 {
+fn bladeName(comptime mask: BladeMask, comptime dimensions: usize, comptime prefix: u8, comptime basis_names: []const []const u8) []const u8 {
     @setEvalBranchQuota(5_000_000);
     if (mask.toInt() == 0) return "s";
     comptime var name: []const u8 = "";
     const p: [1]u8 = .{prefix};
     name = name ++ p;
     const first_bit = @ctz(mask.toInt());
-    inline for (0..dimension) |i| {
+    inline for (0..dimensions) |i| {
         if ((mask.toInt() >> @intCast(i)) & 1 != 0) {
             // Separate indices by `_` when `e12` could both mean the 12th basis or `e1 * e2`
-            if (dimension >= 10 and i > first_bit) {
+            if (dimensions >= 10 and i > first_bit) {
                 name = name ++ "_";
             }
             name = name ++ basis_names[i];
@@ -252,8 +252,8 @@ pub fn SignedBladeTypeWithOptions(
     comptime naming_options: blade_parsing.SignedBladeNamingOptions,
 ) type {
     ensureNumeric(T);
-    const dimension = comptime sig.dimension();
-    const spec = comptime blade_parsing.parseSignedBlade(name, dimension, naming_options, true);
+    const dimensions = comptime sig.dimensions();
+    const spec = comptime blade_parsing.parseSignedBlade(name, dimensions, naming_options, true);
     return BasisBladeType(T, spec.mask, sig);
 }
 
@@ -271,9 +271,9 @@ fn signedBladeImpl(
 ) SignedBladeTypeWithOptions(T, name, sig, naming_options) {
     ensureNumeric(T);
 
-    const dimension = comptime sig.dimension();
+    const dimensions = comptime sig.dimensions();
 
-    const spec = comptime blade_parsing.parseSignedBlade(name, dimension, naming_options, true);
+    const spec = comptime blade_parsing.parseSignedBlade(name, dimensions, naming_options, true);
     if (comptime spec.sign.isNegative() and !supportsNegativeCoefficients(T)) {
         @compileError("negative-oriented signed blades require a signed or floating-point coefficient type");
     }
@@ -305,8 +305,8 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
     return extern struct {
         /// The coefficient type (e.g. `f32`, `f64`, `i32`).
         pub const Coefficient = T;
-        /// The dimension of the ambient space.
-        pub const dimensions = sig.dimension();
+        /// The dimensions of the ambient space.
+        pub const dimensions = sig.dimensions();
         /// The metric signature Cl(p, q, r).
         pub const metric_signature = sig;
         /// The naming options used for `.named` field generation and display.
@@ -316,9 +316,9 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         /// The number of coefficients stored in this multivector.
         pub const stored_blade_count = blade_masks.len;
         /// Whether this carrier stores every possible blade in the algebra.
-        pub const has_all_blades = blade_masks.len == blade_ops.bladeCount(sig.dimension());
+        pub const has_all_blades = blade_masks.len == blade_ops.bladeCount(sig.dimensions());
         /// Dense lookup table from blade mask to index (only for dimensions <= 12).
-        pub const blade_index_by_mask = if (dimensions <= 12) blade_ops.bladeIndexByMask(sig.dimension(), blade_masks) else struct {};
+        pub const blade_index_by_mask = if (dimensions <= 12) blade_ops.bladeIndexByMask(sig.dimensions(), blade_masks) else struct {};
         /// Compact map for high-dimensional mask lookups.
         pub const sorted_blade_index_map = if (dimensions > 12) blade_ops.SortedBladeMaskMap(blade_masks) else struct {};
         /// Sentinel value indicating a blade is not represented by this carrier.
@@ -343,12 +343,12 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         pub const Named = if (dimensions <= 5) off: {
             const basis_names = blk: {
                 var names: [dimensions][]const u8 = undefined;
-                for (0..dimensions) |i| {
-                    const named_index = naming_options.basis_spans.resolveInternalToNamed(i + 1, dimensions).?;
+                for (1..dimensions + 1, &names) |i, *name| {
+                    const named_index = naming_options.basis_spans.resolveInternalToNamed(i, dimensions).?;
                     if (named_index < naming_options.basis_names.len and naming_options.basis_names[named_index] != null) {
-                        names[i] = naming_options.basis_names[named_index].?;
+                        name.* = naming_options.basis_names[named_index].?;
                     } else {
-                        names[i] = std.fmt.comptimePrint("{d}", .{named_index});
+                        name.* = std.fmt.comptimePrint("{d}", .{named_index});
                     }
                 }
                 break :blk names;
@@ -848,7 +848,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         /// Projects onto one grade and returns the corresponding `KVector`.
         pub fn gradePart(self: Self, comptime target_grade: usize) GradeType(target_grade) {
             if (target_grade > dimensions) {
-                @compileError("grade must not exceed the ambient dimension");
+                @compileError("grade must not exceed the ambient dimensions");
             }
 
             const Result = GradeType(target_grade);
@@ -1070,7 +1070,7 @@ pub fn fullSignedBladeFromIndicesWithSignature(
     indices: []const usize,
 ) FullMultivector(T, sig) {
     ensureNumeric(T);
-    const dimension = comptime sig.dimension();
+    const dimensions = comptime sig.dimensions();
 
     if (comptime !supportsNegativeCoefficients(T)) {
         @compileError("runtime signed-blade construction requires signed or floating-point coefficients");
@@ -1078,7 +1078,7 @@ pub fn fullSignedBladeFromIndicesWithSignature(
 
     var spec = SignedBladeSpec{ .sign = .positive, .mask = BladeMask.init(0) };
     for (indices) |basis_index| {
-        std.debug.assert(1 <= basis_index and basis_index <= dimension);
+        std.debug.assert(1 <= basis_index and basis_index <= dimensions);
         if (sig.basisSquareClass(basis_index) == .degenerate and spec.mask.bitset.isSet(basis_index - 1)) {
             return FullMultivector(T, sig).zero();
         }
@@ -1097,8 +1097,8 @@ pub fn JoinResultType(
     comptime rhs_masks: []const BladeMask,
     comptime sig: MetricSignature,
 ) type {
-    const dimension = comptime sig.dimension();
-    const result_masks = blade_ops.dualMasks(dimension, &blade_ops.outerProductMasks(dimension, &blade_ops.dualMasks(dimension, lhs_masks), &blade_ops.dualMasks(dimension, rhs_masks)));
+    const dimensions = comptime sig.dimensions();
+    const result_masks = blade_ops.dualMasks(dimensions, &blade_ops.outerProductMasks(dimensions, &blade_ops.dualMasks(dimensions, lhs_masks), &blade_ops.dualMasks(dimensions, rhs_masks)));
     return Multivector(T, &result_masks, sig);
 }
 
@@ -1108,8 +1108,8 @@ pub fn DualResultType(
     comptime masks: []const BladeMask,
     comptime sig: MetricSignature,
 ) type {
-    const dimension = comptime sig.dimension();
-    const result_masks = blade_ops.dualMasks(dimension, masks);
+    const dimensions = comptime sig.dimensions();
+    const result_masks = blade_ops.dualMasks(dimensions, masks);
     return Multivector(T, &result_masks, sig);
 }
 
@@ -1120,8 +1120,8 @@ pub fn AddResultType(
     comptime rhs_masks: []const BladeMask,
     comptime sig: MetricSignature,
 ) type {
-    const dimension = comptime sig.dimension();
-    const masks = blade_ops.unionBladeMasks(dimension, lhs_masks, rhs_masks);
+    const dimensions = comptime sig.dimensions();
+    const masks = blade_ops.unionBladeMasks(dimensions, lhs_masks, rhs_masks);
     return Multivector(T, masks[0..], sig);
 }
 
@@ -1132,8 +1132,8 @@ pub fn GeometricProductResultType(
     comptime rhs_masks: []const BladeMask,
     comptime sig: MetricSignature,
 ) type {
-    const dimension = comptime sig.dimension();
-    const masks = blade_ops.geometricProductMasks(dimension, lhs_masks, rhs_masks);
+    const dimensions = comptime sig.dimensions();
+    const masks = blade_ops.geometricProductMasks(dimensions, lhs_masks, rhs_masks);
     return Multivector(T, masks[0..], sig);
 }
 
@@ -1144,8 +1144,8 @@ pub fn OuterProductResultType(
     comptime rhs_masks: []const BladeMask,
     comptime sig: MetricSignature,
 ) type {
-    const dimension = comptime sig.dimension();
-    const masks = blade_ops.outerProductMasks(dimension, lhs_masks, rhs_masks);
+    const dimensions = comptime sig.dimensions();
+    const masks = blade_ops.outerProductMasks(dimensions, lhs_masks, rhs_masks);
     return Multivector(T, masks[0..], sig);
 }
 
@@ -1156,8 +1156,8 @@ pub fn LeftContractionResultType(
     comptime rhs_masks: []const BladeMask,
     comptime sig: MetricSignature,
 ) type {
-    const dimension = comptime sig.dimension();
-    const masks = blade_ops.leftContractionMasks(dimension, lhs_masks, rhs_masks);
+    const dimensions = comptime sig.dimensions();
+    const masks = blade_ops.leftContractionMasks(dimensions, lhs_masks, rhs_masks);
     return Multivector(T, masks[0..], sig);
 }
 
@@ -1168,8 +1168,8 @@ pub fn RightContractionResultType(
     comptime rhs_masks: []const BladeMask,
     comptime sig: MetricSignature,
 ) type {
-    const dimension = comptime sig.dimension();
-    const masks = blade_ops.rightContractionMasks(dimension, lhs_masks, rhs_masks);
+    const dimensions = comptime sig.dimensions();
+    const masks = blade_ops.rightContractionMasks(dimensions, lhs_masks, rhs_masks);
     return Multivector(T, masks[0..], sig);
 }
 
@@ -1180,17 +1180,17 @@ pub fn DotProductResultType(
     comptime rhs_masks: []const BladeMask,
     comptime sig: MetricSignature,
 ) type {
-    const dimension = comptime sig.dimension();
-    const masks = blade_ops.dotProductMasks(dimension, lhs_masks, rhs_masks);
+    const dimensions = comptime sig.dimensions();
+    const masks = blade_ops.dotProductMasks(dimensions, lhs_masks, rhs_masks);
     return Multivector(T, masks[0..], sig);
 }
 
 /// Constructs a unit blade with coefficient `1`.
 pub fn basisBlade(comptime T: type, comptime mask: BladeMask, comptime sig: MetricSignature) BasisBladeType(T, mask, sig) {
     ensureNumeric(T);
-    const dimension = comptime sig.dimension();
+    const dimensions = comptime sig.dimensions();
 
-    comptime assertMaskWithinDimensions(mask, dimension);
+    comptime assertMaskWithinDimensions(mask, dimensions);
 
     var result = BasisBladeType(T, mask, sig).zero();
     result.coeffs[0] = coeffOne(T);
@@ -1202,9 +1202,9 @@ pub fn basisVector(
     comptime T: type,
     comptime one_based_index: usize,
     comptime sig: MetricSignature,
-) BasisBladeType(T, blade_ops.basisVectorMask(sig.dimension(), one_based_index), sig) {
-    const dimension = comptime sig.dimension();
-    return basisBlade(T, blade_ops.basisVectorMask(dimension, one_based_index), sig);
+) BasisBladeType(T, blade_ops.basisVectorMask(sig.dimensions(), one_based_index), sig) {
+    const dimensions = comptime sig.dimensions();
+    return basisBlade(T, blade_ops.basisVectorMask(dimensions, one_based_index), sig);
 }
 
 /// Constructs a compile-time signed blade such as `e12` or `e_10_2`.
@@ -1227,7 +1227,7 @@ pub fn signedBladeWithOptions(
 /// Prefer `ga.Algebra(sig).Instantiate(T).Full` at call sites. These free
 /// constructors remain as lower-level building blocks for generic internals.
 pub fn FullMultivector(comptime T: type, comptime sig: MetricSignature) type {
-    return Multivector(T, &blade_ops.allBladeMasks(sig.dimension()), sig);
+    return Multivector(T, &blade_ops.allBladeMasks(sig.dimensions()), sig);
 }
 
 /// Carrier type restricted to one grade.
@@ -1235,17 +1235,17 @@ pub fn FullMultivector(comptime T: type, comptime sig: MetricSignature) type {
 /// Prefer `ga.Algebra(sig).Instantiate(T).KVector`-style access through the
 /// algebra namespace when the signature is already known.
 pub fn KVector(comptime T: type, comptime grade: usize, comptime sig: MetricSignature) type {
-    return Multivector(T, &blade_ops.gradeBladeMasks(sig.dimension(), grade), sig);
+    return Multivector(T, &blade_ops.gradeBladeMasks(sig.dimensions(), grade), sig);
 }
 
 /// Carrier type restricted to even grades.
 pub fn EvenMultivector(comptime T: type, comptime sig: MetricSignature) type {
-    return Multivector(T, &blade_ops.evenBladeMasks(sig.dimension()), sig);
+    return Multivector(T, &blade_ops.evenBladeMasks(sig.dimensions()), sig);
 }
 
 /// Carrier type restricted to odd grades.
 pub fn OddMultivector(comptime T: type, comptime sig: MetricSignature) type {
-    return Multivector(T, &blade_ops.oddBladeMasks(sig.dimension()), sig);
+    return Multivector(T, &blade_ops.oddBladeMasks(sig.dimensions()), sig);
 }
 
 /// Scalar carrier type.
@@ -1270,7 +1270,7 @@ pub fn Trivector(comptime T: type, comptime sig: MetricSignature) type {
 
 /// Highest-grade pseudoscalar carrier type.
 pub fn Pseudoscalar(comptime T: type, comptime sig: MetricSignature) type {
-    return KVector(T, sig.dimension(), sig);
+    return KVector(T, sig.dimensions(), sig);
 }
 
 /// Even multivector carrier commonly used for rotors.
@@ -1291,14 +1291,14 @@ pub fn BasisWithNamingOptions(
     comptime sig: MetricSignature,
     comptime naming_options: blade_parsing.SignedBladeNamingOptions,
 ) type {
-    const dimension = comptime sig.dimension();
+    const dimensions = comptime sig.dimensions();
     return struct {
         fn Mv(comptime masks: []const BladeMask) type {
             return MultivectorWithNaming(T, masks, sig, naming_options);
         }
 
         /// The corresponding carrier type for the full algebra.
-        pub const Full = Mv(&blade_ops.allBladeMasks(dimension));
+        pub const Full = Mv(&blade_ops.allBladeMasks(dimensions));
 
         /// The corresponding scalar carrier.
         pub const Scalar = Full.ScalarType;
@@ -1312,8 +1312,8 @@ pub fn BasisWithNamingOptions(
         /// Returns the basis vector for the configured named basis index.
         pub fn e(
             comptime named_index: usize,
-        ) Mv(&.{blade_ops.basisVectorMask(dimension, blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true))}) {
-            const m = comptime blade_ops.basisVectorMask(dimension, blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true));
+        ) Mv(&.{blade_ops.basisVectorMask(dimensions, blade_parsing.resolveNamedBasisIndex(named_index, dimensions, naming_options, true))}) {
+            const m = comptime blade_ops.basisVectorMask(dimensions, blade_parsing.resolveNamedBasisIndex(named_index, dimensions, naming_options, true));
             return Mv(&.{m}).init(.{1});
         }
 
@@ -1321,8 +1321,8 @@ pub fn BasisWithNamingOptions(
         pub fn basisVectorByClass(
             comptime class: SignatureClass,
             comptime ordinal: usize,
-        ) Mv(&.{blade_ops.basisVectorMask(dimension, expectBasisVectorByClass(class, ordinal))}) {
-            const m = comptime blade_ops.basisVectorMask(dimension, expectBasisVectorByClass(class, ordinal));
+        ) Mv(&.{blade_ops.basisVectorMask(dimensions, expectBasisVectorByClass(class, ordinal))}) {
+            const m = comptime blade_ops.basisVectorMask(dimensions, expectBasisVectorByClass(class, ordinal));
             return Mv(&.{m}).init(.{1});
         }
 
@@ -1347,14 +1347,14 @@ pub fn BasisWithNamingOptions(
             }
 
             const named_index = span.start + (ordinal - 1);
-            return comptime blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
+            return comptime blade_parsing.resolveNamedBasisIndex(named_index, dimensions, naming_options, true);
         }
 
         /// Returns the blade mask for one configured named basis index.
         pub fn mask(comptime named_index: usize) BladeMask {
             return blade_ops.basisVectorMask(
-                dimension,
-                blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true),
+                dimensions,
+                blade_parsing.resolveNamedBasisIndex(named_index, dimensions, naming_options, true),
             );
         }
 
@@ -1363,8 +1363,8 @@ pub fn BasisWithNamingOptions(
             var result_mask: BladeMask = .init(0);
 
             inline for (named_indices) |named_index| {
-                const one_based_index = comptime blade_parsing.resolveNamedBasisIndex(named_index, dimension, naming_options, true);
-                const bit = blade_ops.basisVectorMask(dimension, one_based_index);
+                const one_based_index = comptime blade_parsing.resolveNamedBasisIndex(named_index, dimensions, naming_options, true);
+                const bit = blade_ops.basisVectorMask(dimensions, one_based_index);
                 if (result_mask.bitset.intersectWith(bit.bitset).mask != 0) {
                     @compileError("repeated basis vectors cancel in the geometric product and are not represented by a blade mask");
                 }
@@ -1375,8 +1375,8 @@ pub fn BasisWithNamingOptions(
         }
 
         /// Returns a compile-time signed blade such as `e12` or `e_10_2`.
-        pub fn signedBlade(comptime name: []const u8) Mv(&.{blade_parsing.parseSignedBlade(name, dimension, naming_options, true).mask}) {
-            const spec = comptime blade_parsing.parseSignedBlade(name, dimension, naming_options, true);
+        pub fn signedBlade(comptime name: []const u8) Mv(&.{blade_parsing.parseSignedBlade(name, dimensions, naming_options, true).mask}) {
+            const spec = comptime blade_parsing.parseSignedBlade(name, dimensions, naming_options, true);
             return Mv(&.{spec.mask}).init(.{@intFromEnum(spec.sign)});
         }
 
@@ -1384,8 +1384,8 @@ pub fn BasisWithNamingOptions(
         pub fn signedBladeWithOptions(
             comptime name: []const u8,
             comptime override_options: blade_parsing.SignedBladeNamingOptions,
-        ) Mv(&.{blade_parsing.parseSignedBlade(name, dimension, override_options, true).mask}) {
-            const spec = comptime blade_parsing.parseSignedBlade(name, dimension, override_options, true);
+        ) Mv(&.{blade_parsing.parseSignedBlade(name, dimensions, override_options, true).mask}) {
+            const spec = comptime blade_parsing.parseSignedBlade(name, dimensions, override_options, true);
             return Mv(&.{spec.mask}).init(.{@intFromEnum(spec.sign)});
         }
 
@@ -1596,7 +1596,7 @@ test "runtime signed blades zero repeated degenerate factors" {
     }
 }
 
-test "large-dimension full multivector geometric product with scalar identity" {
+test "large-dimensions full multivector geometric product with scalar identity" {
     const M8 = FullMultivector(f64, .euclidean(12));
     const scalar_one = M8.ScalarType.init(.{1.0});
     var coeffs = std.mem.zeroes([M8.blades.len]f64);

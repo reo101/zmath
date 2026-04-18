@@ -78,20 +78,20 @@ pub const BladeMask = struct {
         return spec.mask;
     }
 
-    /// Parses a signed blade name within `dimension` and returns its mask when
+    /// Parses a signed blade name within `dimensions` and returns its mask when
     /// the sign is positive.
     ///
     /// Since this helper returns only `BladeMask`, it rejects negative spellings
     /// with a comptime error instead of discarding the sign.
-    pub fn parseForDimension(comptime name: []const u8, comptime dimension: usize) !BladeMask {
+    pub fn parseForDimensions(comptime name: []const u8, comptime dimensions: usize) !BladeMask {
         comptime {
-            const checked = parser.expectSignedBlade(name, dimension);
+            const checked = parser.expectSignedBlade(name, dimensions);
             if (checked.sign != .positive) {
-                @compileError("BladeMask.parseForDimension expects a positive signed-blade spelling");
+                @compileError("BladeMask.parseForDimensions expects a positive signed-blade spelling");
             }
         }
 
-        const spec = try parser.parseSignedBlade(name, dimension);
+        const spec = try parser.parseSignedBlade(name, dimensions);
         return spec.mask;
     }
 
@@ -107,13 +107,13 @@ pub const BladeMask = struct {
         return spec.mask;
     }
 
-    /// Parses a signed blade name for `dimension` and panics at comptime on
+    /// Parses a signed blade name for `dimensions` and panics at comptime on
     /// parse failure.
     ///
     /// This helper also asserts the parsed sign is positive before returning the
     /// mask, because the sign is intentionally not part of the return value.
-    pub fn parseForDimensionPanicking(comptime name: []const u8, comptime dimension: usize) BladeMask {
-        const spec = comptime parser.expectSignedBlade(name, dimension);
+    pub fn parseForDimensionsPanicking(comptime name: []const u8, comptime dimensions: usize) BladeMask {
+        const spec = comptime parser.expectSignedBlade(name, dimensions);
         if (spec.sign != .positive) {
             @compileError("BladeMask.parseForDimensionPanicking expects a positive signed-blade spelling");
         }
@@ -275,7 +275,7 @@ pub const BasisIndexSpans = struct {
     }
 
     pub fn fromSignature(comptime sig: MetricSignature) BasisIndexSpans {
-        _ = sig.dimension();
+        _ = sig.dimensions();
 
         var by_class: ByClass = .{};
         var next_start: usize = 1;
@@ -311,9 +311,9 @@ pub const BasisIndexSpans = struct {
 
     /// Resolves one named basis index to an internal sequential one-based
     /// basis index used by blade masks.
-    pub fn resolveNamedBasisIndex(self: BasisIndexSpans, named_index: usize, comptime dimension: usize) ?usize {
+    pub fn resolveNamedBasisIndex(self: BasisIndexSpans, named_index: usize, comptime dimensions: usize) ?usize {
         @setEvalBranchQuota(10_000);
-        self.assertValidForDimension(dimension);
+        self.assertValidForDimensions(dimensions);
 
         var next_internal_index: usize = 1;
         for (std.meta.tags(SignatureClass)) |class| {
@@ -332,8 +332,8 @@ pub const BasisIndexSpans = struct {
     }
 
     /// Runtime-capable counterpart to `resolveNamedBasisIndex`.
-    pub fn resolveNamedBasisIndexRuntime(self: BasisIndexSpans, named_index: usize, dimension: usize) ValidationError!?usize {
-        try self.validateForDimension(dimension);
+    pub fn resolveNamedBasisIndexRuntime(self: BasisIndexSpans, named_index: usize, dimensions: usize) ValidationError!?usize {
+        try self.validateForDimensions(dimensions);
 
         var next_internal_index: usize = 1;
         for (std.meta.tags(SignatureClass)) |class| {
@@ -353,9 +353,9 @@ pub const BasisIndexSpans = struct {
 
     /// Resolves one internal sequential one-based basis index back to its
     /// configured named index.
-    pub fn resolveInternalToNamed(self: BasisIndexSpans, internal_index: usize, comptime dimension: usize) ?usize {
+    pub fn resolveInternalToNamed(self: BasisIndexSpans, internal_index: usize, comptime dimensions: usize) ?usize {
         @setEvalBranchQuota(10_000);
-        self.assertValidForDimension(dimension);
+        self.assertValidForDimensions(dimensions);
 
         var next_internal_index: usize = 1;
         for (std.meta.tags(SignatureClass)) |class| {
@@ -374,8 +374,8 @@ pub const BasisIndexSpans = struct {
     }
 
     /// Runtime-capable counterpart to `resolveInternalToNamed`.
-    pub fn resolveInternalToNamedRuntime(self: BasisIndexSpans, internal_index: usize, dimension: usize) ValidationError!?usize {
-        try self.validateForDimension(dimension);
+    pub fn resolveInternalToNamedRuntime(self: BasisIndexSpans, internal_index: usize, dimensions: usize) ValidationError!?usize {
+        try self.validateForDimensions(dimensions);
 
         var next_internal_index: usize = 1;
         for (std.meta.tags(SignatureClass)) |class| {
@@ -393,11 +393,11 @@ pub const BasisIndexSpans = struct {
         return null;
     }
 
-    pub fn assertValidForDimension(self: BasisIndexSpans, comptime dimension: usize) void {
+    pub fn assertValidForDimensions(self: BasisIndexSpans, comptime dimensions: usize) void {
         const classes = comptime std.meta.tags(SignatureClass);
 
         inline for (classes) |class| {
-            validateSpan(self, class, dimension);
+            validateSpan(self, class, dimensions);
         }
 
         inline for (classes, 0..) |lhs_class, lhs_index| {
@@ -406,11 +406,11 @@ pub const BasisIndexSpans = struct {
             }
         }
 
-        validateMappedBasisCount(self, dimension);
+        validateMappedBasisCount(self, dimensions);
     }
 
-    /// Runtime-capable counterpart to `assertValidForDimension`.
-    pub fn validateForDimension(self: BasisIndexSpans, dimension: usize) ValidationError!void {
+    /// Runtime-capable counterpart to `assertValidForDimensions`.
+    pub fn validateForDimensions(self: BasisIndexSpans, dimensions: usize) ValidationError!void {
         for (std.meta.tags(SignatureClass)) |class| {
             if (self.spanFor(class)) |range| {
                 if (range.start > range.end) return error.InvalidBasisConfiguration;
@@ -432,15 +432,15 @@ pub const BasisIndexSpans = struct {
                 mapped_basis_count += span.len();
             }
         }
-        if (mapped_basis_count > dimension) return error.InvalidBasisConfiguration;
+        if (mapped_basis_count > dimensions) return error.InvalidBasisConfiguration;
     }
 
     fn containsIn(span: ?BasisIndexSpan, one_based_index: usize) bool {
         return if (span) |range| range.contains(one_based_index) else false;
     }
 
-    fn validateSpan(self: BasisIndexSpans, comptime class: SignatureClass, comptime dimension: usize) void {
-        _ = dimension;
+    fn validateSpan(self: BasisIndexSpans, comptime class: SignatureClass, comptime dimensions: usize) void {
+        _ = dimensions;
         const label = comptime @tagName(class);
         if (self.spanFor(class)) |range| {
             if (!(range.start <= range.end)) {
@@ -456,7 +456,7 @@ pub const BasisIndexSpans = struct {
         }
     }
 
-    fn validateMappedBasisCount(self: BasisIndexSpans, comptime dimension: usize) void {
+    fn validateMappedBasisCount(self: BasisIndexSpans, comptime dimensions: usize) void {
         @setEvalBranchQuota(10_000);
         var mapped_basis_count: usize = 0;
         for (std.meta.tags(SignatureClass)) |class| {
@@ -465,13 +465,13 @@ pub const BasisIndexSpans = struct {
             }
         }
 
-        if (mapped_basis_count > dimension) {
+        if (mapped_basis_count > dimensions) {
             if (@inComptime()) {
-                @compileError("configured basis spans cover more named indices than the algebra dimension");
+                @compileError("configured basis spans cover more named indices than the algebra dimensions");
             }
             std.debug.panic(
-                "configured basis spans cover {} named indices, exceeding dimension {}",
-                .{ mapped_basis_count, dimension },
+                "configured basis spans cover {} named indices, exceeding dimensions {}",
+                .{ mapped_basis_count, dimensions },
             );
         }
     }
@@ -511,7 +511,7 @@ pub const BasisIndexSpans = struct {
 /// - `q` = number of basis vectors that square to **-1** (negative signature)
 /// - `r` = number of basis vectors that square to **0** (degenerate/null signature)
 ///
-/// The algebra has dimension `p + q + r`. Common examples:
+/// The algebra has dimensions `p + q + r`. Common examples:
 /// - `Cl(3, 0, 0)` = standard 3D Euclidean GA
 /// - `Cl(4, 1, 0)` = conformal geometric algebra (VGA)
 /// - `Cl(3, 0, 1)` = projective geometric algebra (PGA)
@@ -521,10 +521,10 @@ pub const MetricSignature = struct {
     q: usize = 0,
     r: usize = 0,
 
-    /// Constructs `Cl(p, q, r)` and validates that the dimension fits `BladeMask`.
+    /// Constructs `Cl(p, q, r)` and validates that the dimensions fits `BladeMask`.
     pub fn init(comptime p: usize, comptime q: usize, comptime r: usize) MetricSignature {
         const sig: MetricSignature = .{ .p = p, .q = q, .r = r };
-        _ = sig.dimension();
+        _ = sig.dimensions();
         return sig;
     }
 
@@ -534,16 +534,16 @@ pub const MetricSignature = struct {
     }
 
     /// Returns `p + q + r` for this metric signature.
-    pub fn dimension(self: MetricSignature) usize {
-        const total_dimension = self.p + self.q + self.r;
-        validateDimension(total_dimension);
-        return total_dimension;
+    pub fn dimensions(self: MetricSignature) usize {
+        const total_dimensions = self.p + self.q + self.r;
+        validateDimensions(total_dimensions);
+        return total_dimensions;
     }
 
     /// Returns the square class of one internal one-based basis index.
     pub fn basisSquareClass(self: MetricSignature, basis_index: usize) SignatureClass {
-        const sig_dimension = self.dimension();
-        std.debug.assert(1 <= basis_index and basis_index <= sig_dimension);
+        const sig_dimensions = self.dimensions();
+        std.debug.assert(1 <= basis_index and basis_index <= sig_dimensions);
 
         return if (basis_index <= self.p)
             .positive
@@ -555,8 +555,8 @@ pub const MetricSignature = struct {
 
     /// Applies one internal one-based basis index to an in-progress signed blade.
     pub fn applyBasisIndex(self: MetricSignature, spec: *SignedBladeSpec, basis_index: usize) void {
-        const sig_dimension = self.dimension();
-        std.debug.assert(1 <= basis_index and basis_index <= sig_dimension);
+        const sig_dimensions = self.dimensions();
+        std.debug.assert(1 <= basis_index and basis_index <= sig_dimensions);
         const bit: BladeMask = .initOneBit(basis_index - 1);
         if (spec.mask.geometricProductClassWithSignature(bit, self).isNegative()) {
             spec.sign.flip();
@@ -565,14 +565,14 @@ pub const MetricSignature = struct {
     }
 };
 
-/// Largest ambient dimension that fits inside `BladeMask`.
+/// Largest ambient dimensions that fits inside `BladeMask`.
 pub const max_supported_basis_vectors = @bitSizeOf(BladeMask) - 1;
 
 /// Errors that can arise while rendering a blade mask through a writer interface.
 pub const WriteBladeMaskError = std.Io.Writer.Error || error{DimensionTooLarge};
 
-fn validateDimension(dimension: usize) void {
-    if (dimension > max_supported_basis_vectors) {
+fn validateDimensions(dimensions: usize) void {
+    if (dimensions > max_supported_basis_vectors) {
         const message = comptime std.fmt.comptimePrint(
             "dimensions up to {} are currently supported",
             .{max_supported_basis_vectors},
@@ -584,15 +584,15 @@ fn validateDimension(dimension: usize) void {
     }
 }
 
-/// Returns the Euclidean metric signature `Cl(dimension, 0, 0)`.
-pub fn euclideanSignature(comptime dimension: usize) MetricSignature {
-    return MetricSignature.euclidean(dimension);
+/// Returns the Euclidean metric signature `Cl(dimensions, 0, 0)`.
+pub fn euclideanSignature(comptime dimensions: usize) MetricSignature {
+    return MetricSignature.euclidean(dimensions);
 }
 
-/// Returns the number of basis blades in `Cl(dimension, 0, 0)`.
-pub fn bladeCount(comptime dimension: usize) usize {
-    validateDimension(dimension);
-    return @as(usize, 1) << @intCast(dimension);
+/// Returns the number of basis blades in `Cl(dimensions, 0, 0)`.
+pub fn bladeCount(comptime dimensions: usize) usize {
+    validateDimensions(dimensions);
+    return @as(usize, 1) << @intCast(dimensions);
 }
 
 /// Returns the binomial coefficient `n choose k`.
@@ -630,20 +630,20 @@ pub fn areStrictlyAscendingUnique(comptime masks: []const BladeMask) bool {
 }
 
 /// Returns the mask for one internal one-based basis index.
-pub fn basisVectorMask(comptime dimension: usize, basis_index: usize) BladeMask {
-    validateDimension(dimension);
-    std.debug.assert(1 <= basis_index and basis_index <= dimension);
+pub fn basisVectorMask(comptime dimensions: usize, basis_index: usize) BladeMask {
+    validateDimensions(dimensions);
+    std.debug.assert(1 <= basis_index and basis_index <= dimensions);
 
     return .initOneBit(basis_index - 1);
 }
 
 /// Returns the mask for a basis blade expressed as internal one-based indices.
-pub fn basisBladeMask(comptime dimension: usize, comptime basis_indices: []const usize) BladeMask {
-    validateDimension(dimension);
+pub fn basisBladeMask(comptime dimensions: usize, comptime basis_indices: []const usize) BladeMask {
+    validateDimensions(dimensions);
 
     var mask: BladeMask = .init(0);
     inline for (basis_indices) |basis_index| {
-        const bit = basisVectorMask(dimension, basis_index);
+        const bit = basisVectorMask(dimensions, basis_index);
         if (mask.bitset.intersectWith(bit.bitset).mask != 0) {
             @compileError("repeated basis vectors cancel in the geometric product and are not represented by a blade mask");
         }
@@ -654,13 +654,13 @@ pub fn basisBladeMask(comptime dimension: usize, comptime basis_indices: []const
 }
 
 /// Folds one basis vector into an in-progress canonical signed blade.
-pub fn applyBasisIndex(spec: *SignedBladeSpec, basis_index: usize, comptime dimension: usize) void {
-    euclideanSignature(dimension).applyBasisIndex(spec, basis_index);
+pub fn applyBasisIndex(spec: *SignedBladeSpec, basis_index: usize, comptime dimensions: usize) void {
+    euclideanSignature(dimensions).applyBasisIndex(spec, basis_index);
 }
 
 /// Runtime-capable counterpart to `applyBasisIndex`.
-pub fn applyBasisIndexRuntime(spec: *SignedBladeSpec, basis_index: usize, dimension: usize) void {
-    const sig: MetricSignature = .{ .p = dimension };
+pub fn applyBasisIndexRuntime(spec: *SignedBladeSpec, basis_index: usize, dimensions: usize) void {
+    const sig: MetricSignature = .{ .p = dimensions };
     sig.applyBasisIndex(spec, basis_index);
 }
 
@@ -670,11 +670,11 @@ pub fn applyBasisIndexWithSignature(spec: *SignedBladeSpec, basis_index: usize, 
 }
 
 /// Returns every blade mask in ascending canonical order.
-pub fn allBladeMasks(comptime dimension: usize) [bladeCount(dimension)]BladeMask {
-    validateDimension(dimension);
+pub fn allBladeMasks(comptime dimensions: usize) [bladeCount(dimensions)]BladeMask {
+    validateDimensions(dimensions);
     @setEvalBranchQuota(1_000_000);
 
-    var masks: [bladeCount(dimension)]BladeMask = undefined;
+    var masks: [bladeCount(dimensions)]BladeMask = undefined;
     for (0..masks.len) |index| {
         masks[index] = .init(index);
     }
@@ -705,15 +705,15 @@ fn advanceFixedPopcountMask(mask: *BladeMask) bool {
 }
 
 /// Returns all blade masks of the requested grade in canonical order.
-pub fn gradeBladeMasks(comptime dimension: usize, comptime grade: usize) [choose(dimension, grade)]BladeMask {
-    validateDimension(dimension);
+pub fn gradeBladeMasks(comptime dimensions: usize, comptime grade: usize) [choose(dimensions, grade)]BladeMask {
+    validateDimensions(dimensions);
     @setEvalBranchQuota(1_000_000);
 
-    if (grade > dimension) {
-        @compileError("grade must not exceed the ambient dimension");
+    if (grade > dimensions) {
+        @compileError("grade must not exceed the ambient dimensions");
     }
 
-    var masks: [choose(dimension, grade)]BladeMask = undefined;
+    var masks: [choose(dimensions, grade)]BladeMask = undefined;
     if (grade == 0) {
         masks[0] = .init(0);
         return masks;
@@ -721,7 +721,7 @@ pub fn gradeBladeMasks(comptime dimension: usize, comptime grade: usize) [choose
 
     var next_index: usize = 0;
     var mask: BladeMask = .initLowBits(grade);
-    const limit: BladeMask = .initOneBit(dimension);
+    const limit: BladeMask = .initOneBit(dimensions);
 
     while (mask.toInt() < limit.toInt()) {
         masks[next_index] = mask;
@@ -734,21 +734,21 @@ pub fn gradeBladeMasks(comptime dimension: usize, comptime grade: usize) [choose
     return masks;
 }
 
-fn countParityBladeMasks(comptime dimension: usize, comptime even: bool) usize {
-    return if (dimension == 0) (if (even) 1 else 0) else bladeCount(dimension) / 2;
+fn countParityBladeMasks(comptime dimensions: usize, comptime even: bool) usize {
+    return if (dimensions == 0) (if (even) 1 else 0) else bladeCount(dimensions) / 2;
 }
 
 fn parityBladeMasks(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime even: bool,
-) [countParityBladeMasks(dimension, even)]BladeMask {
-    validateDimension(dimension);
+) [countParityBladeMasks(dimensions, even)]BladeMask {
+    validateDimensions(dimensions);
     @setEvalBranchQuota(1_000_000);
 
-    var masks: [countParityBladeMasks(dimension, even)]BladeMask = undefined;
+    var masks: [countParityBladeMasks(dimensions, even)]BladeMask = undefined;
     var next_index: usize = 0;
 
-    for (0..bladeCount(dimension)) |index| {
+    for (0..bladeCount(dimensions)) |index| {
         const candidate: BladeMask = .init(index);
         if (!maskHasParity(candidate, even)) continue;
 
@@ -761,30 +761,30 @@ fn parityBladeMasks(
 }
 
 /// Returns every even-grade blade mask in canonical order.
-pub fn evenBladeMasks(comptime dimension: usize) [countParityBladeMasks(dimension, true)]BladeMask {
-    return parityBladeMasks(dimension, true);
+pub fn evenBladeMasks(comptime dimensions: usize) [countParityBladeMasks(dimensions, true)]BladeMask {
+    return parityBladeMasks(dimensions, true);
 }
 
 /// Returns every odd-grade blade mask in canonical order.
-pub fn oddBladeMasks(comptime dimension: usize) [countParityBladeMasks(dimension, false)]BladeMask {
-    return parityBladeMasks(dimension, false);
+pub fn oddBladeMasks(comptime dimensions: usize) [countParityBladeMasks(dimensions, false)]BladeMask {
+    return parityBladeMasks(dimensions, false);
 }
 
-fn completeParityOfMaskSet(comptime dimension: usize, comptime masks: []const BladeMask) ?bool {
+fn completeParityOfMaskSet(comptime dimensions: usize, comptime masks: []const BladeMask) ?bool {
     @setEvalBranchQuota(1_000_000);
 
-    if (masks.len == countParityBladeMasks(dimension, true) and allMasksHaveParity(masks, true)) {
+    if (masks.len == countParityBladeMasks(dimensions, true) and allMasksHaveParity(masks, true)) {
         return true;
     }
 
-    if (masks.len == countParityBladeMasks(dimension, false) and allMasksHaveParity(masks, false)) {
+    if (masks.len == countParityBladeMasks(dimensions, false) and allMasksHaveParity(masks, false)) {
         return false;
     }
 
     return null;
 }
 
-fn countMarkedMasks(comptime dimension: usize, comptime marked: [bladeCount(dimension)]bool) usize {
+fn countMarkedMasks(comptime dimensions: usize, comptime marked: [bladeCount(dimensions)]bool) usize {
     var count: usize = 0;
     for (marked) |is_marked| {
         count += @intFromBool(is_marked);
@@ -792,8 +792,8 @@ fn countMarkedMasks(comptime dimension: usize, comptime marked: [bladeCount(dime
     return count;
 }
 
-fn collectMarkedMasks(comptime dimension: usize, comptime marked: [bladeCount(dimension)]bool) [countMarkedMasks(dimension, marked)]BladeMask {
-    var masks: [countMarkedMasks(dimension, marked)]BladeMask = undefined;
+fn collectMarkedMasks(comptime dimensions: usize, comptime marked: [bladeCount(dimensions)]bool) [countMarkedMasks(dimensions, marked)]BladeMask {
+    var masks: [countMarkedMasks(dimensions, marked)]BladeMask = undefined;
     var next_index: usize = 0;
 
     for (0..marked.len) |index| {
@@ -809,20 +809,20 @@ fn collectMarkedMasks(comptime dimension: usize, comptime marked: [bladeCount(di
 
 /// Returns the sorted union of two blade-mask lists.
 pub fn unionBladeMasks(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
-) [countMarkedMasks(dimension, unionMaskTable(dimension, lhs_masks, rhs_masks))]BladeMask {
-    return collectMarkedMasks(dimension, unionMaskTable(dimension, lhs_masks, rhs_masks));
+) [countMarkedMasks(dimensions, unionMaskTable(dimensions, lhs_masks, rhs_masks))]BladeMask {
+    return collectMarkedMasks(dimensions, unionMaskTable(dimensions, lhs_masks, rhs_masks));
 }
 
 fn unionMaskTable(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
-) [bladeCount(dimension)]bool {
+) [bladeCount(dimensions)]bool {
     @setEvalBranchQuota(1_000_000);
-    var marked = std.mem.zeroes([bladeCount(dimension)]bool);
+    var marked = std.mem.zeroes([bladeCount(dimensions)]bool);
 
     inline for (lhs_masks) |mask| marked[mask.index()] = true;
     inline for (rhs_masks) |mask| marked[mask.index()] = true;
@@ -832,27 +832,27 @@ fn unionMaskTable(
 
 /// Returns every blade that can appear in the geometric product of two blade sets.
 pub fn geometricProductMasks(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
-) @TypeOf(geometricProductMaskResult(dimension, lhs_masks, rhs_masks).value) {
-    return geometricProductMaskResult(dimension, lhs_masks, rhs_masks).value;
+) @TypeOf(geometricProductMaskResult(dimensions, lhs_masks, rhs_masks).value) {
+    return geometricProductMaskResult(dimensions, lhs_masks, rhs_masks).value;
 }
 
 fn geometricProductMaskResult(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
 ) type {
-    const masks = if (lhs_masks.len == bladeCount(dimension) and rhs_masks.len == bladeCount(dimension))
-        allBladeMasks(dimension)
-    else if (completeParityOfMaskSet(dimension, lhs_masks)) |lhs_even|
-        if (completeParityOfMaskSet(dimension, rhs_masks)) |rhs_even|
-            if (lhs_even == rhs_even) evenBladeMasks(dimension) else oddBladeMasks(dimension)
+    const masks = if (lhs_masks.len == bladeCount(dimensions) and rhs_masks.len == bladeCount(dimensions))
+        allBladeMasks(dimensions)
+    else if (completeParityOfMaskSet(dimensions, lhs_masks)) |lhs_even|
+        if (completeParityOfMaskSet(dimensions, rhs_masks)) |rhs_even|
+            if (lhs_even == rhs_even) evenBladeMasks(dimensions) else oddBladeMasks(dimensions)
         else
-            collectMarkedMasks(dimension, geometricProductMaskTable(dimension, lhs_masks, rhs_masks))
+            collectMarkedMasks(dimensions, geometricProductMaskTable(dimensions, lhs_masks, rhs_masks))
     else
-        collectMarkedMasks(dimension, geometricProductMaskTable(dimension, lhs_masks, rhs_masks));
+        collectMarkedMasks(dimensions, geometricProductMaskTable(dimensions, lhs_masks, rhs_masks));
 
     return struct {
         pub const value = masks;
@@ -860,12 +860,12 @@ fn geometricProductMaskResult(
 }
 
 fn geometricProductMaskTable(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
-) [bladeCount(dimension)]bool {
+) [bladeCount(dimensions)]bool {
     @setEvalBranchQuota(1_000_000);
-    var marked = std.mem.zeroes([bladeCount(dimension)]bool);
+    var marked = std.mem.zeroes([bladeCount(dimensions)]bool);
 
     inline for (lhs_masks) |lhs_mask| {
         inline for (rhs_masks) |rhs_mask| {
@@ -878,22 +878,22 @@ fn geometricProductMaskTable(
 
 /// Returns every blade that can appear in the outer product of two blade sets.
 pub fn outerProductMasks(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
-) @TypeOf(outerProductMaskResult(dimension, lhs_masks, rhs_masks).value) {
-    return outerProductMaskResult(dimension, lhs_masks, rhs_masks).value;
+) @TypeOf(outerProductMaskResult(dimensions, lhs_masks, rhs_masks).value) {
+    return outerProductMaskResult(dimensions, lhs_masks, rhs_masks).value;
 }
 
 fn outerProductMaskResult(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
 ) type {
-    const masks = if (lhs_masks.len == bladeCount(dimension) and rhs_masks.len == bladeCount(dimension))
-        allBladeMasks(dimension)
+    const masks = if (lhs_masks.len == bladeCount(dimensions) and rhs_masks.len == bladeCount(dimensions))
+        allBladeMasks(dimensions)
     else
-        collectMarkedMasks(dimension, outerProductMaskTable(dimension, lhs_masks, rhs_masks));
+        collectMarkedMasks(dimensions, outerProductMaskTable(dimensions, lhs_masks, rhs_masks));
 
     return struct {
         pub const value = masks;
@@ -901,12 +901,12 @@ fn outerProductMaskResult(
 }
 
 fn outerProductMaskTable(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
-) [bladeCount(dimension)]bool {
+) [bladeCount(dimensions)]bool {
     @setEvalBranchQuota(1_000_000);
-    var marked = std.mem.zeroes([bladeCount(dimension)]bool);
+    var marked = std.mem.zeroes([bladeCount(dimensions)]bool);
 
     inline for (lhs_masks) |lhs_mask| {
         inline for (rhs_masks) |rhs_mask| {
@@ -920,20 +920,20 @@ fn outerProductMaskTable(
 
 /// Returns every blade that can appear in the dual of a blade set.
 pub fn dualMasks(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime masks: []const BladeMask,
-) @TypeOf(dualMaskResult(dimension, masks).value) {
-    return dualMaskResult(dimension, masks).value;
+) @TypeOf(dualMaskResult(dimensions, masks).value) {
+    return dualMaskResult(dimensions, masks).value;
 }
 
 fn dualMaskResult(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime masks: []const BladeMask,
 ) type {
-    const result_masks = if (masks.len == bladeCount(dimension))
-        allBladeMasks(dimension)
+    const result_masks = if (masks.len == bladeCount(dimensions))
+        allBladeMasks(dimensions)
     else
-        collectMarkedMasks(dimension, dualMaskTable(dimension, masks));
+        collectMarkedMasks(dimensions, dualMaskTable(dimensions, masks));
 
     return struct {
         pub const value = result_masks;
@@ -941,12 +941,12 @@ fn dualMaskResult(
 }
 
 fn dualMaskTable(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime masks: []const BladeMask,
-) [bladeCount(dimension)]bool {
+) [bladeCount(dimensions)]bool {
     @setEvalBranchQuota(1_000_000);
-    var marked = std.mem.zeroes([bladeCount(dimension)]bool);
-    const pseudoscalar_mask = bladeCount(dimension) - 1;
+    var marked = std.mem.zeroes([bladeCount(dimensions)]bool);
+    const pseudoscalar_mask = bladeCount(dimensions) - 1;
 
     inline for (masks) |mask| {
         marked[@intCast(mask.bitset.mask ^ pseudoscalar_mask)] = true;
@@ -957,33 +957,33 @@ fn dualMaskTable(
 
 /// Returns every blade that can appear in the Hestenes dot product of two blade sets.
 pub fn dotProductMasks(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
-) @TypeOf(dotProductMaskResult(dimension, lhs_masks, rhs_masks).value) {
-    return dotProductMaskResult(dimension, lhs_masks, rhs_masks).value;
+) @TypeOf(dotProductMaskResult(dimensions, lhs_masks, rhs_masks).value) {
+    return dotProductMaskResult(dimensions, lhs_masks, rhs_masks).value;
 }
 
 fn dotProductMaskResult(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
 ) type {
-    const masks = if (lhs_masks.len == bladeCount(dimension) and rhs_masks.len == bladeCount(dimension))
-        allNonPseudoscalarBladeMasks(dimension)
+    const masks = if (lhs_masks.len == bladeCount(dimensions) and rhs_masks.len == bladeCount(dimensions))
+        allNonPseudoscalarBladeMasks(dimensions)
     else
-        collectMarkedMasks(dimension, dotProductMaskTable(dimension, lhs_masks, rhs_masks));
+        collectMarkedMasks(dimensions, dotProductMaskTable(dimensions, lhs_masks, rhs_masks));
 
     return struct {
         pub const value = masks;
     };
 }
 
-fn allNonPseudoscalarBladeMasks(comptime dimension: usize) [bladeCount(dimension) - 1]BladeMask {
-    validateDimension(dimension);
+fn allNonPseudoscalarBladeMasks(comptime dimensions: usize) [bladeCount(dimensions) - 1]BladeMask {
+    validateDimensions(dimensions);
     @setEvalBranchQuota(1_000_000);
 
-    var masks: [bladeCount(dimension) - 1]BladeMask = undefined;
+    var masks: [bladeCount(dimensions) - 1]BladeMask = undefined;
     for (0..masks.len) |index| {
         masks[index] = .init(index);
     }
@@ -991,12 +991,12 @@ fn allNonPseudoscalarBladeMasks(comptime dimension: usize) [bladeCount(dimension
 }
 
 fn dotProductMaskTable(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
-) [bladeCount(dimension)]bool {
+) [bladeCount(dimensions)]bool {
     @setEvalBranchQuota(1_000_000);
-    var marked = std.mem.zeroes([bladeCount(dimension)]bool);
+    var marked = std.mem.zeroes([bladeCount(dimensions)]bool);
 
     for (lhs_masks) |lhs_mask| {
         if (lhs_mask.bitset.mask == 0) continue;
@@ -1019,22 +1019,22 @@ fn dotProductMaskTable(
 
 /// Returns every blade that can appear in the left contraction of two blade sets.
 pub fn leftContractionMasks(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
-) @TypeOf(leftContractionMaskResult(dimension, lhs_masks, rhs_masks).value) {
-    return leftContractionMaskResult(dimension, lhs_masks, rhs_masks).value;
+) @TypeOf(leftContractionMaskResult(dimensions, lhs_masks, rhs_masks).value) {
+    return leftContractionMaskResult(dimensions, lhs_masks, rhs_masks).value;
 }
 
 fn leftContractionMaskResult(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
 ) type {
-    const masks = if (lhs_masks.len == bladeCount(dimension) and rhs_masks.len == bladeCount(dimension))
-        allBladeMasks(dimension)
+    const masks = if (lhs_masks.len == bladeCount(dimensions) and rhs_masks.len == bladeCount(dimensions))
+        allBladeMasks(dimensions)
     else
-        collectMarkedMasks(dimension, leftContractionMaskTable(dimension, lhs_masks, rhs_masks));
+        collectMarkedMasks(dimensions, leftContractionMaskTable(dimensions, lhs_masks, rhs_masks));
 
     return struct {
         pub const value = masks;
@@ -1042,12 +1042,12 @@ fn leftContractionMaskResult(
 }
 
 fn leftContractionMaskTable(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
-) [bladeCount(dimension)]bool {
+) [bladeCount(dimensions)]bool {
     @setEvalBranchQuota(1_000_000);
-    var marked = std.mem.zeroes([bladeCount(dimension)]bool);
+    var marked = std.mem.zeroes([bladeCount(dimensions)]bool);
 
     inline for (lhs_masks) |lhs_mask| {
         inline for (rhs_masks) |rhs_mask| {
@@ -1062,22 +1062,22 @@ fn leftContractionMaskTable(
 
 /// Returns every blade that can appear in the right contraction of two blade sets.
 pub fn rightContractionMasks(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
-) @TypeOf(rightContractionMaskResult(dimension, lhs_masks, rhs_masks).value) {
-    return rightContractionMaskResult(dimension, lhs_masks, rhs_masks).value;
+) @TypeOf(rightContractionMaskResult(dimensions, lhs_masks, rhs_masks).value) {
+    return rightContractionMaskResult(dimensions, lhs_masks, rhs_masks).value;
 }
 
 fn rightContractionMaskResult(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
 ) type {
-    const masks = if (lhs_masks.len == bladeCount(dimension) and rhs_masks.len == bladeCount(dimension))
-        allBladeMasks(dimension)
+    const masks = if (lhs_masks.len == bladeCount(dimensions) and rhs_masks.len == bladeCount(dimensions))
+        allBladeMasks(dimensions)
     else
-        collectMarkedMasks(dimension, rightContractionMaskTable(dimension, lhs_masks, rhs_masks));
+        collectMarkedMasks(dimensions, rightContractionMaskTable(dimensions, lhs_masks, rhs_masks));
 
     return struct {
         pub const value = masks;
@@ -1085,12 +1085,12 @@ fn rightContractionMaskResult(
 }
 
 fn rightContractionMaskTable(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime lhs_masks: []const BladeMask,
     comptime rhs_masks: []const BladeMask,
-) [bladeCount(dimension)]bool {
+) [bladeCount(dimensions)]bool {
     @setEvalBranchQuota(1_000_000);
-    var marked = std.mem.zeroes([bladeCount(dimension)]bool);
+    var marked = std.mem.zeroes([bladeCount(dimensions)]bool);
 
     inline for (lhs_masks) |lhs_mask| {
         inline for (rhs_masks) |rhs_mask| {
@@ -1150,13 +1150,13 @@ pub fn SortedBladeMaskMap(comptime blade_masks: []const BladeMask) type {
 
 /// Returns a dense lookup table from blade mask to index within `blade_masks`.
 pub fn bladeIndexByMask(
-    comptime dimension: usize,
+    comptime dimensions: usize,
     comptime blade_masks: []const BladeMask,
-) [bladeCount(dimension)]usize {
-    validateDimension(dimension);
+) [bladeCount(dimensions)]usize {
+    validateDimensions(dimensions);
     @setEvalBranchQuota(1_000_000);
 
-    var result = [_]usize{blade_masks.len} ** bladeCount(dimension);
+    var result = [_]usize{blade_masks.len} ** bladeCount(dimensions);
     inline for (blade_masks, 0..) |mask, index| {
         result[mask.index()] = index;
     }
@@ -1193,14 +1193,14 @@ pub fn allMasksHaveParity(comptime masks: []const BladeMask, comptime even: bool
 }
 
 /// Writes a fixed-width binary rendering of a blade mask.
-pub fn writeBladeMask(writer: *std.Io.Writer, mask: BladeMask, dimension: usize) WriteBladeMaskError!void {
-    if (dimension > max_supported_basis_vectors) {
+pub fn writeBladeMask(writer: *std.Io.Writer, mask: BladeMask, dimensions: usize) WriteBladeMaskError!void {
+    if (dimensions > max_supported_basis_vectors) {
         return error.DimensionTooLarge;
     }
 
     try writer.writeAll("0b");
 
-    var bit_index = dimension;
+    var bit_index = dimensions;
     while (bit_index > 0) {
         bit_index -= 1;
         const is_set = mask.bitset.isSet(bit_index);
@@ -1297,9 +1297,9 @@ test "MetricSignature constructors expose dot-syntax helpers" {
     const e2: MetricSignature = .euclidean(2);
     const minkowski11: MetricSignature = .{ .p = 1, .q = 1 };
 
-    try std.testing.expectEqual(@as(usize, 3), e3.dimension());
-    try std.testing.expectEqual(@as(usize, 2), e2.dimension());
-    try std.testing.expectEqual(@as(usize, 2), minkowski11.dimension());
+    try std.testing.expectEqual(@as(usize, 3), e3.dimensions());
+    try std.testing.expectEqual(@as(usize, 2), e2.dimensions());
+    try std.testing.expectEqual(@as(usize, 2), minkowski11.dimensions());
     try std.testing.expectEqual(.negative, minkowski11.basisSquareClass(2));
 }
 
@@ -1318,7 +1318,7 @@ test "BladeMask.initMany builds explicit mask lists" {
 
 test "basis index spans derive from metric signature partitions" {
     const spans = BasisIndexSpans.fromSignature(.{ .p = 2, .q = 1, .r = 1 });
-    spans.assertValidForDimension(4);
+    spans.assertValidForDimensions(4);
 
     try std.testing.expectEqual(BasisIndexSpan{ .start = 1, .end = 2 }, spans.spanFor(.positive).?);
     try std.testing.expectEqual(BasisIndexSpan{ .start = 3, .end = 3 }, spans.spanFor(.negative).?);

@@ -20,8 +20,8 @@ const bindings = family.defaultBindings(default_family, f64);
 pub const Family = bindings.Family;
 pub const default_scalar = bindings.default_scalar;
 pub const metric_signature = bindings.metric_signature;
-/// Ambient dimension of the STA algebra (4).
-pub const dimension = bindings.dimension;
+/// Ambient dimensions of the STA algebra (4).
+pub const dimensions = bindings.dimensions;
 pub const Algebra = bindings.Algebra;
 pub const Instantiate = bindings.Instantiate;
 pub const h = bindings.h;
@@ -183,8 +183,8 @@ fn namedBasisIndex(comptime named_index: usize) usize {
 }
 
 
-test "sta signature has expected metric classes and dimension" {
-    try std.testing.expectEqual(@as(usize, 4), dimension);
+test "sta signature has expected metric classes and dimensions" {
+    try std.testing.expectEqual(@as(usize, 4), dimensions);
 
     try std.testing.expectEqual(.positive, metric_signature.basisSquareClass(namedBasisIndex(0)));
 
@@ -202,7 +202,7 @@ test "sta facade exposes canonical algebra family surface" {
 test "sta exposes configurable Minkowski families" {
     const M22 = MinkowskiFamily(2, 2).Instantiate(f32);
 
-    try std.testing.expectEqual(@as(usize, 4), MinkowskiFamily(2, 2).dimension);
+    try std.testing.expectEqual(@as(usize, 4), MinkowskiFamily(2, 2).dimensions);
     try std.testing.expectEqual(@as(f32, 1.0), M22.Basis.e(0).gp(M22.Basis.e(0)).scalarCoeff());
     try std.testing.expectEqual(@as(f32, 1.0), M22.Basis.e(1).gp(M22.Basis.e(1)).scalarCoeff());
     try std.testing.expectEqual(@as(f32, -1.0), M22.Basis.e(2).gp(M22.Basis.e(2)).scalarCoeff());
