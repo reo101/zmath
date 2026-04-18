@@ -28,7 +28,7 @@ pub const BladeMask = struct {
 
     /// Constructs a blade mask with exactly one bit set at `bit_index`.
     pub inline fn initOneBit(bit_index: usize) BladeMask {
-        var bitset = BladeMaskBitSet.initEmpty();
+        var bitset: BladeMaskBitSet = .{ .mask = 0 };
         bitset.set(bit_index);
         return .{ .bitset = bitset };
     }
