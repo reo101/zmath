@@ -341,7 +341,6 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         /// An `extern struct` providing named field access to coefficients.
         /// Only populated for algebras with up to 5 dimensions.
         pub const Named = if (dimensions <= 5) off: {
-
             const basis_names = blk: {
                 var names: [dimensions][]const u8 = undefined;
                 for (0..dimensions) |i| {
@@ -356,21 +355,17 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             };
 
             var field_names: [stored_blade_count][]const u8 = undefined;
-            var field_types: [stored_blade_count]type = undefined;
-            var field_attrs: [stored_blade_count]std.builtin.Type.StructField.Attributes = undefined;
 
             for (blade_masks, 0..) |mask, i| {
                 field_names[i] = bladeName(mask, dimensions, naming_options.basis_prefix, &basis_names);
-                field_types[i] = T;
-                field_attrs[i] = .{};
             }
 
             break :off @Struct(
                 .@"extern",
                 null,
                 field_names[0..],
-                &field_types,
-                &field_attrs,
+                &@splat(T),
+                &@splat(.{}),
             );
         } else extern struct {};
 
@@ -456,13 +451,13 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             comptime opts: blade_parsing.SignedBladeNamingOptions,
         ) Rebind(&.{blade_parsing.parseSignedBlade(name, dimensions, opts, true).mask}) {
             const spec = comptime blade_parsing.parseSignedBlade(name, dimensions, opts, true);
-            return Rebind(&.{spec.mask}).init(.{@intFromEnum(spec.sign)});
+            return .init(.{@intFromEnum(spec.sign)});
         }
 
         /// Constructs a signed blade from runtime basis-vector indices.
         pub fn fromIndices(indices: []const usize) FullType {
             const raw = fullSignedBladeFromIndicesWithSignature(T, sig, indices);
-            return FullType.init(raw.coeffsArray());
+            return .init(raw.coeffsArray());
         }
 
         /// Writes this multivector value through a generic writer interface.
