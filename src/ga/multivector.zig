@@ -1309,6 +1309,8 @@ pub fn BasisWithNamingOptions(
         /// The corresponding grade-2 bivector carrier.
         pub const Bivector = Full.BivectorType;
 
+        // TODO: add `named()` support here as well
+
         /// Returns the basis vector for the configured named basis index.
         pub fn e(
             comptime named_index: usize,
