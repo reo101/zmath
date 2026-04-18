@@ -41,14 +41,14 @@
             zig = inputs'.zig-flake.packages.zig_0_16_0;
             raylibBuildInputs = [
               pkgs.libGL
-              pkgs.xorg.libX11
-              pkgs.xorg.libXcursor
-              pkgs.xorg.libXext
-              pkgs.xorg.libXfixes
-              pkgs.xorg.libXi
-              pkgs.xorg.libXinerama
-              pkgs.xorg.libXrandr
-              pkgs.xorg.libXrender
+              pkgs.libx11
+              pkgs.libxcursor
+              pkgs.libxext
+              pkgs.libxfixes
+              pkgs.libxi
+              pkgs.libxinerama
+              pkgs.libxrandr
+              pkgs.libxrender
             ];
             raylibLibraryPath = lib.makeLibraryPath raylibBuildInputs;
             raylibIncludePath = lib.makeSearchPathOutput "dev" "include" raylibBuildInputs;
