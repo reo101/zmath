@@ -36,9 +36,7 @@ const EuclideanVec3 = geometry.curved.Vec3;
 const demo = @import("core.zig");
 const euclidean_sdf_renderer = @import("euclidean_sdf.zig");
 
-const rl = @cImport({
-    @cInclude("raylib.h");
-});
+const rl = @import("raylib_c");
 
 const subpixel_x: usize = 2;
 const subpixel_y: usize = 4;
