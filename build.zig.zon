@@ -40,6 +40,7 @@
 
     .paths = .{
         "build.zig",
+        "build_spirv.zig",
         "build.zig.zon",
         "src",
         // For example...
