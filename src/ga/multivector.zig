@@ -186,6 +186,21 @@ fn writeBlade(
         return;
     }
 
+    if (options.basis_names) |basis_names| {
+        const first_bit = @ctz(mask.toInt());
+        var bit_index: usize = 0;
+        while (bit_index < dimensions) : (bit_index += 1) {
+            if (!mask.bitset.isSet(bit_index)) continue;
+
+            if (dimensions >= 10 and bit_index > first_bit) {
+                try writer.writeByte('_');
+            }
+
+            try writer.writeAll(basis_names[bit_index]);
+        }
+        return;
+    }
+
     try writer.writeByte(options.basis_prefix);
     const first_bit = @ctz(mask.toInt());
     var bit_index: usize = 0;
@@ -197,24 +212,18 @@ fn writeBlade(
         }
 
         const named_index = options.basis_spans.resolveInternalToNamed(bit_index + 1, dimensions).?;
-        if (named_index < options.basis_names.len) {
-            if (options.basis_names[named_index]) |name| {
-                try writer.writeAll(name);
-            } else {
-                try writer.print("{}", .{named_index});
-            }
-        } else {
-            try writer.print("{}", .{named_index});
-        }
+        try writer.print("{}", .{named_index});
     }
 }
 
-fn bladeName(comptime mask: BladeMask, comptime dimensions: usize, comptime prefix: u8, comptime basis_names: []const []const u8) []const u8 {
+fn bladeName(comptime mask: BladeMask, comptime dimensions: usize, comptime prefix: ?u8, comptime basis_names: []const []const u8) []const u8 {
     @setEvalBranchQuota(5_000_000);
     if (mask.toInt() == 0) return "s";
     comptime var name: []const u8 = "";
-    const p: [1]u8 = .{prefix};
-    name = name ++ p;
+    if (prefix) |field_prefix| {
+        const p: [1]u8 = .{field_prefix};
+        name = name ++ p;
+    }
     const first_bit = @ctz(mask.toInt());
     inline for (0..dimensions) |i| {
         if ((mask.toInt() >> @intCast(i)) & 1 != 0) {
@@ -344,10 +353,10 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             const basis_names = blk: {
                 var names: [dimensions][]const u8 = undefined;
                 for (1..dimensions + 1, &names) |i, *name| {
-                    const named_index = naming_options.basis_spans.resolveInternalToNamed(i, dimensions).?;
-                    if (named_index < naming_options.basis_names.len and naming_options.basis_names[named_index] != null) {
-                        name.* = naming_options.basis_names[named_index].?;
+                    if (naming_options.basis_names) |custom_names| {
+                        name.* = custom_names[i - 1];
                     } else {
+                        const named_index = naming_options.basis_spans.resolveInternalToNamed(i, dimensions).?;
                         name.* = std.fmt.comptimePrint("{d}", .{named_index});
                     }
                 }
@@ -357,7 +366,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             var field_names: [stored_blade_count][]const u8 = undefined;
 
             for (blade_masks, 0..) |mask, i| {
-                field_names[i] = bladeName(mask, dimensions, naming_options.basis_prefix, &basis_names);
+                field_names[i] = bladeName(mask, dimensions, if (naming_options.basis_names != null) null else naming_options.basis_prefix, &basis_names);
             }
 
             break :off @Struct(
@@ -1412,6 +1421,17 @@ test "multivector Named struct allows field access" {
     const Scal2 = Scalar(f32, .euclidean(2));
     const s = Scal2.init(.{4.0});
     try std.testing.expectEqual(@as(f32, 4.0), s.named().s);
+}
+
+test "multivector Named struct supports alias fields without a prefix" {
+    const options = comptime blade_parsing.SignedBladeNamingOptions.withBasisNames(.init(.{
+        .positive = .range(1, 2),
+    }), .{ "x", "y" });
+    const E2 = BasisWithNamingOptions(f32, .euclidean(2), options);
+    const v = E2.Vector.init(.{ 1.0, 2.0 });
+
+    try std.testing.expectEqual(@as(f32, 1.0), v.named().x);
+    try std.testing.expectEqual(@as(f32, 2.0), v.named().y);
 }
 
 test "aliases and signed blades expose more than just plain vectors" {

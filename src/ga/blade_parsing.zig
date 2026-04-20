@@ -59,14 +59,25 @@ pub const SignedBladeNamingOptions = struct {
     /// Custom blade aliases (e.g., `i` → `e12` in Cl(2,0,0)).
     blade_aliases: []const BladeAlias = &.{},
 
-    /// Custom names for individual basis vectors (one-based indexed by named index).
-    /// If an entry is null, the default naming logic is used.
-    basis_names: []const ?[]const u8 = &.{},
+    /// Optional aliases for each mapped basis vector in internal basis order.
+    /// Prefer `withBasisNames()` so the count is checked against
+    /// `basis_spans` at the call site.
+    basis_names: ?[]const []const u8 = null,
 
     /// Builds naming options from basis spans while keeping parser syntax
     /// behavior at defaults (`basis_prefix = 'e'`, all forms enabled).
     pub fn withBasisSpans(basis_spans: blades.BasisIndexSpans) SignedBladeNamingOptions {
         return .{ .basis_spans = basis_spans };
+    }
+
+    pub fn withBasisNames(
+        comptime basis_spans: blades.BasisIndexSpans,
+        comptime names: [basis_spans.mappedBasisCount()][]const u8,
+    ) SignedBladeNamingOptions {
+        return .{
+            .basis_spans = basis_spans,
+            .basis_names = names[0..],
+        };
     }
 
     /// Default strict one-based naming (`e1..eN`) for dimensions-only usage.
@@ -79,12 +90,24 @@ pub const SignedBladeNamingOptions = struct {
         return withBasisSpans(.fromSignature(sig));
     }
 
-    fn assertValid(self: SignedBladeNamingOptions, comptime dimensions: usize) void {
+    fn assertValid(comptime self: SignedBladeNamingOptions, comptime dimensions: usize) void {
         self.basis_spans.assertValidForDimensions(dimensions);
+        if (self.basis_names) |names| {
+            const expected = comptime self.basis_spans.mappedBasisCount();
+            if (names.len != expected) {
+                @compileError(std.fmt.comptimePrint(
+                    "basis_names must contain exactly {} entries for the configured basis spans",
+                    .{expected},
+                ));
+            }
+        }
     }
 
     fn validate(self: SignedBladeNamingOptions, dimensions: usize) SignedBladeParseError!void {
         self.basis_spans.validateForDimensions(dimensions) catch return error.InvalidBasisConfiguration;
+        if (self.basis_names) |names| {
+            if (names.len != self.basis_spans.mappedBasisCount()) return error.InvalidBasisConfiguration;
+        }
     }
 
     fn resolveNamedBasisIndexComptime(

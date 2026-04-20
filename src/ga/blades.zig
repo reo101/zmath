@@ -309,6 +309,16 @@ pub const BasisIndexSpans = struct {
         return false;
     }
 
+    pub fn mappedBasisCount(self: BasisIndexSpans) usize {
+        var count: usize = 0;
+        inline for (std.meta.fields(ByClass)) |field| {
+            if (@field(self.by_class, field.name)) |span| {
+                count += span.len();
+            }
+        }
+        return count;
+    }
+
     /// Resolves one named basis index to an internal sequential one-based
     /// basis index used by blade masks.
     pub fn resolveNamedBasisIndex(self: BasisIndexSpans, named_index: usize, comptime dimensions: usize) ?usize {
@@ -426,13 +436,7 @@ pub const BasisIndexSpans = struct {
             }
         }
 
-        var mapped_basis_count: usize = 0;
-        for (std.meta.tags(SignatureClass)) |class| {
-            if (self.spanFor(class)) |span| {
-                mapped_basis_count += span.len();
-            }
-        }
-        if (mapped_basis_count > dimensions) return error.InvalidBasisConfiguration;
+        if (self.mappedBasisCount() > dimensions) return error.InvalidBasisConfiguration;
     }
 
     fn containsIn(span: ?BasisIndexSpan, one_based_index: usize) bool {
@@ -458,12 +462,7 @@ pub const BasisIndexSpans = struct {
 
     fn validateMappedBasisCount(self: BasisIndexSpans, comptime dimensions: usize) void {
         @setEvalBranchQuota(10_000);
-        var mapped_basis_count: usize = 0;
-        for (std.meta.tags(SignatureClass)) |class| {
-            if (self.spanFor(class)) |span| {
-                mapped_basis_count += span.len();
-            }
-        }
+        const mapped_basis_count = self.mappedBasisCount();
 
         if (mapped_basis_count > dimensions) {
             if (@inComptime()) {

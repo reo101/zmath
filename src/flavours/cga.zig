@@ -10,34 +10,33 @@ const conformal_helpers = @import("conformal_helpers.zig");
 const default_family = b: {
     const sig = ga.blades.MetricSignature{ .p = 4, .q = 1, .r = 0 };
     const spans = ga.blades.BasisIndexSpans.fromSignature(sig);
-    // Use default naming for e1, e2, e3 (1, 2, 3).
-    // Use 'o' for e4 (Origin) and '∞' for e5 (Infinity).
-    var opts = ga.NamingOptions.withBasisSpans(spans);
-    opts.basis_names = &.{ null, null, null, null, "o", "∞" };
+    // Use explicit aliases so named-field access stays stable.
+    const opts = ga.NamingOptions.withBasisNames(spans, .{ "e1", "e2", "e3", "eo", "e∞" });
     break :b ga.family.withNamingOptions(sig, opts);
 };
 
-fn makeCgaBasisNames(comptime o_idx: usize, comptime inf_idx: usize) []const ?[]const u8 {
+fn makeCgaBasisNames(comptime o_idx: usize, comptime inf_idx: usize) [inf_idx][]const u8 {
     const S = struct {
-        fn make(comptime oi: usize, comptime infi: usize) [32]?[]const u8 {
-            var n = std.mem.zeroes([32]?[]const u8);
-            n[oi] = "o";
-            n[infi] = "∞";
+        fn make(comptime oi: usize, comptime infi: usize) [infi][]const u8 {
+            var n: [infi][]const u8 = undefined;
+            inline for (0..n.len) |i| {
+                n[i] = std.fmt.comptimePrint("e{d}", .{i + 1});
+            }
+            n[oi - 1] = "eo";
+            n[infi - 1] = "e∞";
             return n;
         }
     };
-    const names = comptime S.make(o_idx, inf_idx);
-    return names[0 .. inf_idx + 1];
+    return comptime S.make(o_idx, inf_idx);
 }
 
 pub fn EuclideanFamily(comptime euclidean_dimensions: usize) type {
     const sig = ga.blades.MetricSignature{ .p = @intCast(euclidean_dimensions + 1), .q = 1, .r = 0 };
     const spans = ga.blades.BasisIndexSpans.fromSignature(sig);
-    var opts = ga.NamingOptions.withBasisSpans(spans);
     // The last two indices are always Origin and Infinity
     const o_idx = euclidean_dimensions + 1;
     const inf_idx = euclidean_dimensions + 2;
-    opts.basis_names = makeCgaBasisNames(o_idx, inf_idx);
+    const opts = ga.NamingOptions.withBasisNames(spans, makeCgaBasisNames(o_idx, inf_idx));
     return ga.family.withNamingOptions(sig, opts);
 }
 
