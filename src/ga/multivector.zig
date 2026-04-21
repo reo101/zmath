@@ -861,6 +861,10 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             }
 
             const Result = GradeType(target_grade);
+            if (comptime blade_ops.allMasksHaveGrade(blade_masks, target_grade) and blade_ops.sameBladeSet(blade_masks, Result.blades)) {
+                return Result.init(self.coeffsArray());
+            }
+
             var result_coeffs = std.mem.zeroes([Result.stored_blade_count]T);
             const coeffs_array = self.coeffsArray();
 
@@ -916,6 +920,9 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         pub fn cast(self: Self, comptime To: type) To {
             if (sig.p != To.metric_signature.p or sig.q != To.metric_signature.q or sig.r != To.metric_signature.r) {
                 @compileError("cannot cast multivector to a different metric signature");
+            }
+            if (comptime blade_ops.sameBladeSet(blade_masks, To.blades)) {
+                return To.init(self.coeffsArray());
             }
             var result_coeffs = std.mem.zeroes([To.stored_blade_count]T);
             const self_coeffs = self.coeffsArray();
