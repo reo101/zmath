@@ -217,6 +217,29 @@ pub fn rotated(vector: anytype, rotor: anytype) multivector.Vector(@TypeOf(vecto
     return rotor.gp(vector).gp(rotor.reverse()).gradePart(1);
 }
 
+/// Applies the sandwich product `R v ~R` and returns it as `To`.
+///
+/// This is useful for custom-named vector carriers that share the canonical
+/// grade-1 blade set of the source vector.
+pub fn rotatedAs(comptime To: type, vector: anytype, rotor: anytype) To {
+    const Vector = @TypeOf(vector);
+    comptime assertFloatVector(To);
+    if (To.Coefficient != Vector.Coefficient) {
+        @compileError("rotatedAs expects matching coefficient types");
+    }
+    if (To.dimensions != Vector.dimensions) {
+        @compileError("rotatedAs expects matching dimensions");
+    }
+    if (To.metric_signature.p != Vector.metric_signature.p or
+        To.metric_signature.q != Vector.metric_signature.q or
+        To.metric_signature.r != Vector.metric_signature.r)
+    {
+        @compileError("rotatedAs expects matching metric signatures");
+    }
+
+    return rotated(vector, rotor).cast(To);
+}
+
 /// Rotates a vector by an angle in radians using a planar rotor.
 pub fn rotatedByAngle(vector: anytype, angle_radians: @TypeOf(vector).Coefficient) multivector.Vector(@TypeOf(vector).Coefficient, euclidean2) {
     const Vector = @TypeOf(vector);
@@ -237,6 +260,20 @@ test "2D rotors rotate vectors in the expected orientation" {
     const diagonal_result = rotated(e1.add(e2.scale(5)), diagonal);
     try std.testing.expect(nearlyEqual(diagonal_result.coeffNamed("e1"), 0, 1e-12));
     try std.testing.expect(nearlyEqual(diagonal_result.coeffNamed("e2"), @sqrt(26.0), 1e-12));
+}
+
+test "rotatedAs preserves custom vector carriers with aliases" {
+    const naming = comptime blade_parsing.SignedBladeNamingOptions.withBasisNames(.init(.{
+        .positive = .range(1, 2),
+    }), .{ "x", "y" });
+    const E2 = multivector.BasisWithNamingOptions(f64, euclidean2, naming);
+    const CustomVec2 = E2.Vector;
+    const quarter_turn = planarRotor(f64, -std.math.pi / 2.0);
+
+    const tangent = rotatedAs(CustomVec2, CustomVec2.init(.{ 3.0, 4.0 }), quarter_turn);
+
+    try std.testing.expect(nearlyEqual(tangent.named().x, 4.0, 1e-12));
+    try std.testing.expect(nearlyEqual(tangent.named().y, -3.0, 1e-12));
 }
 
 test "rotorFromTo handles antiparallel vectors" {
