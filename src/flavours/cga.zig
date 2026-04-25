@@ -51,7 +51,46 @@ pub const Instantiate = bindings.Instantiate;
 pub const h = bindings.h;
 
 pub fn FamilyHelpers(comptime FamilyType: type, comptime T: type) type {
-    return conformal_helpers.ConformalEuclideanHelpers(T, FamilyType.Instantiate(T));
+    const H = FamilyType.Instantiate(T);
+    const Shared = conformal_helpers.ConformalEuclideanHelpers(T, H);
+
+    return struct {
+        pub const h = H;
+
+        pub const no = Shared.no;
+        pub const ninf = Shared.ninf;
+        pub const Point = Shared.Point;
+        pub const Sphere = Shared.Sphere;
+        pub const Plane = Shared.Plane;
+
+        pub fn geometricProduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.gp(rhs)) {
+            return lhs.gp(rhs);
+        }
+
+        pub fn exteriorProduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.wedge(rhs)) {
+            return lhs.wedge(rhs);
+        }
+
+        pub fn regressiveProduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.antiWedge(rhs)) {
+            return lhs.antiWedge(rhs);
+        }
+
+        pub fn geometricAntiproduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.antiGeometric(rhs)) {
+            return lhs.antiGeometric(rhs);
+        }
+
+        pub fn dotProduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.dot(rhs)) {
+            return lhs.dot(rhs);
+        }
+
+        pub fn antidotProduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.antiDot(rhs)) {
+            return lhs.antiDot(rhs);
+        }
+
+        pub fn complementDual(mv: anytype) @TypeOf(mv.complementDual()) {
+            return mv.complementDual();
+        }
+    };
 }
 
 pub fn InstantiateHelpers(comptime T: type) type {
@@ -64,6 +103,13 @@ pub const ninf = default_helpers.ninf;
 pub const Point = default_helpers.Point;
 pub const Sphere = default_helpers.Sphere;
 pub const Plane = default_helpers.Plane;
+pub const geometricProduct = default_helpers.geometricProduct;
+pub const exteriorProduct = default_helpers.exteriorProduct;
+pub const regressiveProduct = default_helpers.regressiveProduct;
+pub const geometricAntiproduct = default_helpers.geometricAntiproduct;
+pub const dotProduct = default_helpers.dotProduct;
+pub const antidotProduct = default_helpers.antidotProduct;
+pub const complementDual = default_helpers.complementDual;
 
 test "cga origin and infinity are null vectors" {
     // n_o^2 = 0, n_inf^2 = 0
@@ -114,4 +160,11 @@ test "cga basis naming uses custom aliases" {
     try std.testing.expectEqual(@as(f32, 1.0), einf.coeffNamed("e∞"));
     try std.testing.expect(E.signedBlade("eo").eql(eo));
     try std.testing.expect(E.signedBlade("e∞").eql(einf));
+}
+
+test "cga exposes complement and anti-product aliases" {
+    try std.testing.expect(complementDual(no).eql(no.complementDual()));
+    try std.testing.expect(regressiveProduct(no, ninf).eql(no.antiWedge(ninf)));
+    try std.testing.expect(geometricAntiproduct(no, ninf).eql(no.antiGeometric(ninf)));
+    try std.testing.expect(antidotProduct(no, ninf).eql(no.antiDot(ninf)));
 }

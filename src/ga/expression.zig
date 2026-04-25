@@ -390,6 +390,18 @@ fn ConstantValue(comptime T: type, comptime sig: blades.MetricSignature) type {
             return Self.fromFull(self.toFull().join(rhs.toFull()).cast(Full));
         }
 
+        pub fn complementDual(self: Self) Self {
+            return Self.fromFull(self.toFull().complementDual().cast(Full));
+        }
+
+        pub fn antiGeometric(self: Self, rhs: Self) Self {
+            return Self.fromFull(self.toFull().antiGeometric(rhs.toFull()).cast(Full));
+        }
+
+        pub fn antiDot(self: Self, rhs: Self) Self {
+            return Self.fromFull(self.toFull().antiDot(rhs.toFull()).cast(Full));
+        }
+
         pub fn dot(self: Self, rhs: Self) Self {
             return Self.fromFull(self.toFull().dot(rhs.toFull()).cast(Full));
         }
@@ -421,12 +433,15 @@ fn ParserTypes(comptime T: type, comptime sig: blades.MetricSignature) type {
             wedge: void,
             join: void,
             dot: void,
+            anti_geometric: void,
+            anti_dot: void,
             left_contraction: void,
             right_contraction: void,
             lparen: void,
             rparen: void,
             slash: void,
             inverse: void,
+            complement_dual: void,
             number: []const u8,
             blade: blade_parsing.SignedBladeSpec,
             placeholder: []const u8,
@@ -453,8 +468,11 @@ fn ParserTypes(comptime T: type, comptime sig: blades.MetricSignature) type {
             wedge: Binary,
             join: Binary,
             dot: Binary,
+            anti_geometric: Binary,
+            anti_dot: Binary,
             left_contraction: Binary,
             right_contraction: Binary,
+            complement_dual: usize,
         };
 
         pub const NodeInfo = struct {
@@ -651,6 +669,57 @@ fn parserBuildJoin(
     return self.newNode(.{ .join = .{ .lhs = lhs, .rhs = rhs } }, .{});
 }
 
+fn parserBuildComplementDual(
+    comptime T: type,
+    comptime sig: blades.MetricSignature,
+    self: anytype,
+    child: usize,
+) @TypeOf(self.*).ParserError!usize {
+    if (self.nodeInfo(child).constant) |constant| {
+        return parserConstantNode(T, sig, self, constant.complementDual());
+    }
+
+    return self.newNode(.{ .complement_dual = child }, .{});
+}
+
+fn parserBuildAntiGeometric(
+    comptime T: type,
+    comptime sig: blades.MetricSignature,
+    self: anytype,
+    lhs: usize,
+    rhs: usize,
+) @TypeOf(self.*).ParserError!usize {
+    const lhs_info = self.nodeInfo(lhs);
+    const rhs_info = self.nodeInfo(rhs);
+
+    if (lhs_info.constant) |lhs_constant| {
+        if (rhs_info.constant) |rhs_constant| {
+            return parserConstantNode(T, sig, self, lhs_constant.antiGeometric(rhs_constant));
+        }
+    }
+
+    return self.newNode(.{ .anti_geometric = .{ .lhs = lhs, .rhs = rhs } }, .{});
+}
+
+fn parserBuildAntiDot(
+    comptime T: type,
+    comptime sig: blades.MetricSignature,
+    self: anytype,
+    lhs: usize,
+    rhs: usize,
+) @TypeOf(self.*).ParserError!usize {
+    const lhs_info = self.nodeInfo(lhs);
+    const rhs_info = self.nodeInfo(rhs);
+
+    if (lhs_info.constant) |lhs_constant| {
+        if (rhs_info.constant) |rhs_constant| {
+            return parserConstantNode(T, sig, self, lhs_constant.antiDot(rhs_constant));
+        }
+    }
+
+    return self.newNode(.{ .anti_dot = .{ .lhs = lhs, .rhs = rhs } }, .{});
+}
+
 fn parserBuildDot(
     comptime T: type,
     comptime sig: blades.MetricSignature,
@@ -802,11 +871,18 @@ fn parserLexLatexOperator(
     }
 
     const name = self.source[name_start..self.position];
+    if (std.mem.eql(u8, name, "gp")) return .{ .star = {} };
     if (std.mem.eql(u8, name, "wedge")) return .{ .wedge = {} };
     if (std.mem.eql(u8, name, "vee")) return .{ .join = {} };
+    if (std.mem.eql(u8, name, "ganti")) return .{ .anti_geometric = {} };
+    if (std.mem.eql(u8, name, "antigeometric")) return .{ .anti_geometric = {} };
     if (std.mem.eql(u8, name, "cdot")) return .{ .dot = {} };
+    if (std.mem.eql(u8, name, "bullet")) return .{ .dot = {} };
+    if (std.mem.eql(u8, name, "circ")) return .{ .anti_dot = {} };
+    if (std.mem.eql(u8, name, "antidot")) return .{ .anti_dot = {} };
     if (std.mem.eql(u8, name, "rfloor")) return .{ .left_contraction = {} };
     if (std.mem.eql(u8, name, "lfloor")) return .{ .right_contraction = {} };
+    if (std.mem.eql(u8, name, "star")) return .{ .complement_dual = {} };
 
     self.position = start;
     return error.UnexpectedToken;
@@ -824,12 +900,17 @@ fn parserLexUnicodeOperator(
     };
 
     const mappings = [_]Mapping{
+        .{ .symbol = "\u{27D1}", .token = .{ .star = {} } }, // ⟑
         .{ .symbol = "\u{2227}", .token = .{ .wedge = {} } }, // ∧
         .{ .symbol = "\u{2228}", .token = .{ .join = {} } }, // ∨
         .{ .symbol = "\u{22C5}", .token = .{ .dot = {} } }, // ⋅
         .{ .symbol = "\u{00B7}", .token = .{ .dot = {} } }, // ·
+        .{ .symbol = "\u{2022}", .token = .{ .dot = {} } }, // •
+        .{ .symbol = "\u{27C7}", .token = .{ .anti_geometric = {} } }, // ⟇
+        .{ .symbol = "\u{2218}", .token = .{ .anti_dot = {} } }, // ∘
         .{ .symbol = "\u{230B}", .token = .{ .left_contraction = {} } }, // ⌋
         .{ .symbol = "\u{230A}", .token = .{ .right_contraction = {} } }, // ⌊
+        .{ .symbol = "\u{2605}", .token = .{ .complement_dual = {} } }, // ★
     };
 
     const rest = self.source[self.position..];
@@ -984,11 +1065,14 @@ fn parserParsePrefix(
 
 const InfixOperatorKind = enum {
     inverse,
+    complement_dual,
     implicit_gp,
     gp,
     divide,
     wedge,
     dot,
+    anti_geometric,
+    anti_dot,
     left_contraction,
     right_contraction,
     join,
@@ -998,9 +1082,9 @@ const InfixOperatorKind = enum {
 
 fn infixOperatorBindingPower(kind: InfixOperatorKind) pratt.BindingPower {
     return switch (kind) {
-        .inverse => pratt.postfix(9),
+        .inverse, .complement_dual => pratt.postfix(9),
         .implicit_gp => pratt.leftAssoc(7),
-        .gp, .divide, .wedge, .dot, .left_contraction, .right_contraction => pratt.leftAssoc(5),
+        .gp, .divide, .wedge, .dot, .anti_geometric, .anti_dot, .left_contraction, .right_contraction => pratt.leftAssoc(5),
         .join => pratt.leftAssoc(4),
         .add, .sub => pratt.leftAssoc(3),
     };
@@ -1010,10 +1094,13 @@ fn infixOperatorNodeCost(kind: InfixOperatorKind) usize {
     return switch (kind) {
         .divide, .sub => 2,
         .inverse,
+        .complement_dual,
         .implicit_gp,
         .gp,
         .wedge,
         .dot,
+        .anti_geometric,
+        .anti_dot,
         .left_contraction,
         .right_contraction,
         .join,
@@ -1032,11 +1119,14 @@ fn infixOperator(tag: anytype, kind: InfixOperatorKind) pratt.Operator(@TypeOf(t
 fn infixOperatorKindForTag(tag: anytype) ?InfixOperatorKind {
     return switch (tag) {
         .inverse => .inverse,
+        .complement_dual => .complement_dual,
         .number, .blade, .placeholder, .lparen => .implicit_gp,
         .star => .gp,
         .slash => .divide,
         .wedge => .wedge,
         .dot => .dot,
+        .anti_geometric => .anti_geometric,
+        .anti_dot => .anti_dot,
         .left_contraction => .left_contraction,
         .right_contraction => .right_contraction,
         .join => .join,
@@ -1058,6 +1148,7 @@ fn ParserPrattContext(
         const TokenTag = ParserTypes(T, sig).TokenTag;
         pub const operator_table = pratt.initTable(TokenTag, .{
             .inverse = infixOperatorBindingPower(.inverse),
+            .complement_dual = infixOperatorBindingPower(.complement_dual),
             .number = infixOperatorBindingPower(.implicit_gp),
             .blade = infixOperatorBindingPower(.implicit_gp),
             .placeholder = infixOperatorBindingPower(.implicit_gp),
@@ -1066,6 +1157,8 @@ fn ParserPrattContext(
             .slash = infixOperatorBindingPower(.divide),
             .wedge = infixOperatorBindingPower(.wedge),
             .dot = infixOperatorBindingPower(.dot),
+            .anti_geometric = infixOperatorBindingPower(.anti_geometric),
+            .anti_dot = infixOperatorBindingPower(.anti_dot),
             .left_contraction = infixOperatorBindingPower(.left_contraction),
             .right_contraction = infixOperatorBindingPower(.right_contraction),
             .join = infixOperatorBindingPower(.join),
@@ -1103,7 +1196,11 @@ fn ParserPrattContext(
                     try parserAdvance(T, sig, self.parser);
                     break :blk parserBuildInverse(T, sig, self.parser, lhs);
                 },
-                .gp, .divide, .wedge, .dot, .left_contraction, .right_contraction, .join, .add, .sub => blk: {
+                .complement_dual => blk: {
+                    try parserAdvance(T, sig, self.parser);
+                    break :blk parserBuildComplementDual(T, sig, self.parser, lhs);
+                },
+                .gp, .divide, .wedge, .dot, .anti_geometric, .anti_dot, .left_contraction, .right_contraction, .join, .add, .sub => blk: {
                     try parserAdvance(T, sig, self.parser);
                     const rhs = try pratt.parseExpression(Self, self, bp.right);
                     break :blk switch (operator_kind) {
@@ -1111,6 +1208,8 @@ fn ParserPrattContext(
                         .divide => parserBuildGp(T, sig, self.parser, lhs, try parserBuildInverse(T, sig, self.parser, rhs)),
                         .wedge => parserBuildWedge(T, sig, self.parser, lhs, rhs),
                         .dot => parserBuildDot(T, sig, self.parser, lhs, rhs),
+                        .anti_geometric => parserBuildAntiGeometric(T, sig, self.parser, lhs, rhs),
+                        .anti_dot => parserBuildAntiDot(T, sig, self.parser, lhs, rhs),
                         .left_contraction => parserBuildLeftContraction(T, sig, self.parser, lhs, rhs),
                         .right_contraction => parserBuildRightContraction(T, sig, self.parser, lhs, rhs),
                         .join => parserBuildJoin(T, sig, self.parser, lhs, rhs),
@@ -1247,7 +1346,8 @@ fn compilerStorageCaps(
 
         switch (token) {
             .inverse => operator_node_count += infixOperatorNodeCost(.inverse),
-            .star, .slash, .wedge, .join, .dot, .left_contraction, .right_contraction, .plus, .minus => {
+            .complement_dual => operator_node_count += infixOperatorNodeCost(.complement_dual),
+            .star, .slash, .wedge, .join, .dot, .anti_geometric, .anti_dot, .left_contraction, .right_contraction, .plus, .minus => {
                 operator_node_count += infixOperatorNodeCost(infixOperatorKindForTag(std.meta.activeTag(token)).?);
                 expecting_prefix = true;
             },
@@ -1398,8 +1498,11 @@ fn evalNode(
         .wedge => |binary| evalNode(T, sig, placeholder_names, compiled, binary.lhs, args).wedge(evalNode(T, sig, placeholder_names, compiled, binary.rhs, args)).cast(Full),
         .join => |binary| evalNode(T, sig, placeholder_names, compiled, binary.lhs, args).join(evalNode(T, sig, placeholder_names, compiled, binary.rhs, args)).cast(Full),
         .dot => |binary| evalNode(T, sig, placeholder_names, compiled, binary.lhs, args).dot(evalNode(T, sig, placeholder_names, compiled, binary.rhs, args)).cast(Full),
+        .anti_geometric => |binary| evalNode(T, sig, placeholder_names, compiled, binary.lhs, args).antiGeometric(evalNode(T, sig, placeholder_names, compiled, binary.rhs, args)).cast(Full),
+        .anti_dot => |binary| evalNode(T, sig, placeholder_names, compiled, binary.lhs, args).antiDot(evalNode(T, sig, placeholder_names, compiled, binary.rhs, args)).cast(Full),
         .left_contraction => |binary| evalNode(T, sig, placeholder_names, compiled, binary.lhs, args).leftContraction(evalNode(T, sig, placeholder_names, compiled, binary.rhs, args)).cast(Full),
         .right_contraction => |binary| evalNode(T, sig, placeholder_names, compiled, binary.lhs, args).rightContraction(evalNode(T, sig, placeholder_names, compiled, binary.rhs, args)).cast(Full),
+        .complement_dual => |child| evalNode(T, sig, placeholder_names, compiled, child, args).complementDual().cast(Full),
     };
 }
 
@@ -1422,8 +1525,11 @@ fn evalNodeRuntimeArgs(
         .wedge => |binary| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.lhs, args)).wedge(try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.rhs, args)).cast(Full),
         .join => |binary| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.lhs, args)).join(try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.rhs, args)).cast(Full),
         .dot => |binary| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.lhs, args)).dot(try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.rhs, args)).cast(Full),
+        .anti_geometric => |binary| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.lhs, args)).antiGeometric(try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.rhs, args)).cast(Full),
+        .anti_dot => |binary| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.lhs, args)).antiDot(try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.rhs, args)).cast(Full),
         .left_contraction => |binary| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.lhs, args)).leftContraction(try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.rhs, args)).cast(Full),
         .right_contraction => |binary| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.lhs, args)).rightContraction(try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.rhs, args)).cast(Full),
+        .complement_dual => |child| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, child, args)).complementDual().cast(Full),
     };
 }
 
@@ -1445,8 +1551,11 @@ fn evalNodeRuntimeSlots(
         .wedge => |binary| (try evalNodeRuntimeSlots(T, sig, nodes, binary.lhs, slot_values)).wedge(try evalNodeRuntimeSlots(T, sig, nodes, binary.rhs, slot_values)).cast(Full),
         .join => |binary| (try evalNodeRuntimeSlots(T, sig, nodes, binary.lhs, slot_values)).join(try evalNodeRuntimeSlots(T, sig, nodes, binary.rhs, slot_values)).cast(Full),
         .dot => |binary| (try evalNodeRuntimeSlots(T, sig, nodes, binary.lhs, slot_values)).dot(try evalNodeRuntimeSlots(T, sig, nodes, binary.rhs, slot_values)).cast(Full),
+        .anti_geometric => |binary| (try evalNodeRuntimeSlots(T, sig, nodes, binary.lhs, slot_values)).antiGeometric(try evalNodeRuntimeSlots(T, sig, nodes, binary.rhs, slot_values)).cast(Full),
+        .anti_dot => |binary| (try evalNodeRuntimeSlots(T, sig, nodes, binary.lhs, slot_values)).antiDot(try evalNodeRuntimeSlots(T, sig, nodes, binary.rhs, slot_values)).cast(Full),
         .left_contraction => |binary| (try evalNodeRuntimeSlots(T, sig, nodes, binary.lhs, slot_values)).leftContraction(try evalNodeRuntimeSlots(T, sig, nodes, binary.rhs, slot_values)).cast(Full),
         .right_contraction => |binary| (try evalNodeRuntimeSlots(T, sig, nodes, binary.lhs, slot_values)).rightContraction(try evalNodeRuntimeSlots(T, sig, nodes, binary.rhs, slot_values)).cast(Full),
+        .complement_dual => |child| (try evalNodeRuntimeSlots(T, sig, nodes, child, slot_values)).complementDual().cast(Full),
     };
 }
 
@@ -1619,8 +1728,9 @@ pub fn compile(
 /// - signed blades such as `e12`, `e(1,2)`, `e0`
 /// - placeholders such as `{v}` or `{}`
 /// - operators `+`, `-`, `*`, `^`, `&`, `.`, `<<`, `>>`, unary `+/-`, parentheses, and postfix `^-1`
-/// - unicode operators `∧` (`^`), `∨` (`&`), `⋅`/`·` (`.`), `⌋` (`<<`), `⌊` (`>>`)
-/// - latex-style operators `\wedge`, `\vee`, `\cdot`, `\rfloor`, `\lfloor`
+/// - unicode operators `⟑` (`*`), `∧` (`^`), `∨` (`&`), `⋅`/`·`/`•` (`.`), `⌋` (`<<`), `⌊` (`>>`)
+/// - unicode anti-operators `⟇`, `∘`, and postfix complement dual `★`
+/// - latex-style operators `\gp`, `\wedge`, `\vee`, `\cdot`, `\bullet`, `\rfloor`, `\lfloor`, `\ganti`, `\antidot`, `\star`
 ///
 /// Constant-only subexpressions are folded at comptime. Placeholder-bearing
 /// subtrees are left as residual operations and specialized into the generated
@@ -1654,6 +1764,10 @@ test "expression supports GA operators" {
     const e1 = Basis.e(1);
     const e2 = Basis.e(2);
 
+    // Geometric product
+    try std.testing.expect(eval(f32, sig, options, "e1 ⟑ e1", .{}).scalarCoeff() == 1.0);
+    try std.testing.expect(eval(f32, sig, options, "e1 \\gp e1", .{}).scalarCoeff() == 1.0);
+
     // Wedge
     try std.testing.expect(eval(f32, sig, options, "e1 ^ e2", .{}).eql(Basis.signedBlade("e12")));
     try std.testing.expect(eval(f32, sig, options, "e1 ∧ e2", .{}).eql(Basis.signedBlade("e12")));
@@ -1663,7 +1777,17 @@ test "expression supports GA operators" {
     try std.testing.expect(eval(f32, sig, options, "e1 . e1", .{}).scalarCoeff() == 1.0);
     try std.testing.expect(eval(f32, sig, options, "e1 ⋅ e1", .{}).scalarCoeff() == 1.0);
     try std.testing.expect(eval(f32, sig, options, "e1 · e1", .{}).scalarCoeff() == 1.0);
+    try std.testing.expect(eval(f32, sig, options, "e1 • e1", .{}).scalarCoeff() == 1.0);
     try std.testing.expect(eval(f32, sig, options, "e1 \\cdot e1", .{}).scalarCoeff() == 1.0);
+    try std.testing.expect(eval(f32, sig, options, "e1 \\bullet e1", .{}).scalarCoeff() == 1.0);
+
+    // Complement/anti-operators
+    try std.testing.expect(eval(f32, sig, options, "e1★", .{}).eql(e1.complementDual()));
+    try std.testing.expect(eval(f32, sig, options, "e1 \\star", .{}).eql(e1.complementDual()));
+    try std.testing.expect(eval(f32, sig, options, "e1 ⟇ e2", .{}).eql(e1.antiGeometric(e2)));
+    try std.testing.expect(eval(f32, sig, options, "e1 \\ganti e2", .{}).eql(e1.antiGeometric(e2)));
+    try std.testing.expect(eval(f32, sig, options, "e1 ∘ e2", .{}).eql(e1.antiDot(e2)));
+    try std.testing.expect(eval(f32, sig, options, "e1 \\antidot e2", .{}).eql(e1.antiDot(e2)));
 
     // Contractions
     try std.testing.expect(eval(f32, sig, options, "e1 << e12", .{}).eql(e2));
@@ -1763,6 +1887,24 @@ test "runtime compiled expression supports named and slot evaluation" {
     };
     const tuple_value = try tuple.evalSlots(&slot_values);
     try std.testing.expectEqual(@as(f32, 3), tuple_value.scalarCoeff());
+}
+
+test "runtime compiled expression supports anti-operator unicode" {
+    const sig = comptime blades.MetricSignature.euclidean(3);
+    const options = blade_parsing.SignedBladeNamingOptions.euclidean(3);
+    const Basis = multivector.Basis(f32, sig);
+    const Full = multivector.FullMultivector(f32, sig);
+
+    var expr = try compileRuntime(f32, sig, options, std.testing.allocator, "{v}★ + e1 ⟇ {v} + e1 ∘ {v}");
+    defer expr.deinit();
+
+    const v = Basis.e(2);
+    const expected = v.complementDual().cast(Full)
+        .add(Basis.e(1).antiGeometric(v).cast(Full))
+        .add(Basis.e(1).antiDot(v).cast(Full))
+        .cast(Full);
+
+    try std.testing.expect((try expr.eval(.{ .v = v })).eql(expected));
 }
 
 test "runtime compiled expression can narrow to an exact carrier type" {
@@ -1922,8 +2064,11 @@ test "AST shape of simple expressions" {
             wedge: Binary,
             join: Binary,
             dot: Binary,
+            anti_geometric: Binary,
+            anti_dot: Binary,
             left_contraction: Binary,
             right_contraction: Binary,
+            complement_dual: *const Self,
 
             const Binary = struct {
                 lhs: *const Self,
@@ -1983,12 +2128,24 @@ test "AST shape of simple expressions" {
             return self.push(.{ .dot = .{ .lhs = lhs, .rhs = rhs } });
         }
 
+        fn antiGeometric(self: *Self, lhs: *const ExpectedAst.Tree, rhs: *const ExpectedAst.Tree) *const ExpectedAst.Tree {
+            return self.push(.{ .anti_geometric = .{ .lhs = lhs, .rhs = rhs } });
+        }
+
+        fn antiDot(self: *Self, lhs: *const ExpectedAst.Tree, rhs: *const ExpectedAst.Tree) *const ExpectedAst.Tree {
+            return self.push(.{ .anti_dot = .{ .lhs = lhs, .rhs = rhs } });
+        }
+
         fn leftContraction(self: *Self, lhs: *const ExpectedAst.Tree, rhs: *const ExpectedAst.Tree) *const ExpectedAst.Tree {
             return self.push(.{ .left_contraction = .{ .lhs = lhs, .rhs = rhs } });
         }
 
         fn rightContraction(self: *Self, lhs: *const ExpectedAst.Tree, rhs: *const ExpectedAst.Tree) *const ExpectedAst.Tree {
             return self.push(.{ .right_contraction = .{ .lhs = lhs, .rhs = rhs } });
+        }
+
+        fn complementDual(self: *Self, child: *const ExpectedAst.Tree) *const ExpectedAst.Tree {
+            return self.push(.{ .complement_dual = child });
         }
 
         fn fromFlat(self: *Self, nodes: []const Node, index: usize) *const ExpectedAst.Tree {
@@ -2005,8 +2162,11 @@ test "AST shape of simple expressions" {
                     .rhs = self.fromFlat(nodes, binary.rhs),
                 } }),
                 .dot => |binary| self.dot(self.fromFlat(nodes, binary.lhs), self.fromFlat(nodes, binary.rhs)),
+                .anti_geometric => |binary| self.antiGeometric(self.fromFlat(nodes, binary.lhs), self.fromFlat(nodes, binary.rhs)),
+                .anti_dot => |binary| self.antiDot(self.fromFlat(nodes, binary.lhs), self.fromFlat(nodes, binary.rhs)),
                 .left_contraction => |binary| self.leftContraction(self.fromFlat(nodes, binary.lhs), self.fromFlat(nodes, binary.rhs)),
                 .right_contraction => |binary| self.rightContraction(self.fromFlat(nodes, binary.lhs), self.fromFlat(nodes, binary.rhs)),
+                .complement_dual => |child| self.complementDual(self.fromFlat(nodes, child)),
             };
         }
 
@@ -2084,6 +2244,12 @@ test "AST shape of simple expressions" {
         }
     }.build);
 
+    try expectAst("{x} ⟑ {y}", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{ "x", "y" }, arena.gp(arena.placeholder(0), arena.placeholder(1)));
+        }
+    }.build);
+
     try expectAst("3 * {x}", struct {
         fn build(arena: *TreeArena) ExpectedAst {
             return arena.expected(&.{"x"}, arena.scale(3, arena.placeholder(0)));
@@ -2105,6 +2271,30 @@ test "AST shape of simple expressions" {
     try expectAst("{x} . {y}", struct {
         fn build(arena: *TreeArena) ExpectedAst {
             return arena.expected(&.{ "x", "y" }, arena.dot(arena.placeholder(0), arena.placeholder(1)));
+        }
+    }.build);
+
+    try expectAst("{x} • {y}", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{ "x", "y" }, arena.dot(arena.placeholder(0), arena.placeholder(1)));
+        }
+    }.build);
+
+    try expectAst("{x} ⟇ {y}", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{ "x", "y" }, arena.antiGeometric(arena.placeholder(0), arena.placeholder(1)));
+        }
+    }.build);
+
+    try expectAst("{x} ∘ {y}", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{ "x", "y" }, arena.antiDot(arena.placeholder(0), arena.placeholder(1)));
+        }
+    }.build);
+
+    try expectAst("{x}★", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{"x"}, arena.complementDual(arena.placeholder(0)));
         }
     }.build);
 

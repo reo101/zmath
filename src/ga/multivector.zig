@@ -916,6 +916,15 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             return Result.init(result_coeffs);
         }
 
+        /// Returns the basis-complement/Poincaré dual.
+        ///
+        /// This is an explicit alias for `dual()` so degenerate-metric APIs can
+        /// name the complement operation without implying an invertible metric
+        /// pseudoscalar.
+        pub fn complementDual(self: Self) @TypeOf(self.dual()) {
+            return self.dual();
+        }
+
         /// Converts this multivector to another multivector type in the same algebra.
         /// Missing blades are set to zero, extra blades in the source are ignored.
         pub fn cast(self: Self, comptime To: type) To {
@@ -979,6 +988,29 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             const b_dual = rhs.dual();
             const meet_dual = a_dual.wedge(b_dual);
             return meet_dual.dual();
+        }
+
+        /// Returns the exterior antiproduct, also called the regressive product.
+        ///
+        /// This is an explicit alias for `join()`.
+        pub fn antiWedge(self: Self, rhs: anytype) @TypeOf(self.join(rhs)) {
+            return self.join(rhs);
+        }
+
+        /// Returns the geometric antiproduct.
+        /// A ⟇ B = dual(dual(A) * dual(B))
+        pub fn antiGeometric(self: Self, rhs: anytype) @TypeOf(self.dual().gp(rhs.dual()).dual()) {
+            const a_dual = self.dual();
+            const b_dual = rhs.dual();
+            return a_dual.gp(b_dual).dual();
+        }
+
+        /// Returns the antidot product.
+        /// A ∘ B = dual(dual(A) . dual(B))
+        pub fn antiDot(self: Self, rhs: anytype) @TypeOf(self.dual().dot(rhs.dual()).dual()) {
+            const a_dual = self.dual();
+            const b_dual = rhs.dual();
+            return a_dual.dot(b_dual).dual();
         }
 
         /// Returns the multiplicative inverse of this multivector if it exists.
@@ -1127,6 +1159,30 @@ pub fn DualResultType(
 ) type {
     const dimensions = comptime sig.dimensions();
     const result_masks = blade_ops.dualMasks(dimensions, masks);
+    return Multivector(T, &result_masks, sig);
+}
+
+/// Result carrier for a geometric antiproduct.
+pub fn AntiGeometricProductResultType(
+    comptime T: type,
+    comptime lhs_masks: []const BladeMask,
+    comptime rhs_masks: []const BladeMask,
+    comptime sig: MetricSignature,
+) type {
+    const dimensions = comptime sig.dimensions();
+    const result_masks = blade_ops.dualMasks(dimensions, &blade_ops.geometricProductMasks(dimensions, &blade_ops.dualMasks(dimensions, lhs_masks), &blade_ops.dualMasks(dimensions, rhs_masks)));
+    return Multivector(T, &result_masks, sig);
+}
+
+/// Result carrier for an antidot product.
+pub fn AntidotProductResultType(
+    comptime T: type,
+    comptime lhs_masks: []const BladeMask,
+    comptime rhs_masks: []const BladeMask,
+    comptime sig: MetricSignature,
+) type {
+    const dimensions = comptime sig.dimensions();
+    const result_masks = blade_ops.dualMasks(dimensions, &blade_ops.dotProductMasks(dimensions, &blade_ops.dualMasks(dimensions, lhs_masks), &blade_ops.dualMasks(dimensions, rhs_masks)));
     return Multivector(T, &result_masks, sig);
 }
 

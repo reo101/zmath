@@ -224,9 +224,39 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
                     return mv.dual();
                 }
 
+                /// Returns the basis-complement/Poincaré dual of a multivector.
+                pub fn complementDual(mv: anytype) @TypeOf(mv.complementDual()) {
+                    return mv.complementDual();
+                }
+
+                /// Returns the geometric product of two multivectors.
+                pub fn geometricProduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.gp(rhs)) {
+                    return lhs.gp(rhs);
+                }
+
                 /// Returns the outer product (wedge) of two multivectors.
                 pub fn wedge(lhs: anytype, rhs: anytype) @TypeOf(lhs.wedge(rhs)) {
                     return lhs.wedge(rhs);
+                }
+
+                /// Returns the regressive product (join/exterior antiproduct).
+                pub fn regressiveProduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.antiWedge(rhs)) {
+                    return lhs.antiWedge(rhs);
+                }
+
+                /// Returns the geometric antiproduct of two multivectors.
+                pub fn geometricAntiproduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.antiGeometric(rhs)) {
+                    return lhs.antiGeometric(rhs);
+                }
+
+                /// Returns the Hestenes dot product of two multivectors.
+                pub fn dotProduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.dot(rhs)) {
+                    return lhs.dot(rhs);
+                }
+
+                /// Returns the antidot product of two multivectors.
+                pub fn antidotProduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.antiDot(rhs)) {
+                    return lhs.antiDot(rhs);
                 }
 
                 /// Compiles a multivector expression string at comptime.

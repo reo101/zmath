@@ -88,6 +88,34 @@ pub fn FamilyHelpers(comptime FamilyType: type, comptime T: type) type {
         pub fn ambientCoords(p: anytype) [H.Full.dimensions]T {
             return Shared.ambientCoords(p);
         }
+
+        pub fn geometricProduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.gp(rhs)) {
+            return lhs.gp(rhs);
+        }
+
+        pub fn exteriorProduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.wedge(rhs)) {
+            return lhs.wedge(rhs);
+        }
+
+        pub fn regressiveProduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.antiWedge(rhs)) {
+            return lhs.antiWedge(rhs);
+        }
+
+        pub fn geometricAntiproduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.antiGeometric(rhs)) {
+            return lhs.antiGeometric(rhs);
+        }
+
+        pub fn dotProduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.dot(rhs)) {
+            return lhs.dot(rhs);
+        }
+
+        pub fn antidotProduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.antiDot(rhs)) {
+            return lhs.antiDot(rhs);
+        }
+
+        pub fn complementDual(mv: anytype) @TypeOf(mv.complementDual()) {
+            return mv.complementDual();
+        }
     };
 }
 
@@ -100,6 +128,13 @@ pub const Point = default_helpers.Point;
 pub const Plane = default_helpers.Plane;
 pub const toMatrix4x4 = default_helpers.toMatrix4x4;
 pub const ambientCoords = default_helpers.ambientCoords;
+pub const geometricProduct = default_helpers.geometricProduct;
+pub const exteriorProduct = default_helpers.exteriorProduct;
+pub const regressiveProduct = default_helpers.regressiveProduct;
+pub const geometricAntiproduct = default_helpers.geometricAntiproduct;
+pub const dotProduct = default_helpers.dotProduct;
+pub const antidotProduct = default_helpers.antidotProduct;
+pub const complementDual = default_helpers.complementDual;
 
 fn namedBasisIndex(comptime named_index: usize) usize {
     return bindings.resolveNamedBasisIndex(named_index);
@@ -244,4 +279,15 @@ test "pga helpers support non-3d families through coordinate arrays" {
     try std.testing.expectApproxEqAbs(@as(f32, 1.0), coords[0], 1e-6);
     try std.testing.expectApproxEqAbs(@as(f32, 1.0), coords[1], 1e-6);
     try std.testing.expectApproxEqAbs(@as(f32, 2.0), coords[2], 1e-6);
+}
+
+test "pga exposes complement and anti-product aliases" {
+    const E = h.Basis;
+    const e0 = E.e(0);
+    const e1 = E.e(1);
+
+    try std.testing.expect(complementDual(e1).eql(e1.complementDual()));
+    try std.testing.expect(regressiveProduct(e1, e0).eql(e1.antiWedge(e0)));
+    try std.testing.expect(geometricAntiproduct(e1, e0).eql(e1.antiGeometric(e0)));
+    try std.testing.expect(antidotProduct(e1, e0).eql(e1.antiDot(e0)));
 }
