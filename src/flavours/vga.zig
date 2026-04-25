@@ -3,8 +3,8 @@ const std = @import("std");
 pub const ga = @import("../ga.zig");
 const family = ga.family;
 
-pub fn EuclideanFamily(comptime euclidean_dimentions: usize) type {
-    return family.euclidean(euclidean_dimentions);
+pub fn EuclideanFamily(comptime euclidean_dimensions: usize) type {
+    return family.euclidean(euclidean_dimensions);
 }
 
 const default_family = EuclideanFamily(2);

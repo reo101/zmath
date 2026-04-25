@@ -74,8 +74,10 @@ pub const SignedBladeNamingOptions = struct {
         comptime basis_spans: blades.BasisIndexSpans,
         comptime names: [basis_spans.mappedBasisCount()][]const u8,
     ) SignedBladeNamingOptions {
+        const aliases = comptime basisNameAliases(basis_spans, names);
         return .{
             .basis_spans = basis_spans,
+            .blade_aliases = aliases[0..],
             .basis_names = names[0..],
         };
     }
@@ -129,6 +131,70 @@ pub const SignedBladeNamingOptions = struct {
         return resolved orelse error.InvalidBasisIndex;
     }
 };
+
+fn basisNameAliasCount(
+    comptime basis_spans: blades.BasisIndexSpans,
+    comptime names: [basis_spans.mappedBasisCount()][]const u8,
+) usize {
+    @setEvalBranchQuota(10_000);
+    var count: usize = 0;
+    inline for (names, 0..) |name, index| {
+        if (name.len == 0) {
+            @compileError("basis_names entries must not be empty");
+        }
+        inline for (names[0..index]) |previous| {
+            if (std.mem.eql(u8, name, previous)) {
+                @compileError("basis_names entries must be unique");
+            }
+        }
+        if (!indexedNameResolvesToBasisName(basis_spans, name, index)) {
+            count += 1;
+        }
+    }
+    return count;
+}
+
+fn basisNameAliases(
+    comptime basis_spans: blades.BasisIndexSpans,
+    comptime names: [basis_spans.mappedBasisCount()][]const u8,
+) [basisNameAliasCount(basis_spans, names)]BladeAlias {
+    var aliases: [basisNameAliasCount(basis_spans, names)]BladeAlias = undefined;
+    var cursor: usize = 0;
+    inline for (names, 0..) |name, internal_index| {
+        if (comptime indexedNameResolvesToBasisName(basis_spans, name, internal_index)) continue;
+
+        aliases[cursor] = .{
+            .name = name,
+            .spec = .{
+                .sign = .positive,
+                .mask = .initOneBit(internal_index),
+            },
+        };
+        cursor += 1;
+    }
+    return aliases;
+}
+
+fn indexedNameResolvesToBasisName(
+    comptime basis_spans: blades.BasisIndexSpans,
+    comptime name: []const u8,
+    comptime internal_index: usize,
+) bool {
+    @setEvalBranchQuota(10_000);
+    if (!isIndexedSignedBladeName(name, 'e')) return false;
+
+    const options = SignedBladeNamingOptions.withBasisSpans(basis_spans);
+    const spec = parseSignedBladeImpl(name, basis_spans.mappedBasisCount(), options) catch return false;
+    return spec.sign == .positive and spec.mask.eql(.initOneBit(internal_index));
+}
+
+fn isIndexedSignedBladeName(comptime name: []const u8, comptime basis_prefix: u8) bool {
+    if (name.len < 2 or name[0] != basis_prefix) return false;
+    return switch (name[1]) {
+        '0'...'9', '_', '(', '[' => true,
+        else => false,
+    };
+}
 
 fn isDigit(char: u8) bool {
     return std.ascii.isDigit(char);
@@ -636,6 +702,19 @@ test "blade aliases map custom names to signed blade specs" {
     try std.testing.expect(isSignedBlade("I", 2, options));
     try std.testing.expect(!isSignedBlade("j", 2, options));
     try std.testing.expect(isSignedBlade("e12", 2, options));
+}
+
+test "basis names alias indexed-looking names when spans would map elsewhere" {
+    const options = comptime SignedBladeNamingOptions.withBasisNames(
+        .init(.{ .positive = .range(1, 2) }),
+        .{ "e0", "e1" },
+    );
+
+    const e0 = try parseSignedBlade("e0", 2, options, false);
+    const e1 = try parseSignedBlade("e1", 2, options, false);
+
+    try std.testing.expectEqual(SignedBladeSpec{ .sign = .positive, .mask = .init(0b01) }, e0);
+    try std.testing.expectEqual(SignedBladeSpec{ .sign = .positive, .mask = .init(0b10) }, e1);
 }
 
 test "e0 alias is only enabled by singleton degenerate span" {

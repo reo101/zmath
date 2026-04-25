@@ -141,13 +141,13 @@ test "geometric product with degenerate vector produces dual-like elements" {
 
     // e1 * e0 should give a bivector e10 with coefficient +1 (or -1 depending on order)
     const e1e0 = e1.gp(e0);
-    try std.testing.expect(e1e0.coeffNamedWithOptions("e_1_0", bindings.naming_options) != 0.0);
+    try std.testing.expect(e1e0.coeffNamed("e_1_0") != 0.0);
 
     // e0 * e1 should give the opposite sign
     const e0e1 = e0.gp(e1);
     try std.testing.expectEqual(
-        -e1e0.coeffNamedWithOptions("e_1_0", bindings.naming_options),
-        e0e1.coeffNamedWithOptions("e_1_0", bindings.naming_options),
+        -e1e0.coeffNamed("e_1_0"),
+        e0e1.coeffNamed("e_1_0"),
     );
 }
 
@@ -176,7 +176,7 @@ test "euclidean point representation and join" {
     const line = p.outerProduct(q);
 
     // The line should have a non-zero e12 component (the direction part)
-    try std.testing.expect(line.coeffNamedWithOptions("e12", bindings.naming_options) != 0.0);
+    try std.testing.expect(line.coeffNamed("e12") != 0.0);
 
     // The line should also have moment components involving e0
     _ = e3; // e3 unused here but available for 3D tests
@@ -204,10 +204,10 @@ test "Point.init correctly constructs trivectors" {
     const p = Point.init(1, 2, 3);
 
     // x*e230 + y*e310 + z*e120 + e123
-    try std.testing.expectEqual(@as(f32, 1), p.coeffNamedWithOptions("e_2_3_0", bindings.naming_options));
-    try std.testing.expectEqual(@as(f32, 2), p.coeffNamedWithOptions("e_3_1_0", bindings.naming_options));
-    try std.testing.expectEqual(@as(f32, 3), p.coeffNamedWithOptions("e_1_2_0", bindings.naming_options));
-    try std.testing.expectEqual(@as(f32, 1), p.coeffNamedWithOptions("e123", bindings.naming_options));
+    try std.testing.expectEqual(@as(f32, 1), p.coeffNamed("e_2_3_0"));
+    try std.testing.expectEqual(@as(f32, 2), p.coeffNamed("e_3_1_0"));
+    try std.testing.expectEqual(@as(f32, 3), p.coeffNamed("e_1_2_0"));
+    try std.testing.expectEqual(@as(f32, 1), p.coeffNamed("e123"));
 }
 
 test "toMatrix4x4 with identity rotor" {
@@ -232,7 +232,7 @@ test "pga helpers are instantiatable by scalar type" {
     const Helpers = InstantiateHelpers(f64);
     const p = Helpers.Point.init(1.0, 2.0, 3.0);
 
-    try std.testing.expectEqual(@as(f64, 1.0), p.coeffNamedWithOptions("e_2_3_0", bindings.naming_options));
+    try std.testing.expectEqual(@as(f64, 1.0), p.coeffNamed("e_2_3_0"));
     try std.testing.expectEqual(@as(f64, 1.0), Helpers.toMatrix4x4(Helpers.h.Scalar.init(.{1}))[0][0]);
 }
 

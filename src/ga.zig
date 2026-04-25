@@ -164,6 +164,16 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
                 /// Basis helper providing named basis vectors, bound to `T`.
                 pub const Basis = Self.Basis(T);
 
+                /// Creates a generic multivector type restricted to specific blades.
+                pub fn Multivector(comptime blade_masks: []const blades.BladeMask) type {
+                    return Self.Multivector(T, blade_masks);
+                }
+
+                /// Grade-restricted multivector carrier bound to `T`.
+                pub fn KVector(comptime grade: usize) type {
+                    return Self.KVector(T, grade);
+                }
+
                 /// Constructs a unit basis blade from a mask.
                 pub fn basisBlade(comptime mask: blades.BladeMask) Self.Multivector(T, &.{mask}) {
                     return Self.basisBlade(T, mask);
@@ -210,7 +220,7 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
                 }
 
                 /// Returns the Hodge/Poincaré dual of a multivector.
-                pub fn dual(mv: anytype) multivector.DualResultType(T, @TypeOf(mv).blades, metric_signature) {
+                pub fn dual(mv: anytype) @TypeOf(mv.dual()) {
                     return mv.dual();
                 }
 
@@ -225,8 +235,8 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
                 }
 
                 /// Evaluates a multivector expression string into a Full multivector.
-                pub fn expr(comptime source: []const u8, args: anytype) multivector.FullMultivector(T, metric_signature) {
-                    return compileExpr(source).eval(args);
+                pub fn expr(comptime source: []const u8, args: anytype) Full {
+                    return compileExpr(source).eval(args).cast(Full);
                 }
 
                 /// Evaluates a multivector expression string into a specific result type.
@@ -258,6 +268,23 @@ test "signature-baked algebra namespace drives metric-dependent products" {
     const e2 = Cl11.Basis(i32).e(2);
     const e2_squared = e2.gp(e2);
     try std.testing.expectEqual(@as(i32, -1), e2_squared.scalarCoeff());
+}
+
+test "instantiated algebra namespace keeps generic constructors and naming bound" {
+    const Projective2 = family.projectiveEuclidean(2).Instantiate(f32);
+    const sparse_masks = comptime blades.BladeMask.initMany(.{ 0b001, 0b100 });
+    const Sparse = Projective2.Multivector(sparse_masks[0..]);
+    const Vector = Projective2.KVector(1);
+
+    const sparse = Sparse.init(.{ 2.0, 3.0 });
+    const expr = Projective2.expr("e0 + 2*e1", .{});
+
+    try std.testing.expectEqual(Vector, Projective2.Vector);
+    try std.testing.expectEqual(@as(f32, 2.0), sparse.coeffNamed("e1"));
+    try std.testing.expectEqual(@as(f32, 3.0), sparse.coeffNamed("e0"));
+    try std.testing.expectEqual(Projective2.Full, @TypeOf(expr));
+    try std.testing.expectEqual(@as(f32, 1.0), expr.coeffNamed("e0"));
+    try std.testing.expectEqual(@as(f32, 2.0), expr.coeffNamed("e1"));
 }
 
 test "algebra naming options can expose span-mapped named indices" {

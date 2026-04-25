@@ -69,7 +69,7 @@ test "cga origin and infinity are null vectors" {
     // n_o^2 = 0, n_inf^2 = 0
     try std.testing.expectEqual(@as(f32, 0.0), h.normSquared(no));
     try std.testing.expectEqual(@as(f32, 0.0), h.normSquared(ninf));
-    
+
     // n_o . n_inf = -1
     try std.testing.expectEqual(@as(f32, -1.0), no.dot(ninf).scalarCoeff());
 }
@@ -110,4 +110,8 @@ test "cga basis naming uses custom aliases" {
 
     try std.testing.expectEqual(@as(f32, 1.0), eo.named().eo);
     try std.testing.expectEqual(@as(f32, 1.0), einf.named().@"e∞");
+    try std.testing.expectEqual(@as(f32, 1.0), eo.coeffNamed("eo"));
+    try std.testing.expectEqual(@as(f32, 1.0), einf.coeffNamed("e∞"));
+    try std.testing.expect(E.signedBlade("eo").eql(eo));
+    try std.testing.expect(E.signedBlade("e∞").eql(einf));
 }

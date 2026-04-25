@@ -25,7 +25,6 @@ pub const dimensions = bindings.dimensions;
 pub const Algebra = bindings.Algebra;
 pub const Instantiate = bindings.Instantiate;
 pub const h = bindings.h;
-const naming_options = bindings.naming_options;
 
 fn HelpersFor(comptime H: type, comptime T: type) type {
     const dimension_count = H.Full.dimensions;
@@ -182,7 +181,6 @@ fn namedBasisIndex(comptime named_index: usize) usize {
     return bindings.resolveNamedBasisIndex(named_index);
 }
 
-
 test "sta signature has expected metric classes and dimensions" {
     try std.testing.expectEqual(@as(usize, 4), dimensions);
 
@@ -254,7 +252,7 @@ test "spacetime split correctly extracts components" {
     try std.testing.expectEqual(@as(f64, 2.0), split.time);
 
     // The spatial part is the bivector e10 (or -e01)
-    try std.testing.expectEqual(@as(f64, 3.0), split.space.coeffNamedWithOptions("e10", naming_options));
+    try std.testing.expectEqual(@as(f64, 3.0), split.space.coeffNamed("e10"));
 }
 
 test "lorentz boost transforms vectors correctly" {
@@ -275,8 +273,8 @@ test "lorentz boost transforms vectors correctly" {
     const expected_e0 = std.math.cosh(phi);
     const expected_e1 = std.math.sinh(phi);
 
-    try std.testing.expect(rotors.nearlyEqual(e0_prime.coeffNamedWithOptions("e0", naming_options), expected_e0, 1e-12));
-    try std.testing.expect(rotors.nearlyEqual(e0_prime.coeffNamedWithOptions("e1", naming_options), expected_e1, 1e-12));
+    try std.testing.expect(rotors.nearlyEqual(e0_prime.coeffNamed("e0"), expected_e0, 1e-12));
+    try std.testing.expect(rotors.nearlyEqual(e0_prime.coeffNamed("e1"), expected_e1, 1e-12));
 }
 
 test "faraday bivector construction" {
@@ -291,8 +289,8 @@ test "faraday bivector construction" {
     // F = E + I*B
     // I = e0123
     // I * e20 = e0123 * e20 = -e0123 * e02 = -(e0*e0) * e1 * (e2*e2) * e3 = -1 * e1 * -1 * e3 = e13
-    try std.testing.expectEqual(@as(f64, 10.0), F.coeffNamedWithOptions("e10", naming_options));
-    try std.testing.expectEqual(@as(f64, 5.0), F.coeffNamedWithOptions("e13", naming_options));
+    try std.testing.expectEqual(@as(f64, 10.0), F.coeffNamed("e10"));
+    try std.testing.expectEqual(@as(f64, 5.0), F.coeffNamed("e13"));
 }
 
 test "duality rotation preserves field invariants" {
@@ -349,8 +347,8 @@ test "4-velocity squares to 1" {
 
     // Check components: gamma = 1/sqrt(1-0.36) = 1/0.8 = 1.25
     // u = 1.25*e0 + 1.25*0.6*e1 = 1.25*e0 + 0.75*e1
-    try std.testing.expect(rotors.nearlyEqual(u.coeffNamedWithOptions("e0", naming_options), 1.25, 1e-12));
-    try std.testing.expect(rotors.nearlyEqual(u.coeffNamedWithOptions("e1", naming_options), 0.75, 1e-12));
+    try std.testing.expect(rotors.nearlyEqual(u.coeffNamed("e0"), 1.25, 1e-12));
+    try std.testing.expect(rotors.nearlyEqual(u.coeffNamed("e1"), 0.75, 1e-12));
 }
 
 test "stress-energy of a static perfect fluid" {
@@ -364,11 +362,11 @@ test "stress-energy of a static perfect fluid" {
     const Tn = perfectFluidStressEnergy(n, u, rho, p);
 
     // For static fluid, T(e0) = rho * e0
-    try std.testing.expectEqual(@as(f64, rho), Tn.coeffNamedWithOptions("e0", naming_options));
+    try std.testing.expectEqual(@as(f64, rho), Tn.coeffNamed("e0"));
 
     // For static fluid, T(e1) = -p * e1
     const Te1 = perfectFluidStressEnergy(E.e(1).gradePart(1), u, rho, p);
-    try std.testing.expectEqual(@as(f64, -p), Te1.coeffNamedWithOptions("e1", naming_options));
+    try std.testing.expectEqual(@as(f64, -p), Te1.coeffNamed("e1"));
 }
 
 test "spacetime gradient of a scalar field is a 4-vector" {
@@ -383,8 +381,8 @@ test "spacetime gradient of a scalar field is a 4-vector" {
     const grad = applyGradient(h.Scalar, partials);
 
     // ∇ φ = γ^0 ∂_0 φ + γ^1 ∂_1 φ = γ_0 (1) - γ_1 (2)
-    try std.testing.expectEqual(@as(f64, 1.0), grad.coeffNamedWithOptions("e0", naming_options));
-    try std.testing.expectEqual(@as(f64, -2.0), grad.coeffNamedWithOptions("e1", naming_options));
+    try std.testing.expectEqual(@as(f64, 1.0), grad.coeffNamed("e0"));
+    try std.testing.expectEqual(@as(f64, -2.0), grad.coeffNamed("e1"));
 }
 
 test "spacetime gradient of a vector field includes divergence and curl" {

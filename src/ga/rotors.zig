@@ -33,6 +33,18 @@ fn assertFloatVector(comptime M: type) void {
     }
 }
 
+fn assertPlanarEuclideanVector(comptime M: type) void {
+    assertFloatVector(M);
+    if (M.dimensions != 2) {
+        @compileError("this helper expects a 2D Euclidean vector type");
+    }
+    inline for (0..2) |i| {
+        if (M.metric_signature.basisSquareClass(i + 1) != .positive) {
+            @compileError("this helper expects a 2D Euclidean vector type");
+        }
+    }
+}
+
 fn assertFloatRotor(comptime M: type) void {
     meta.requireDecls(M, &.{ "dimensions", "Coefficient", "blades" }, "rotor multivector type", "public constant");
     if (!blades.allMasksHaveParity(M.blades, true)) {
@@ -84,7 +96,7 @@ pub fn norm(mv: anytype) @TypeOf(mv).Coefficient {
 }
 
 /// Returns the Hodge dual of a multivector.
-pub fn dual(mv: anytype) multivector.DualResultType(@TypeOf(mv).Coefficient, @TypeOf(mv).blades, @TypeOf(mv).metric_signature) {
+pub fn dual(mv: anytype) @TypeOf(mv.dual()) {
     return mv.dual();
 }
 
@@ -162,27 +174,28 @@ pub fn planarRotor(comptime T: type, angle_radians: T) multivector.Rotor(T, eucl
 }
 
 /// Returns the rotor that takes `from` onto `to` in 2D VGA.
-pub fn rotorFromTo(from: anytype, to: anytype) multivector.Rotor(@TypeOf(from).Coefficient, euclidean2) {
+pub fn rotorFromTo(from: anytype, to: anytype) @TypeOf(from).EvenType {
     return tryRotorFromTo(from, to) catch unreachable;
 }
 
 /// Returns the rotor that takes `from` onto `to` in 2D VGA, or `error.ZeroVector`.
-pub fn tryRotorFromTo(from: anytype, to: anytype) RotorError!multivector.Rotor(@TypeOf(from).Coefficient, euclidean2) {
+pub fn tryRotorFromTo(from: anytype, to: anytype) RotorError!@TypeOf(from).EvenType {
     const Vector = @TypeOf(from);
     const ToVector = @TypeOf(to);
-    comptime assertFloatVector(Vector);
-    comptime assertFloatVector(ToVector);
+    comptime assertPlanarEuclideanVector(Vector);
+    comptime assertPlanarEuclideanVector(ToVector);
     comptime {
         if (Vector.Coefficient != ToVector.Coefficient) {
             @compileError("rotorFromTo expects matching coefficient types");
         }
     }
     const T = Vector.Coefficient;
+    const RotorType = Vector.EvenType;
     const epsilon = defaultTolerance(T);
 
     const from_unit = try normalize(from);
     const to_unit = try normalize(to);
-    const raw = multivector.Scalar(T, euclidean2).init(.{1}).add(to_unit.gp(from_unit));
+    const raw = Vector.ScalarType.init(.{1}).add(to_unit.gp(from_unit));
     const scalar = raw.scalarCoeff();
     const bivector = raw.coeff(e12_mask);
     const magnitude = @sqrt(scalar * scalar + bivector * bivector);
@@ -190,10 +203,10 @@ pub fn tryRotorFromTo(from: anytype, to: anytype) RotorError!multivector.Rotor(@
     if (nearlyEqual(magnitude, 0, epsilon)) {
         // Antiparallel vectors admit infinitely many 180° rotors in 2D.
         // Pick the canonical +e12 rotor to produce a deterministic result.
-        return multivector.Rotor(T, euclidean2).init(.{ 0, 1 });
+        return RotorType.init(.{ 0, 1 });
     }
 
-    const rotor = multivector.Rotor(T, euclidean2).init(.{
+    const rotor = RotorType.init(.{
         scalar / magnitude,
         bivector / magnitude,
     });
@@ -207,14 +220,14 @@ pub fn tryRotorFromTo(from: anytype, to: anytype) RotorError!multivector.Rotor(@
 /// - `vector` is grade-1,
 /// - `rotor` has even parity blades,
 /// - both share coefficient type, dimensions, and metric signature.
-pub fn rotated(vector: anytype, rotor: anytype) multivector.Vector(@TypeOf(vector).Coefficient, @TypeOf(vector).metric_signature) {
+pub fn rotated(vector: anytype, rotor: anytype) @TypeOf(vector).VectorType {
     const Vector = @TypeOf(vector);
     const RotorType = @TypeOf(rotor);
     comptime assertFloatVector(Vector);
     comptime assertFloatRotor(RotorType);
     comptime assertCompatibleVectorAndRotor(Vector, RotorType);
 
-    return rotor.gp(vector).gp(rotor.reverse()).gradePart(1);
+    return rotor.gp(vector).gp(rotor.reverse()).gradePart(1).cast(Vector.VectorType);
 }
 
 /// Applies the sandwich product `R v ~R` and returns it as `To`.
@@ -241,9 +254,9 @@ pub fn rotatedAs(comptime To: type, vector: anytype, rotor: anytype) To {
 }
 
 /// Rotates a vector by an angle in radians using a planar rotor.
-pub fn rotatedByAngle(vector: anytype, angle_radians: @TypeOf(vector).Coefficient) multivector.Vector(@TypeOf(vector).Coefficient, euclidean2) {
+pub fn rotatedByAngle(vector: anytype, angle_radians: @TypeOf(vector).Coefficient) @TypeOf(vector).VectorType {
     const Vector = @TypeOf(vector);
-    comptime assertFloatVector(Vector);
+    comptime assertPlanarEuclideanVector(Vector);
     return rotated(vector, planarRotor(Vector.Coefficient, angle_radians));
 }
 
@@ -270,8 +283,12 @@ test "rotatedAs preserves custom vector carriers with aliases" {
     const CustomVec2 = E2.Vector;
     const quarter_turn = planarRotor(f64, -std.math.pi / 2.0);
 
+    const preserved = rotated(CustomVec2.init(.{ 3.0, 4.0 }), quarter_turn);
     const tangent = rotatedAs(CustomVec2, CustomVec2.init(.{ 3.0, 4.0 }), quarter_turn);
 
+    try std.testing.expectEqual(CustomVec2, @TypeOf(preserved));
+    try std.testing.expect(nearlyEqual(preserved.coeffNamed("x"), 4.0, 1e-12));
+    try std.testing.expect(nearlyEqual(preserved.coeffNamed("y"), -3.0, 1e-12));
     try std.testing.expect(nearlyEqual(tangent.named().x, 4.0, 1e-12));
     try std.testing.expect(nearlyEqual(tangent.named().y, -3.0, 1e-12));
 }
@@ -402,5 +419,4 @@ test "From Zero to Geo 3.6 exercises" {
     try expectSameValue("(13 - 2i) / (-5 - 12i)", "(-41.0 / 169.0) + (166.0 / 169.0)i");
     // 8. (-7 + 3i) / (1 + 2i) = -1/5 + 17/5·i
     try expectSameValue("(-7 + 3i) / (1 + 2i)", "(-1.0 / 5.0) + (17.0 / 5.0)i");
-
 }

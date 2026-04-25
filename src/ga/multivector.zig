@@ -263,7 +263,8 @@ pub fn SignedBladeTypeWithOptions(
     ensureNumeric(T);
     const dimensions = comptime sig.dimensions();
     const spec = comptime blade_parsing.parseSignedBlade(name, dimensions, naming_options, true);
-    return BasisBladeType(T, spec.mask, sig);
+    const masks = [_]BladeMask{spec.mask};
+    return MultivectorWithNaming(T, masks[0..], sig, naming_options);
 }
 
 /// Returns the compact multivector type for a single blade mask.
@@ -287,7 +288,7 @@ fn signedBladeImpl(
         @compileError("negative-oriented signed blades require a signed or floating-point coefficient type");
     }
 
-    var result = basisBlade(T, spec.mask, sig);
+    var result = SignedBladeTypeWithOptions(T, name, sig, naming_options).zero();
     result.coeffs[0] = signedUnit(T, spec.sign);
     return result;
 }
@@ -542,9 +543,9 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         }
 
         /// Returns the coefficient for a signed-blade name such as `e12`.
-        /// Uses signature-derived default naming options.
+        /// Uses this carrier's configured naming options.
         pub fn coeffNamed(self: Self, comptime name: []const u8) T {
-            return self.coeffNamedWithOptions(name, blade_parsing.SignedBladeNamingOptions.fromSignature(sig));
+            return self.coeffNamedWithOptions(name, naming_options);
         }
 
         /// Returns the coefficient for a signed-blade name under naming options.
@@ -1439,6 +1440,20 @@ test "multivector Named struct supports alias fields without a prefix" {
 
     try std.testing.expectEqual(@as(f32, 1.0), v.named().x);
     try std.testing.expectEqual(@as(f32, 2.0), v.named().y);
+    try std.testing.expectEqual(@as(f32, 1.0), v.coeffNamed("x"));
+    try std.testing.expectEqual(@as(f32, 2.0), v.coeffNamed("y"));
+    try std.testing.expect(E2.signedBlade("x").eql(E2.e(1)));
+}
+
+test "free signed blade helpers preserve explicit naming options" {
+    const options = comptime blade_parsing.SignedBladeNamingOptions.withBasisNames(.init(.{
+        .positive = .range(1, 2),
+    }), .{ "x", "y" });
+
+    const x = signedBladeWithOptions(f32, "x", .euclidean(2), options);
+
+    try std.testing.expectEqual(@as(f32, 1.0), x.named().x);
+    try std.testing.expectEqual(@as(f32, 1.0), x.coeffNamed("x"));
 }
 
 test "aliases and signed blades expose more than just plain vectors" {
