@@ -116,6 +116,63 @@ pub fn FamilyHelpers(comptime FamilyType: type, comptime T: type) type {
         pub fn complementDual(mv: anytype) @TypeOf(mv.complementDual()) {
             return mv.complementDual();
         }
+
+        fn projectiveBasisMask(comptime Mv: type) blades.BladeMask {
+            const index = comptime blade_parsing.resolveNamedBasisIndex(0, Mv.dimensions, Mv.naming, true);
+            return .initOneBit(index - 1);
+        }
+
+        fn filteredComplementDual(mv: anytype, comptime keep_projective_weight: bool) @TypeOf(mv.complementDual()) {
+            const Mv = @TypeOf(mv);
+            multivector.ensureMultivector(Mv);
+            if (comptime Mv.metric_signature.q != 0 or Mv.metric_signature.r != 1) {
+                @compileError("PGA metric dual helpers require a projective Euclidean Cl(n,0,1) algebra");
+            }
+
+            const Result = @TypeOf(mv.complementDual());
+            var result_coeffs = std.mem.zeroes([Result.stored_blade_count]Mv.Coefficient);
+            const self_coeffs = mv.coeffsArray();
+            const pseudoscalar_mask = comptime blades.bladeCount(Mv.dimensions) - 1;
+            const projective_mask = comptime projectiveBasisMask(Mv);
+
+            inline for (Mv.blades, 0..) |mask, i| {
+                const has_projective_weight = comptime mask.bitset.intersectWith(projective_mask.bitset).mask != 0;
+                if (has_projective_weight == keep_projective_weight) {
+                    const target_mask = blades.BladeMask.init(mask.bitset.mask ^ pseudoscalar_mask);
+                    const result_idx = Result.getBladeIndex(target_mask);
+                    const sign = mask.geometricProductSign(blades.BladeMask.init(pseudoscalar_mask));
+                    result_coeffs[result_idx] = self_coeffs[i] * @intFromEnum(sign);
+                }
+            }
+
+            return Result.init(result_coeffs);
+        }
+
+        /// Returns the RGA metric dual, also called the bulk dual.
+        ///
+        /// This complements only the bulk components: basis blades that do not
+        /// contain the projective `e0` direction.
+        pub fn metricDual(mv: anytype) @TypeOf(filteredComplementDual(mv, false)) {
+            return filteredComplementDual(mv, false);
+        }
+
+        /// Explicit alias for `metricDual()`.
+        pub fn bulkDual(mv: anytype) @TypeOf(filteredComplementDual(mv, false)) {
+            return filteredComplementDual(mv, false);
+        }
+
+        /// Returns the RGA metric antidual, also called the weight dual.
+        ///
+        /// This complements only the weight components: basis blades that
+        /// contain the projective `e0` direction.
+        pub fn metricAntidual(mv: anytype) @TypeOf(filteredComplementDual(mv, true)) {
+            return filteredComplementDual(mv, true);
+        }
+
+        /// Explicit alias for `metricAntidual()`.
+        pub fn weightDual(mv: anytype) @TypeOf(filteredComplementDual(mv, true)) {
+            return filteredComplementDual(mv, true);
+        }
     };
 }
 
@@ -135,6 +192,10 @@ pub const geometricAntiproduct = default_helpers.geometricAntiproduct;
 pub const dotProduct = default_helpers.dotProduct;
 pub const antidotProduct = default_helpers.antidotProduct;
 pub const complementDual = default_helpers.complementDual;
+pub const metricDual = default_helpers.metricDual;
+pub const bulkDual = default_helpers.bulkDual;
+pub const metricAntidual = default_helpers.metricAntidual;
+pub const weightDual = default_helpers.weightDual;
 
 fn namedBasisIndex(comptime named_index: usize) usize {
     return bindings.resolveNamedBasisIndex(named_index);
@@ -290,4 +351,21 @@ test "pga exposes complement and anti-product aliases" {
     try std.testing.expect(regressiveProduct(e1, e0).eql(e1.antiWedge(e0)));
     try std.testing.expect(geometricAntiproduct(e1, e0).eql(e1.antiGeometric(e0)));
     try std.testing.expect(antidotProduct(e1, e0).eql(e1.antiDot(e0)));
+}
+
+test "pga exposes RGA bulk and weight duals" {
+    const E = h.Basis;
+    const e0 = E.e(0);
+    const e1 = E.e(1);
+    const mixed = e1.add(e0);
+
+    try std.testing.expect(metricDual(e1).eql(E.signedBlade("e_2_3_0")));
+    try std.testing.expect(metricDual(e0).eql(@TypeOf(metricDual(e0)).zero()));
+    try std.testing.expect(metricDual(mixed).eql(e1.complementDual()));
+    try std.testing.expect(bulkDual(mixed).eql(metricDual(mixed)));
+
+    try std.testing.expect(metricAntidual(e0).eql(E.signedBlade("-e123")));
+    try std.testing.expect(metricAntidual(e1).eql(@TypeOf(metricAntidual(e1)).zero()));
+    try std.testing.expect(metricAntidual(mixed).eql(e0.complementDual()));
+    try std.testing.expect(weightDual(mixed).eql(metricAntidual(mixed)));
 }

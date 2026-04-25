@@ -94,10 +94,6 @@ pub fn FamilyHelpers(comptime FamilyType: type, comptime T: type) type {
         pub fn hodgeDual(mv: anytype) @TypeOf(mv.hodgeDual()) {
             return mv.hodgeDual();
         }
-
-        pub fn metricDual(mv: anytype) @TypeOf(mv.metricDual()) {
-            return mv.metricDual();
-        }
     };
 }
 
@@ -119,7 +115,6 @@ pub const dotProduct = default_helpers.dotProduct;
 pub const antidotProduct = default_helpers.antidotProduct;
 pub const complementDual = default_helpers.complementDual;
 pub const hodgeDual = default_helpers.hodgeDual;
-pub const metricDual = default_helpers.metricDual;
 
 test "cga origin and infinity are null vectors" {
     // n_o^2 = 0, n_inf^2 = 0
@@ -179,10 +174,9 @@ test "cga exposes complement and anti-product aliases" {
     try std.testing.expect(antidotProduct(no, ninf).eql(no.antiDot(ninf)));
 }
 
-test "cga exposes metric dual aliases" {
+test "cga exposes hodge dual alias" {
     const E = h.Basis;
     const einf = E.e(5);
 
     try std.testing.expect(hodgeDual(einf).eql(einf.hodgeDual()));
-    try std.testing.expect(metricDual(einf).eql(einf.metricDual()));
 }

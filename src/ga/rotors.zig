@@ -96,18 +96,18 @@ pub fn norm(mv: anytype) @TypeOf(mv).Coefficient {
 }
 
 /// Returns the basis-complement/Poincaré dual of a multivector.
+///
+/// This is metric-independent and remains valid for degenerate projective
+/// algebras. Use `hodgeDual()` for the metric-aware dual.
 pub fn dual(mv: anytype) @TypeOf(mv.dual()) {
     return mv.dual();
 }
 
 /// Returns the metric/Hodge dual of a multivector.
+///
+/// This requires a non-degenerate metric at comptime.
 pub fn hodgeDual(mv: anytype) @TypeOf(mv.hodgeDual()) {
     return mv.hodgeDual();
-}
-
-/// Returns the metric dual of a multivector.
-pub fn metricDual(mv: anytype) @TypeOf(mv.metricDual()) {
-    return mv.metricDual();
 }
 
 /// Returns the normalized version of a multivector.

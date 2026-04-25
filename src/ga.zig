@@ -220,23 +220,24 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
                 }
 
                 /// Returns the basis-complement/Poincaré dual of a multivector.
+                ///
+                /// This is the metric-independent projective dual used by
+                /// `join()`/anti-products. For a metric-aware Hodge dual, use
+                /// `hodgeDual()` on non-degenerate metrics.
                 pub fn dual(mv: anytype) @TypeOf(mv.dual()) {
                     return mv.dual();
                 }
 
-                /// Returns the basis-complement/Poincaré dual of a multivector.
+                /// Explicit alias for the basis-complement/Poincaré dual.
                 pub fn complementDual(mv: anytype) @TypeOf(mv.complementDual()) {
                     return mv.complementDual();
                 }
 
                 /// Returns the metric/Hodge dual of a multivector.
+                ///
+                /// This requires a non-degenerate metric at comptime.
                 pub fn hodgeDual(mv: anytype) @TypeOf(mv.hodgeDual()) {
                     return mv.hodgeDual();
-                }
-
-                /// Returns the metric dual of a multivector.
-                pub fn metricDual(mv: anytype) @TypeOf(mv.metricDual()) {
-                    return mv.metricDual();
                 }
 
                 /// Returns the geometric product of two multivectors.

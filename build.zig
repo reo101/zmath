@@ -510,11 +510,33 @@ pub fn build(b: *std.Build) void {
     const run_expression_fuzz = b.addRunArtifact(expression_fuzz_tests);
     run_expression_fuzz.setName("run fuzz test zmath-expression");
 
+    const compile_fail_hodge_dual = b.addObject(.{
+        .name = "zmath-compile-fail-hodge-dual-degenerate",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/compile_fail/hodge_dual_degenerate.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{
+                    .name = "zmath",
+                    .module = zmath,
+                },
+            },
+        }),
+    });
+    compile_fail_hodge_dual.expect_errors = .{
+        .contains = "complement duality",
+    };
+
+    const compile_fail_step = b.step("compile-fail", "Run expected compile-fail checks");
+    compile_fail_step.dependOn(&compile_fail_hodge_dual.step);
+
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(&run_module_surface_tests.step);
     test_step.dependOn(&run_demo_core_tests.step);
+    test_step.dependOn(compile_fail_step);
 
     const fuzz_expr_step = b.step("fuzz-expr", "Run the expression parser/evaluator fuzz smoke test");
     fuzz_expr_step.dependOn(&run_expression_fuzz.step);

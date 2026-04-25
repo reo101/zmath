@@ -920,7 +920,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         /// Returns the basis-complement/Poincaré dual used by projective joins.
         ///
         /// This operation is metric-independent and remains valid in degenerate
-        /// signatures such as PGA. Use `hodgeDual()`/`metricDual()` when the
+        /// signatures such as PGA. Use `hodgeDual()` when a non-degenerate
         /// metric itself should determine the dual.
         pub fn dual(self: Self) Rebind(&blade_ops.dualMasks(dimensions, blade_masks)) {
             const Result = Rebind(&blade_ops.dualMasks(dimensions, blade_masks));
@@ -966,11 +966,6 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
                 result_coeffs[result_idx] = self_coeffs[i] * @intFromEnum(orientation_sign) * metric_sign;
             }
             return Result.init(result_coeffs);
-        }
-
-        /// Returns the metric dual. Alias for `hodgeDual()`.
-        pub fn metricDual(self: Self) @TypeOf(self.hodgeDual()) {
-            return self.hodgeDual();
         }
 
         /// Converts this multivector to another multivector type in the same algebra.
@@ -1218,15 +1213,6 @@ pub fn HodgeDualResultType(
 ) type {
     comptime assertNonDegenerateMetric(sig, "`HodgeDualResultType`");
     return DualResultType(T, masks, sig);
-}
-
-/// Result carrier for a metric dual operation.
-pub fn MetricDualResultType(
-    comptime T: type,
-    comptime masks: []const BladeMask,
-    comptime sig: MetricSignature,
-) type {
-    return HodgeDualResultType(T, masks, sig);
 }
 
 /// Result carrier for a geometric antiproduct.
@@ -1749,7 +1735,6 @@ test "hodge dual uses metric signs independently from complement dual" {
     try std.testing.expect(e23.hodgeDual().eql(e1));
     try std.testing.expect(e12.hodgeDual().hodgeDual().eql(e12));
     try std.testing.expect(e23.complementDual().eql(e1.negate()));
-    try std.testing.expect(e23.metricDual().eql(e23.hodgeDual()));
 }
 
 test "hodge dual follows pseudo-euclidean metric signs" {

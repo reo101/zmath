@@ -29,11 +29,21 @@ const result = Cl3.expr("v ^ e12 + 5", .{ .v = my_vector });
 ```
 The compiler calculates exact node storage requirements and verifies operator precedence at comptime using $O(1)$ enum-array lookups.
 
-### 3. Logic vs. Surface Split
+### 3. Duals Are Explicit
+`dual()` is the basis-complement / Poincare dual used for projective joins and
+anti-products. It is metric-independent, so it remains valid in degenerate
+algebras like PGA.
+
+`hodgeDual()` is the metric-aware Hodge dual. It is available only when the
+metric is non-degenerate; PGA code should use `complementDual()`/`dual()` for
+incidence and `flavours.pga.metricDual()`/`metricAntidual()` for RGA-style
+bulk/weight duals.
+
+### 4. Logic vs. Surface Split
 - **Helpers**: Generic mathematical logic (e.g., how to construct a point in projective space) lives in shared, re-usable modules.
 - **Flavours**: Extremely light facades that bind a Family to a set of Helpers and a default scalar type.
 
-### 4. Typed Ambient Interop
+### 5. Typed Ambient Interop
 Introduced `HyperCoords` and `RoundCoords` to provide metric-specific type safety. The system now prevents accidental mixing of Hyperbolic and Spherical coordinates at the API boundaries.
 
 ## GA Flavour Comparison
@@ -54,7 +64,7 @@ Introduced `HyperCoords` and `RoundCoords` to provide metric-specific type safet
 
 ## Running
 
-1. **Verify Foundation:** `zig build test --summary all` (144+ tests passing)
+1. **Verify Foundation:** `zig build test --summary all` (302+ tests passing)
 2. **Run Demo:** `zig build run`
 3. **Run SIMD Benchmark:** `zig build bench-simd`
 

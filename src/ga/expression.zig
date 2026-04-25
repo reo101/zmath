@@ -857,6 +857,10 @@ fn parserLexPlaceholder(
     return .{ .placeholder = name };
 }
 
+fn parserLatexNameEql(name: []const u8, expected: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(name, expected);
+}
+
 fn parserLexLatexOperator(
     comptime T: type,
     comptime sig: blades.MetricSignature,
@@ -871,18 +875,39 @@ fn parserLexLatexOperator(
     }
 
     const name = self.source[name_start..self.position];
-    if (std.mem.eql(u8, name, "gp")) return .{ .star = {} };
-    if (std.mem.eql(u8, name, "wedge")) return .{ .wedge = {} };
-    if (std.mem.eql(u8, name, "vee")) return .{ .join = {} };
-    if (std.mem.eql(u8, name, "ganti")) return .{ .anti_geometric = {} };
-    if (std.mem.eql(u8, name, "antigeometric")) return .{ .anti_geometric = {} };
-    if (std.mem.eql(u8, name, "cdot")) return .{ .dot = {} };
-    if (std.mem.eql(u8, name, "bullet")) return .{ .dot = {} };
-    if (std.mem.eql(u8, name, "circ")) return .{ .anti_dot = {} };
-    if (std.mem.eql(u8, name, "antidot")) return .{ .anti_dot = {} };
-    if (std.mem.eql(u8, name, "rfloor")) return .{ .left_contraction = {} };
-    if (std.mem.eql(u8, name, "lfloor")) return .{ .right_contraction = {} };
-    if (std.mem.eql(u8, name, "star")) return .{ .complement_dual = {} };
+    if (parserLatexNameEql(name, "gp")) return .{ .star = {} };
+    if (parserLatexNameEql(name, "wedge")) return .{ .wedge = {} };
+    if (parserLatexNameEql(name, "vee") or
+        parserLatexNameEql(name, "join") or
+        parserLatexNameEql(name, "regressive") or
+        parserLatexNameEql(name, "antiwedge"))
+    {
+        return .{ .join = {} };
+    }
+    if (parserLatexNameEql(name, "ganti") or
+        parserLatexNameEql(name, "antigeometric"))
+    {
+        return .{ .anti_geometric = {} };
+    }
+    if (parserLatexNameEql(name, "cdot") or
+        parserLatexNameEql(name, "bullet"))
+    {
+        return .{ .dot = {} };
+    }
+    if (parserLatexNameEql(name, "circ") or
+        parserLatexNameEql(name, "antidot"))
+    {
+        return .{ .anti_dot = {} };
+    }
+    if (parserLatexNameEql(name, "rfloor")) return .{ .left_contraction = {} };
+    if (parserLatexNameEql(name, "lfloor")) return .{ .right_contraction = {} };
+    if (parserLatexNameEql(name, "star") or
+        parserLatexNameEql(name, "dual") or
+        parserLatexNameEql(name, "complement") or
+        parserLatexNameEql(name, "complementdual"))
+    {
+        return .{ .complement_dual = {} };
+    }
 
     self.position = start;
     return error.UnexpectedToken;
@@ -1725,12 +1750,12 @@ pub fn compile(
 ///
 /// Supported syntax:
 /// - numeric literals such as `0`, `1`, `2`, `0.5`
-/// - signed blades such as `e12`, `e(1,2)`, `e0`
+/// - signed blades such as `e12`, `-e12`, `e(1,2)`, `e0`
 /// - placeholders such as `{v}` or `{}`
 /// - operators `+`, `-`, `*`, `^`, `&`, `.`, `<<`, `>>`, unary `+/-`, parentheses, and postfix `^-1`
 /// - unicode operators `⟑` (`*`), `∧` (`^`), `∨` (`&`), `⋅`/`·`/`•` (`.`), `⌋` (`<<`), `⌊` (`>>`)
 /// - unicode anti-operators `⟇`, `∘`, and postfix complement dual `★`
-/// - latex-style operators `\gp`, `\wedge`, `\vee`, `\cdot`, `\bullet`, `\rfloor`, `\lfloor`, `\ganti`, `\antidot`, `\star`
+/// - latex-style operators `\gp`, `\wedge`, `\vee`, `\join`, `\cdot`, `\bullet`, `\rfloor`, `\lfloor`, `\ganti`, `\antidot`, `\star`, `\dual`
 ///
 /// Constant-only subexpressions are folded at comptime. Placeholder-bearing
 /// subtrees are left as residual operations and specialized into the generated
@@ -1763,6 +1788,13 @@ test "expression supports GA operators" {
     const Basis = multivector.Basis(f32, sig);
     const e1 = Basis.e(1);
     const e2 = Basis.e(2);
+    const e13 = Basis.signedBlade("e13");
+
+    // Signed blade signs
+    try std.testing.expect(eval(f32, sig, options, "-e13", .{}).eql(e13.negate()));
+    try std.testing.expect(eval(f32, sig, options, "--e13", .{}).eql(e13));
+    try std.testing.expect(eval(f32, sig, options, "+-e13", .{}).eql(e13.negate()));
+    try std.testing.expect(eval(f32, sig, options, "e1 + -e13", .{}).eql(e1.add(e13.negate())));
 
     // Geometric product
     try std.testing.expect(eval(f32, sig, options, "e1 ⟑ e1", .{}).scalarCoeff() == 1.0);
@@ -1784,10 +1816,15 @@ test "expression supports GA operators" {
     // Complement/anti-operators
     try std.testing.expect(eval(f32, sig, options, "e1★", .{}).eql(e1.complementDual()));
     try std.testing.expect(eval(f32, sig, options, "e1 \\star", .{}).eql(e1.complementDual()));
+    try std.testing.expect(eval(f32, sig, options, "e1 \\dual", .{}).eql(e1.complementDual()));
+    try std.testing.expect(eval(f32, sig, options, "e1 \\complementDual", .{}).eql(e1.complementDual()));
     try std.testing.expect(eval(f32, sig, options, "e1 ⟇ e2", .{}).eql(e1.antiGeometric(e2)));
     try std.testing.expect(eval(f32, sig, options, "e1 \\ganti e2", .{}).eql(e1.antiGeometric(e2)));
     try std.testing.expect(eval(f32, sig, options, "e1 ∘ e2", .{}).eql(e1.antiDot(e2)));
     try std.testing.expect(eval(f32, sig, options, "e1 \\antidot e2", .{}).eql(e1.antiDot(e2)));
+    try std.testing.expect(eval(f32, sig, options, "e1 \\join e2", .{}).eql(e1.join(e2)));
+    try std.testing.expect(eval(f32, sig, options, "e1 \\regressive e2", .{}).eql(e1.join(e2)));
+    try std.testing.expect(eval(f32, sig, options, "e1 \\antiwedge e2", .{}).eql(e1.join(e2)));
 
     // Contractions
     try std.testing.expect(eval(f32, sig, options, "e1 << e12", .{}).eql(e2));
