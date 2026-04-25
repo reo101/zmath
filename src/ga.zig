@@ -219,7 +219,7 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
                     return rotors.norm(mv);
                 }
 
-                /// Returns the Hodge/Poincaré dual of a multivector.
+                /// Returns the basis-complement/Poincaré dual of a multivector.
                 pub fn dual(mv: anytype) @TypeOf(mv.dual()) {
                     return mv.dual();
                 }
@@ -227,6 +227,16 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
                 /// Returns the basis-complement/Poincaré dual of a multivector.
                 pub fn complementDual(mv: anytype) @TypeOf(mv.complementDual()) {
                     return mv.complementDual();
+                }
+
+                /// Returns the metric/Hodge dual of a multivector.
+                pub fn hodgeDual(mv: anytype) @TypeOf(mv.hodgeDual()) {
+                    return mv.hodgeDual();
+                }
+
+                /// Returns the metric dual of a multivector.
+                pub fn metricDual(mv: anytype) @TypeOf(mv.metricDual()) {
+                    return mv.metricDual();
                 }
 
                 /// Returns the geometric product of two multivectors.

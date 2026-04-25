@@ -163,6 +163,24 @@ fn signedUnit(comptime T: type, sign: OrientationSign) T {
     };
 }
 
+fn assertNonDegenerateMetric(comptime sig: MetricSignature, comptime operation: []const u8) void {
+    if (sig.isDegenerate()) {
+        @compileError(operation ++ " requires a non-degenerate metric; use `complementDual()` for projective/Poincaré complement duality");
+    }
+}
+
+fn metricSignForMask(comptime T: type, comptime sig: MetricSignature, comptime mask: BladeMask) T {
+    comptime assertNonDegenerateMetric(sig, "metric/Hodge dual");
+
+    var sign: OrientationSign = .positive;
+    inline for (0..sig.dimensions()) |bit_index| {
+        if (mask.bitset.isSet(bit_index) and sig.basisSquareClass(bit_index + 1).isNegative()) {
+            sign.flip();
+        }
+    }
+    return signedUnit(T, sign);
+}
+
 fn isNegative(value: anytype) bool {
     const T = @TypeOf(value);
     if (isFloatType(T) or isSignedIntType(T)) {
@@ -899,12 +917,15 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             return self.norm();
         }
 
-        /// Returns the Hodge dual of this multivector relative to the pseudoscalar.
-        /// For degenerate metrics (like PGA), this falls back to a Poincaré dual (coefficient swap).
+        /// Returns the basis-complement/Poincaré dual used by projective joins.
+        ///
+        /// This operation is metric-independent and remains valid in degenerate
+        /// signatures such as PGA. Use `hodgeDual()`/`metricDual()` when the
+        /// metric itself should determine the dual.
         pub fn dual(self: Self) Rebind(&blade_ops.dualMasks(dimensions, blade_masks)) {
             const Result = Rebind(&blade_ops.dualMasks(dimensions, blade_masks));
             var result_coeffs = std.mem.zeroes([Result.stored_blade_count]T);
-            const pseudoscalar_mask = blade_ops.bladeCount(dimensions) - 1;
+            const pseudoscalar_mask = comptime blade_ops.bladeCount(dimensions) - 1;
             const self_coeffs = self.coeffsArray();
 
             inline for (blade_masks, 0..) |mask, i| {
@@ -923,6 +944,33 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         /// pseudoscalar.
         pub fn complementDual(self: Self) @TypeOf(self.dual()) {
             return self.dual();
+        }
+
+        /// Returns the metric/Hodge dual.
+        ///
+        /// This is available only for non-degenerate metrics. Its signs satisfy
+        /// `A ^ hodgeDual(A) = scalarProduct(A, A) * I` for basis blades.
+        pub fn hodgeDual(self: Self) Rebind(&blade_ops.dualMasks(dimensions, blade_masks)) {
+            comptime assertNonDegenerateMetric(sig, "`hodgeDual()`");
+
+            const Result = Rebind(&blade_ops.dualMasks(dimensions, blade_masks));
+            var result_coeffs = std.mem.zeroes([Result.stored_blade_count]T);
+            const pseudoscalar_mask = comptime blade_ops.bladeCount(dimensions) - 1;
+            const self_coeffs = self.coeffsArray();
+
+            inline for (blade_masks, 0..) |mask, i| {
+                const target_mask = comptime BladeMask.init(mask.bitset.mask ^ pseudoscalar_mask);
+                const result_idx = comptime Result.getBladeIndex(target_mask);
+                const orientation_sign = comptime mask.geometricProductSign(target_mask);
+                const metric_sign = comptime metricSignForMask(T, sig, mask);
+                result_coeffs[result_idx] = self_coeffs[i] * @intFromEnum(orientation_sign) * metric_sign;
+            }
+            return Result.init(result_coeffs);
+        }
+
+        /// Returns the metric dual. Alias for `hodgeDual()`.
+        pub fn metricDual(self: Self) @TypeOf(self.hodgeDual()) {
+            return self.hodgeDual();
         }
 
         /// Converts this multivector to another multivector type in the same algebra.
@@ -1160,6 +1208,25 @@ pub fn DualResultType(
     const dimensions = comptime sig.dimensions();
     const result_masks = blade_ops.dualMasks(dimensions, masks);
     return Multivector(T, &result_masks, sig);
+}
+
+/// Result carrier for a metric/Hodge dual operation.
+pub fn HodgeDualResultType(
+    comptime T: type,
+    comptime masks: []const BladeMask,
+    comptime sig: MetricSignature,
+) type {
+    comptime assertNonDegenerateMetric(sig, "`HodgeDualResultType`");
+    return DualResultType(T, masks, sig);
+}
+
+/// Result carrier for a metric dual operation.
+pub fn MetricDualResultType(
+    comptime T: type,
+    comptime masks: []const BladeMask,
+    comptime sig: MetricSignature,
+) type {
+    return HodgeDualResultType(T, masks, sig);
 }
 
 /// Result carrier for a geometric antiproduct.
@@ -1668,6 +1735,38 @@ test "product variants agree with expected blade algebra identities" {
     try std.testing.expectEqual(@as(i32, -1), e12.scalarProduct(e12));
     try std.testing.expectEqual(@as(i32, -1), e23.scalarProduct(e23));
     try std.testing.expect(e123.gp(e123).eql(E3.Scalar.init(.{-1})));
+}
+
+test "hodge dual uses metric signs independently from complement dual" {
+    const E3 = Basis(i32, .euclidean(3));
+    const e1 = E3.e(1);
+    const e2 = E3.e(2);
+    const e12 = E3.signedBlade("e12");
+    const e23 = E3.signedBlade("e23");
+
+    try std.testing.expect(e1.hodgeDual().eql(e23));
+    try std.testing.expect(e2.hodgeDual().eql(E3.signedBlade("-e13")));
+    try std.testing.expect(e23.hodgeDual().eql(e1));
+    try std.testing.expect(e12.hodgeDual().hodgeDual().eql(e12));
+    try std.testing.expect(e23.complementDual().eql(e1.negate()));
+    try std.testing.expect(e23.metricDual().eql(e23.hodgeDual()));
+}
+
+test "hodge dual follows pseudo-euclidean metric signs" {
+    const sig = comptime MetricSignature{ .p = 1, .q = 1 };
+    const M11 = Basis(i32, sig);
+    const one = M11.Scalar.init(.{1});
+    const e1 = M11.e(1);
+    const e2 = M11.e(2);
+    const e12 = M11.signedBlade("e12");
+
+    try std.testing.expect(one.hodgeDual().eql(e12));
+    try std.testing.expect(e1.hodgeDual().eql(e2));
+    try std.testing.expect(e2.hodgeDual().eql(e1));
+    try std.testing.expect(e12.hodgeDual().eql(one.negate()));
+
+    try std.testing.expect(e1.wedge(e1.hodgeDual()).eql(e12.scale(e1.scalarProduct(e1))));
+    try std.testing.expect(e2.wedge(e2.hodgeDual()).eql(e12.scale(e2.scalarProduct(e2))));
 }
 
 test "sparse coefficient lookup and equality across carrier sets" {

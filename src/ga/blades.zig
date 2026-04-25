@@ -539,6 +539,16 @@ pub const MetricSignature = struct {
         return total_dimensions;
     }
 
+    /// Returns whether this signature has degenerate basis vectors.
+    pub fn isDegenerate(self: MetricSignature) bool {
+        return self.r != 0;
+    }
+
+    /// Returns whether the metric is invertible.
+    pub fn isNonDegenerate(self: MetricSignature) bool {
+        return !self.isDegenerate();
+    }
+
     /// Returns the square class of one internal one-based basis index.
     pub fn basisSquareClass(self: MetricSignature, basis_index: usize) SignatureClass {
         const sig_dimensions = self.dimensions();
@@ -1295,11 +1305,15 @@ test "MetricSignature constructors expose dot-syntax helpers" {
     const e3: MetricSignature = .euclidean(3);
     const e2: MetricSignature = .euclidean(2);
     const minkowski11: MetricSignature = .{ .p = 1, .q = 1 };
+    const pga3: MetricSignature = .{ .p = 3, .q = 0, .r = 1 };
 
     try std.testing.expectEqual(@as(usize, 3), e3.dimensions());
     try std.testing.expectEqual(@as(usize, 2), e2.dimensions());
     try std.testing.expectEqual(@as(usize, 2), minkowski11.dimensions());
     try std.testing.expectEqual(.negative, minkowski11.basisSquareClass(2));
+    try std.testing.expect(e3.isNonDegenerate());
+    try std.testing.expect(!minkowski11.isDegenerate());
+    try std.testing.expect(pga3.isDegenerate());
 }
 
 test "ascending uniqueness helper handles short and invalid slices" {

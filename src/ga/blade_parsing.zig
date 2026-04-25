@@ -188,9 +188,37 @@ fn indexedNameResolvesToBasisName(
     return spec.sign == .positive and spec.mask.eql(.initOneBit(internal_index));
 }
 
+const LeadingBladeSign = struct {
+    sign: OrientationSign,
+    operand_start: usize,
+};
+
+fn parseLeadingBladeSign(source: []const u8, start: usize) LeadingBladeSign {
+    var sign: OrientationSign = .positive;
+    var position = start;
+    while (position < source.len) {
+        switch (source[position]) {
+            '+' => {},
+            '-' => sign.flip(),
+            else => break,
+        }
+        position += 1;
+    }
+    return .{ .sign = sign, .operand_start = position };
+}
+
+fn applyLeadingBladeSign(spec: SignedBladeSpec, sign: OrientationSign) SignedBladeSpec {
+    return .{
+        .sign = spec.sign.mul(sign),
+        .mask = spec.mask,
+    };
+}
+
 fn isIndexedSignedBladeName(comptime name: []const u8, comptime basis_prefix: u8) bool {
-    if (name.len < 2 or name[0] != basis_prefix) return false;
-    return switch (name[1]) {
+    const leading = comptime parseLeadingBladeSign(name, 0);
+    const start = comptime leading.operand_start;
+    if (name.len - start < 2 or name[start] != basis_prefix) return false;
+    return switch (name[start + 1]) {
         '0'...'9', '_', '(', '[' => true,
         else => false,
     };
@@ -397,29 +425,34 @@ fn parseSignedBladeImpl(
     options: SignedBladeNamingOptions,
 ) SignedBladeParseError!SignedBladeSpec {
     if (resolveAlias(name, options)) |spec| return spec;
-    if (name.len == 0 or name[0] != options.basis_prefix) return error.MissingBasisPrefix;
-    if (name.len < 2) return error.EmptySignedBlade;
+
+    const leading = parseLeadingBladeSign(name, 0);
+    const operand = name[leading.operand_start..];
+    if (resolveAlias(operand, options)) |spec| return applyLeadingBladeSign(spec, leading.sign);
+    if (operand.len == 0 or operand[0] != options.basis_prefix) return error.MissingBasisPrefix;
+    if (operand.len < 2) return error.EmptySignedBlade;
     try options.validate(dimensions);
 
-    return switch (name[1]) {
+    const spec = try switch (operand[1]) {
         '(' => if (options.allow_parenthesized_form)
-            parseDelimitedSignedBlade(name, dimensions, '(', ')', ',', options)
+            parseDelimitedSignedBlade(operand, dimensions, '(', ')', ',', options)
         else
             error.InvalidBasisDelimiter,
         '[' => if (options.allow_bracketed_form)
-            parseDelimitedSignedBlade(name, dimensions, '[', ']', ',', options)
+            parseDelimitedSignedBlade(operand, dimensions, '[', ']', ',', options)
         else
             error.InvalidBasisDelimiter,
-        else => if (hasUnderscoreSyntax(name))
+        else => if (hasUnderscoreSyntax(operand))
             if (options.allow_underscore_form)
-                parseUnderscoreSignedBlade(name, dimensions, options)
+                parseUnderscoreSignedBlade(operand, dimensions, options)
             else
                 error.InvalidBasisSeparator
         else if (options.allow_compact_form)
-            parseCompactSignedBlade(name, dimensions, options)
+            parseCompactSignedBlade(operand, dimensions, options)
         else
             error.InvalidBasisSeparator,
     };
+    return applyLeadingBladeSign(spec, leading.sign);
 }
 
 fn scanAliasTokenEnd(source: []const u8, start: usize, options: SignedBladeNamingOptions) ?usize {
@@ -442,10 +475,14 @@ fn scanSignedBladeTokenEnd(
     options: SignedBladeNamingOptions,
 ) SignedBladeParseError!usize {
     if (scanAliasTokenEnd(source, start, options)) |end| return end;
-    if (start >= source.len or source[start] != options.basis_prefix) return error.MissingBasisPrefix;
-    if (start + 1 >= source.len) return error.EmptySignedBlade;
 
-    var position = start + 1;
+    const leading = parseLeadingBladeSign(source, start);
+    const operand_start = leading.operand_start;
+    if (scanAliasTokenEnd(source, operand_start, options)) |end| return end;
+    if (operand_start >= source.len or source[operand_start] != options.basis_prefix) return error.MissingBasisPrefix;
+    if (operand_start + 1 >= source.len) return error.EmptySignedBlade;
+
+    var position = operand_start + 1;
     return switch (source[position]) {
         '(' => blk: {
             position += 1;
@@ -560,6 +597,19 @@ test "signed blades keep compact and multi-digit forms distinct" {
     try std.testing.expectEqual(SignedBladeSpec{ .sign = .negative, .mask = .init(0b011) }, swapped);
 }
 
+test "signed blades accept leading sign sequences" {
+    const negative = try parseSignedBlade("-e13", 3, null, false);
+    try std.testing.expectEqual(SignedBladeSpec{ .sign = .negative, .mask = .init(0b101) }, negative);
+
+    const double_negative = try parseSignedBlade("--e13", 3, null, false);
+    try std.testing.expectEqual(SignedBladeSpec{ .sign = .positive, .mask = .init(0b101) }, double_negative);
+
+    const mixed_signs = try parseSignedBlade("+-e13", 3, null, false);
+    try std.testing.expectEqual(SignedBladeSpec{ .sign = .negative, .mask = .init(0b101) }, mixed_signs);
+
+    try std.testing.expect(isSignedBlade("-e13", 3, null));
+}
+
 test "invalid signed blades produce parse errors" {
     try std.testing.expectError(error.InvalidBasisIndex, parseSignedBlade("e10", 3, null, false));
     try std.testing.expectError(error.InvalidBasisSeparator, parseSignedBlade("e1-2", 3, null, false));
@@ -591,6 +641,10 @@ test "signed blade prefix parser returns consumed length" {
     const compact = try parseSignedBladePrefix("e12+rest", 0, 12, null, false);
     try std.testing.expectEqual(SignedBladeSpec{ .sign = .positive, .mask = .init(0b011) }, compact.spec);
     try std.testing.expectEqual(@as(usize, 3), compact.end);
+
+    const signed = try parseSignedBladePrefix("-e13+rest", 0, 3, null, false);
+    try std.testing.expectEqual(SignedBladeSpec{ .sign = .negative, .mask = .init(0b101) }, signed.spec);
+    try std.testing.expectEqual(@as(usize, 4), signed.end);
 }
 
 test "naming options can map e0 through degenerate parser span" {
@@ -698,8 +752,16 @@ test "blade aliases map custom names to signed blade specs" {
 
     const i_spec = try parseSignedBlade("i", 2, options, false);
     try std.testing.expectEqual(SignedBladeSpec{ .sign = .positive, .mask = .init(0b11) }, i_spec);
+
+    const neg_i_spec = try parseSignedBlade("-i", 2, options, false);
+    try std.testing.expectEqual(SignedBladeSpec{ .sign = .negative, .mask = .init(0b11) }, neg_i_spec);
+
+    const double_neg_i_spec = try parseSignedBlade("--i", 2, options, false);
+    try std.testing.expectEqual(SignedBladeSpec{ .sign = .positive, .mask = .init(0b11) }, double_neg_i_spec);
+
     try std.testing.expect(isSignedBlade("i", 2, options));
     try std.testing.expect(isSignedBlade("I", 2, options));
+    try std.testing.expect(isSignedBlade("-i", 2, options));
     try std.testing.expect(!isSignedBlade("j", 2, options));
     try std.testing.expect(isSignedBlade("e12", 2, options));
 }

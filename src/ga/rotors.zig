@@ -95,9 +95,19 @@ pub fn norm(mv: anytype) @TypeOf(mv).Coefficient {
     return @sqrt(normSquared(mv));
 }
 
-/// Returns the Hodge dual of a multivector.
+/// Returns the basis-complement/Poincaré dual of a multivector.
 pub fn dual(mv: anytype) @TypeOf(mv.dual()) {
     return mv.dual();
+}
+
+/// Returns the metric/Hodge dual of a multivector.
+pub fn hodgeDual(mv: anytype) @TypeOf(mv.hodgeDual()) {
+    return mv.hodgeDual();
+}
+
+/// Returns the metric dual of a multivector.
+pub fn metricDual(mv: anytype) @TypeOf(mv.metricDual()) {
+    return mv.metricDual();
 }
 
 /// Returns the normalized version of a multivector.
