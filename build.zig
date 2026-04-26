@@ -402,7 +402,7 @@ pub fn build(b: *std.Build) void {
     const demo_step = b.step("demo", "Run the demo");
     demo_step.dependOn(&demo_run_cmd.step);
 
-    const raylib_dep = b.dependency("raylib", .{
+    const raylib_dep = b.dependency("raylib_zig", .{
         .target = target,
         .optimize = optimize,
         .linkage = .dynamic,
@@ -411,13 +411,7 @@ pub fn build(b: *std.Build) void {
         .linux_display_backend = .X11,
     });
     const raylib = raylib_dep.artifact("raylib");
-    const raylib_translate_c = b.addTranslateC(.{
-        .root_source_file = b.path("src/demos/raylib_c.h"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    raylib_translate_c.addIncludePath(raylib_dep.path("src"));
+    const raylib_module = raylib_dep.module("raylib");
 
     const demo_raylib_exe = b.addExecutable(.{
         .name = "zmath-demo-raylib",
@@ -432,8 +426,8 @@ pub fn build(b: *std.Build) void {
                     .module = zmath,
                 },
                 .{
-                    .name = "raylib_c",
-                    .module = raylib_translate_c.createModule(),
+                    .name = "raylib",
+                    .module = raylib_module,
                 },
             },
         }),
