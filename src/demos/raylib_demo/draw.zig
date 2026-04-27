@@ -55,15 +55,15 @@ pub fn dot(center: rl.Vector2, radius: f32, color: rl.Color) void {
 }
 
 pub fn quad(points: [4]rl.Vector2, color: rl.Color) void {
-    rl.drawTriangle(points[0], points[1], points[2], color);
-    rl.drawTriangle(points[1], points[3], points[2], color);
+    rl.drawTriangle(points[2], points[1], points[0], color);
+    rl.drawTriangle(points[3], points[2], points[0], color);
 }
 
 pub fn quadLines(points: [4]rl.Vector2, width: f32, color: rl.Color) void {
     line(points[0], points[1], width, color);
-    line(points[1], points[3], width, color);
-    line(points[3], points[2], width, color);
-    line(points[2], points[0], width, color);
+    line(points[1], points[2], width, color);
+    line(points[2], points[3], width, color);
+    line(points[3], points[0], width, color);
 }
 
 pub fn grid(rect: rl.Rectangle, units: f32, color: rl.Color) void {

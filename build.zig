@@ -412,6 +412,21 @@ pub fn build(b: *std.Build) void {
     });
     const raylib = raylib_dep.artifact("raylib");
     const raylib_module = raylib_dep.module("raylib");
+    const raylib_demo_story_module = b.createModule(.{
+        .root_source_file = b.path("src/demos/raylib_demo/story.zig"),
+        .target = target,
+        .optimize = .Debug,
+        .imports = &.{
+            .{
+                .name = "zmath",
+                .module = zmath,
+            },
+            .{
+                .name = "raylib",
+                .module = raylib_module,
+            },
+        },
+    });
 
     const demo_raylib_exe = b.addExecutable(.{
         .name = "zmath-demo-raylib",
@@ -440,6 +455,38 @@ pub fn build(b: *std.Build) void {
     const demo_raylib_run_cmd = b.addRunArtifact(demo_raylib_exe);
     const demo_raylib_step = b.step("demo-raylib", "Run the demo with the raylib backend");
     demo_raylib_step.dependOn(&demo_raylib_run_cmd.step);
+
+    const profile_raylib_spherical_cube_exe = b.addExecutable(.{
+        .name = "zmath-profile-raylib-spherical-cube",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/profile/raylib_spherical_cube_probe.zig"),
+            .target = target,
+            .optimize = .Debug,
+            .link_libc = true,
+            .imports = &.{
+                .{
+                    .name = "zmath",
+                    .module = zmath,
+                },
+                .{
+                    .name = "raylib",
+                    .module = raylib_module,
+                },
+                .{
+                    .name = "raylib_demo_story",
+                    .module = raylib_demo_story_module,
+                },
+            },
+        }),
+    });
+    profile_raylib_spherical_cube_exe.root_module.linkLibrary(raylib);
+
+    const profile_raylib_spherical_cube_step = b.step(
+        "profile-raylib-spherical-cube",
+        "Dump CPU-side raylib spherical cube projection pathologies",
+    );
+    const run_profile_raylib_spherical_cube = b.addRunArtifact(profile_raylib_spherical_cube_exe);
+    profile_raylib_spherical_cube_step.dependOn(&run_profile_raylib_spherical_cube.step);
 
     const exe_tests = b.addTest(.{
         .name = "zmath-cli",
