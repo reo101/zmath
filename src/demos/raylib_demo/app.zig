@@ -1,14 +1,13 @@
-const std = @import("std");
 const rl = @import("raylib");
 const draw = @import("draw.zig");
-const style = @import("style.zig");
 const story = @import("story.zig");
+const style = @import("style.zig");
 
 const window_width: i32 = 1360;
 const window_height: i32 = 820;
 
 pub const App = struct {
-    time: f32 = 0.0,
+    scene: story.State = story.State.init(),
     paused: bool = false,
 
     pub fn init() App {
@@ -21,7 +20,7 @@ pub const App = struct {
             .vsync_hint = true,
         });
         rl.setTraceLogLevel(.warning);
-        rl.initWindow(window_width, window_height, "zmath demo: VGA -> PGA -> CGA");
+        rl.initWindow(window_width, window_height, "zmath demo: walkable geometries");
         defer rl.closeWindow();
 
         rl.setTargetFPS(60);
@@ -33,159 +32,251 @@ pub const App = struct {
     }
 
     fn update(self: *App) void {
-        if (rl.isKeyPressed(.space)) self.paused = !self.paused;
-        if (rl.isKeyPressed(.r)) self.time = 0.0;
+        if (rl.isKeyPressed(.tab)) self.scene.nextMode();
+        if (rl.isKeyPressed(.one)) self.scene.setMode(.perspective);
+        if (rl.isKeyPressed(.two)) self.scene.setMode(.isometric);
+        if (rl.isKeyPressed(.three)) self.scene.setMode(.spherical);
+        if (rl.isKeyPressed(.four)) self.scene.setMode(.hyperbolic);
+        if (rl.isKeyPressed(.p)) self.paused = !self.paused;
+        if (rl.isKeyPressed(.r)) self.scene.resetActive();
 
         if (!self.paused) {
-            self.time += rl.getFrameTime();
+            self.scene.update(readInput(), rl.getFrameTime());
         }
     }
 
     fn render(self: *const App) void {
         const screen_w = rl.getScreenWidth();
         const screen_h = rl.getScreenHeight();
+        const screen = rl.Rectangle{
+            .x = 0.0,
+            .y = 0.0,
+            .width = @floatFromInt(screen_w),
+            .height = @floatFromInt(screen_h),
+        };
+        const world_rect = draw.inset(screen, 22.0);
 
         rl.beginDrawing();
         defer rl.endDrawing();
 
         rl.drawRectangleGradientV(0, 0, screen_w, screen_h, style.bg_top, style.bg_bottom);
-        drawHeader(self, screen_w);
-
-        const margin: f32 = 28.0;
-        const gap: f32 = 18.0;
-        const top: f32 = 124.0;
-        const available_w = @as(f32, @floatFromInt(screen_w)) - margin * 2.0;
-        const available_h = @as(f32, @floatFromInt(screen_h)) - top - 34.0;
-        const panel_w = (available_w - gap * 2.0) / 3.0;
-        const panel_h = available_h;
-
-        const sample = story.sampleAt(self.time);
-        const vga_rect = rl.Rectangle{ .x = margin, .y = top, .width = panel_w, .height = panel_h };
-        const pga_rect = rl.Rectangle{ .x = margin + panel_w + gap, .y = top, .width = panel_w, .height = panel_h };
-        const cga_rect = rl.Rectangle{ .x = margin + (panel_w + gap) * 2.0, .y = top, .width = panel_w, .height = panel_h };
-
-        drawVgaPanel(vga_rect, sample);
-        drawPgaPanel(pga_rect, sample);
-        drawCgaPanel(cga_rect, sample);
+        drawAtmosphere(screen, self.scene.mode);
+        drawWorld(self.scene.mode, self.scene.activeCamera(), world_rect);
+        drawHud(self, screen);
     }
 };
 
-fn drawHeader(app: *const App, screen_w: i32) void {
-    const title: [:0]const u8 = "one point, three carriers";
-    const subtitle: [:0]const u8 = "VGA moves arrows, PGA adds a horizon, CGA lifts the same point onto a null cone";
-    const controls: [:0]const u8 = if (app.paused) "Space: resume   R: reset" else "Space: pause   R: reset";
+const FaceRender = struct {
+    points: [4]rl.Vector2,
+    depth: f32,
+    color: rl.Color,
+};
 
-    rl.drawCircleV(.{ .x = 120.0, .y = 54.0 }, 112.0, style.alpha(style.amber, 34));
-    rl.drawCircleV(.{ .x = @as(f32, @floatFromInt(screen_w)) - 160.0, .y = 68.0 }, 140.0, style.alpha(style.cyan, 28));
-    draw.text(title, 34.0, 28.0, 40, style.white);
-    draw.text(subtitle, 36.0, 78.0, 20, style.alpha(style.white, 188));
-    draw.text(controls, @as(f32, @floatFromInt(screen_w)) - 250.0, 38.0, 20, style.alpha(style.white, 205));
-}
+const face_colors = [_]rl.Color{
+    style.coral,
+    style.cyan,
+    style.amber,
+    style.moss,
+    style.violet,
+    style.panel,
+};
 
-fn drawVgaPanel(rect: rl.Rectangle, sample: story.Sample) void {
-    draw.panel(rect, style.panel, "VGA", style.amber);
-
-    const body = draw.inset(rect, 30.0);
-    const units: f32 = @min(body.width, body.height) / 7.0;
-    draw.grid(body, units, style.alpha(style.paper_line, 150));
-
-    const origin = draw.plot(body, 0.0, 0.0, units);
-    const p_screen = draw.plot(body, sample.x, sample.y, units);
-    draw.arrow(origin, p_screen, 4.0, style.coral);
-    draw.dot(p_screen, 7.0, style.coral);
-
-    var buf: [160]u8 = undefined;
-    draw.text("just a displacement in metric space", rect.x + 26.0, rect.y + 64.0, 18, style.muted);
-    draw.textFmt(&buf, rect.x + 26.0, rect.y + rect.height - 84.0, 18, style.ink, "v = {d:.2}e1 + {d:.2}e2", .{ sample.x, sample.y });
-    draw.textFmt(&buf, rect.x + 26.0, rect.y + rect.height - 56.0, 18, style.ink, "v*v = {d:.3}", .{sample.vga_norm2});
-}
-
-fn drawPgaPanel(rect: rl.Rectangle, sample: story.Sample) void {
-    draw.panel(rect, style.panel_alt, "PGA", style.moss);
-
-    const body = draw.inset(rect, 32.0);
-    const units: f32 = @min(body.width, body.height) / 7.2;
-    draw.grid(body, units, style.alpha(style.paper_line, 140));
-
-    const horizon_y = body.y + 58.0;
-    draw.line(.{ .x = body.x + 4.0, .y = horizon_y }, .{ .x = body.x + body.width - 4.0, .y = horizon_y }, 2.5, style.moss);
-    draw.text("w=0", body.x + body.width - 54.0, horizon_y - 28.0, 18, style.moss);
-
-    const p_screen = draw.plot(body, sample.x, sample.y, units);
-    draw.dot(p_screen, 7.5, style.moss);
-
-    const lane_a0 = draw.plot(body, -1.9, sample.y - 0.48, units);
-    const lane_a1 = rl.Vector2{ .x = body.x + body.width - 18.0, .y = horizon_y + 10.0 };
-    const lane_b0 = draw.plot(body, -1.9, sample.y + 0.48, units);
-    const lane_b1 = rl.Vector2{ .x = body.x + body.width - 18.0, .y = horizon_y + 10.0 };
-    draw.arrow(lane_a0, lane_a1, 2.0, style.alpha(style.moss, 180));
-    draw.arrow(lane_b0, lane_b1, 2.0, style.alpha(style.moss, 180));
-    draw.dot(lane_a1, 6.0, style.moss);
-
-    var buf: [192]u8 = undefined;
-    draw.text("finite points and ideal directions live together", rect.x + 26.0, rect.y + 64.0, 18, style.muted);
-    draw.textFmt(
-        &buf,
-        rect.x + 26.0,
-        rect.y + rect.height - 106.0,
-        18,
-        style.ink,
-        "P = [{d:.0}:{d:.2}:{d:.2}]",
-        .{ sample.pga_point[0], sample.pga_point[1], sample.pga_point[2] },
-    );
-    draw.textFmt(
-        &buf,
-        rect.x + 26.0,
-        rect.y + rect.height - 78.0,
-        18,
-        style.ink,
-        "parallel direction = [{d:.0}:{d:.0}:{d:.0}]",
-        .{ sample.pga_direction[0], sample.pga_direction[1], sample.pga_direction[2] },
-    );
-    draw.text("the horizon is not off-screen; it is part of the algebra", rect.x + 26.0, rect.y + rect.height - 50.0, 18, style.ink);
-}
-
-fn drawCgaPanel(rect: rl.Rectangle, sample: story.Sample) void {
-    draw.panel(rect, style.panel, "CGA", style.cyan);
-
-    const body = draw.inset(rect, 38.0);
-    const graph = rl.Rectangle{
-        .x = body.x + 6.0,
-        .y = body.y + 82.0,
-        .width = body.width - 12.0,
-        .height = body.height - 190.0,
+fn readInput() story.Input {
+    return .{
+        .forward = rl.isKeyDown(.w),
+        .backward = rl.isKeyDown(.s),
+        .left = rl.isKeyDown(.a),
+        .right = rl.isKeyDown(.d),
+        .up = rl.isKeyDown(.e),
+        .down = rl.isKeyDown(.q),
+        .look_left = rl.isKeyDown(.left),
+        .look_right = rl.isKeyDown(.right),
+        .look_up = rl.isKeyDown(.up),
+        .look_down = rl.isKeyDown(.down),
     };
-    const bounds = draw.Bounds{ .min_x = -2.25, .max_x = 2.25, .min_y = -0.25, .max_y = 3.25 };
+}
 
-    const x_axis_a = draw.mapRect(graph, bounds.min_x, 0.0, bounds);
-    const x_axis_b = draw.mapRect(graph, bounds.max_x, 0.0, bounds);
-    const y_axis_a = draw.mapRect(graph, 0.0, bounds.min_y, bounds);
-    const y_axis_b = draw.mapRect(graph, 0.0, bounds.max_y, bounds);
-    draw.line(x_axis_a, x_axis_b, 1.5, style.alpha(style.ink, 100));
-    draw.line(y_axis_a, y_axis_b, 1.5, style.alpha(style.ink, 100));
+fn drawAtmosphere(screen: rl.Rectangle, mode: story.Mode) void {
+    const accent = modeAccent(mode);
+    rl.drawCircleV(.{ .x = screen.width * 0.18, .y = screen.height * 0.22 }, screen.height * 0.24, style.alpha(accent, 28));
+    rl.drawCircleV(.{ .x = screen.width * 0.82, .y = screen.height * 0.70 }, screen.height * 0.32, style.alpha(style.cyan, 18));
+}
 
-    var prev: ?rl.Vector2 = null;
-    var i: usize = 0;
-    while (i <= 96) : (i += 1) {
-        const u = bounds.min_x + (bounds.max_x - bounds.min_x) * @as(f32, @floatFromInt(i)) / 96.0;
-        const lift = 0.5 * u * u;
-        const p = draw.mapRect(graph, u, lift, bounds);
-        if (prev) |q| draw.line(q, p, 2.0, style.alpha(style.cyan, 180));
-        prev = p;
+fn drawWorld(mode: story.Mode, camera: story.Camera, rect: rl.Rectangle) void {
+    const pass_order = if (mode == .spherical)
+        [_]story.Pass{ .far, .main }
+    else
+        [_]story.Pass{ .main, .main };
+
+    for (pass_order, 0..) |pass, pass_index| {
+        if (mode != .spherical and pass_index != 0) continue;
+        const fade: u8 = if (pass == .far) 72 else 255;
+
+        drawGround(mode, camera, rect, pass, fade);
+        drawCube(mode, camera, rect, pass, fade);
     }
 
-    const lifted = draw.mapRect(graph, sample.x, sample.cga_lift, bounds);
-    const base = draw.mapRect(graph, sample.x, 0.0, bounds);
-    draw.line(base, lifted, 2.0, style.alpha(style.coral, 130));
-    draw.dot(lifted, 8.0, style.cyan);
-    draw.dot(draw.mapRect(graph, 0.0, 0.0, bounds), 5.0, style.amber);
+    if (mode == .spherical) {
+        const center = draw.centerOf(rect);
+        const radius = @min(rect.width, rect.height) * 0.43;
+        rl.drawCircleLines(draw.toInt(center.x), draw.toInt(center.y), radius, style.alpha(style.white, 58));
+        draw.text("far hemisphere pass", center.x - radius + 18.0, center.y + radius - 30.0, 18, style.alpha(style.white, 150));
+    }
+}
 
-    var buf: [224]u8 = undefined;
+fn drawGround(mode: story.Mode, camera: story.Camera, rect: rl.Rectangle, pass: story.Pass, fade: u8) void {
+    var x: i32 = -8;
+    while (x <= 8) : (x += 1) {
+        const tint = if (@mod(x, 4) == 0) style.alpha(style.white, fade / 2) else style.alpha(style.white, fade / 5);
+        drawWorldLine(
+            mode,
+            camera,
+            rect,
+            .{ .x = @floatFromInt(x), .y = 0.0, .z = -8.0 },
+            .{ .x = @floatFromInt(x), .y = 0.0, .z = 18.0 },
+            pass,
+            tint,
+            if (@mod(x, 4) == 0) 1.7 else 1.0,
+        );
+    }
 
-    draw.text("the point becomes a null vector with room for rounds", rect.x + 26.0, rect.y + 64.0, 18, style.muted);
-    draw.text("n_o", graph.x + graph.width * 0.5 + 10.0, graph.y + graph.height - 6.0, 18, style.amber);
-    draw.text("1/2 |p|^2 n_inf", graph.x + graph.width - 142.0, graph.y + 12.0, 18, style.cyan);
-    draw.textFmt(&buf, rect.x + 26.0, rect.y + rect.height - 112.0, 18, style.ink, "P = n_o + p + {d:.3} n_inf", .{sample.cga_lift});
-    draw.textFmt(&buf, rect.x + 26.0, rect.y + rect.height - 84.0, 18, style.ink, "p = {d:.2}e1 + {d:.2}e2", .{ sample.x, sample.y });
-    draw.textFmt(&buf, rect.x + 26.0, rect.y + rect.height - 56.0, 18, style.ink, "P*P = {d:.5}", .{sample.cga_null_error});
+    var z: i32 = -8;
+    while (z <= 18) : (z += 1) {
+        const tint = if (@mod(z, 4) == 0) style.alpha(style.white, fade / 2) else style.alpha(style.white, fade / 5);
+        drawWorldLine(
+            mode,
+            camera,
+            rect,
+            .{ .x = -8.0, .y = 0.0, .z = @floatFromInt(z) },
+            .{ .x = 8.0, .y = 0.0, .z = @floatFromInt(z) },
+            pass,
+            tint,
+            if (@mod(z, 4) == 0) 1.7 else 1.0,
+        );
+    }
+}
+
+fn drawCube(mode: story.Mode, camera: story.Camera, rect: rl.Rectangle, pass: story.Pass, fade: u8) void {
+    const vertices = story.cubeVertices();
+    var rendered: [story.cube_faces.len]FaceRender = undefined;
+    var rendered_count: usize = 0;
+
+    for (story.cube_faces, 0..) |face, face_index| {
+        var points: [4]rl.Vector2 = undefined;
+        var depth: f32 = 0.0;
+        var visible = true;
+        for (face.indices, 0..) |vertex_index, point_index| {
+            const projected = story.project(mode, camera, vertices[vertex_index], rect, pass) orelse {
+                visible = false;
+                break;
+            };
+            points[point_index] = projected.pos;
+            depth += projected.depth;
+        }
+        if (!visible) continue;
+
+        const color = style.alpha(face_colors[face_index], if (pass == .far) fade else 214);
+        rendered[rendered_count] = .{
+            .points = points,
+            .depth = depth / 4.0,
+            .color = color,
+        };
+        rendered_count += 1;
+    }
+
+    sortFaces(rendered[0..rendered_count]);
+    for (rendered[0..rendered_count]) |face| {
+        draw.quad(face.points, face.color);
+        draw.quadLines(face.points, 2.0, style.alpha(style.ink, if (pass == .far) 54 else 170));
+    }
+
+    for (story.cube_edges) |edge| {
+        const a = story.project(mode, camera, vertices[edge[0]], rect, pass) orelse continue;
+        const b = story.project(mode, camera, vertices[edge[1]], rect, pass) orelse continue;
+        draw.line(a.pos, b.pos, 2.0, style.alpha(style.white, if (pass == .far) 62 else 160));
+    }
+}
+
+fn drawWorldLine(
+    mode: story.Mode,
+    camera: story.Camera,
+    rect: rl.Rectangle,
+    a: story.Vec3,
+    b: story.Vec3,
+    pass: story.Pass,
+    color: rl.Color,
+    width: f32,
+) void {
+    var previous: ?rl.Vector2 = null;
+    var i: usize = 0;
+    while (i <= 32) : (i += 1) {
+        const t = @as(f32, @floatFromInt(i)) / 32.0;
+        const world = story.Vec3.lerp(a, b, t);
+        const projected = story.project(mode, camera, world, rect, pass) orelse {
+            previous = null;
+            continue;
+        };
+        if (previous) |p| {
+            const dx = projected.pos.x - p.x;
+            const dy = projected.pos.y - p.y;
+            if (dx * dx + dy * dy < 90000.0) {
+                draw.line(p, projected.pos, width, color);
+            }
+        }
+        previous = projected.pos;
+    }
+}
+
+fn drawHud(app: *const App, screen: rl.Rectangle) void {
+    const camera = app.scene.activeCamera();
+    const accent = modeAccent(app.scene.mode);
+    const pga_pos = camera.pgaPosition();
+    const dist2 = camera.metricDistanceSquaredToCube();
+
+    const hud = rl.Rectangle{ .x = 22.0, .y = 22.0, .width = screen.width - 44.0, .height = 92.0 };
+    rl.drawRectangleRec(hud, style.alpha(style.bg_bottom, 198));
+    rl.drawRectangleRec(.{ .x = hud.x, .y = hud.y, .width = 8.0, .height = hud.height }, accent);
+    rl.drawRectangleLinesEx(hud, 1.0, style.alpha(style.white, 48));
+
+    draw.text(app.scene.mode.label(), hud.x + 24.0, hud.y + 14.0, 30, style.white);
+    draw.text(app.scene.mode.flavour(), hud.x + 26.0, hud.y + 52.0, 19, style.alpha(style.white, 190));
+
+    var buf: [256]u8 = undefined;
+    draw.textFmt(
+        &buf,
+        hud.x + hud.width - 560.0,
+        hud.y + 16.0,
+        18,
+        style.alpha(style.white, 210),
+        "camera [{d:.2}:{d:.2}:{d:.2}:{d:.2}]  cube d2={d:.2}",
+        .{ pga_pos[0], pga_pos[1], pga_pos[2], pga_pos[3], dist2 },
+    );
+    draw.text(
+        "1-4/Tab view   WASD walk   arrows look   E/Q lift   R reset   P pause",
+        hud.x + hud.width - 560.0,
+        hud.y + 50.0,
+        18,
+        style.alpha(style.white, 175),
+    );
+}
+
+fn sortFaces(faces: []FaceRender) void {
+    var i: usize = 1;
+    while (i < faces.len) : (i += 1) {
+        var j = i;
+        while (j > 0 and faces[j - 1].depth < faces[j].depth) : (j -= 1) {
+            const tmp = faces[j - 1];
+            faces[j - 1] = faces[j];
+            faces[j] = tmp;
+        }
+    }
+}
+
+fn modeAccent(mode: story.Mode) rl.Color {
+    return switch (mode) {
+        .perspective => style.amber,
+        .isometric => style.moss,
+        .spherical => style.cyan,
+        .hyperbolic => style.coral,
+    };
 }
