@@ -6,7 +6,6 @@ pub const SpirvShaderPair = struct {
         optimize: std.builtin.OptimizeMode,
         use_llvm: bool,
         imports: []const std.Build.Module.Import,
-        install_step: *std.Build.Step,
         pair_step: *std.Build.Step,
     };
 
@@ -45,9 +44,6 @@ pub const SpirvShaderPair = struct {
 
         const install_vert = b.addInstallFile(vert.getEmittedBin(), b.fmt("shaders/{s}.vert.spv", .{self.name}));
         const install_frag = b.addInstallFile(frag.getEmittedBin(), b.fmt("shaders/{s}.frag.spv", .{self.name}));
-
-        cfg.install_step.dependOn(&install_vert.step);
-        cfg.install_step.dependOn(&install_frag.step);
 
         cfg.pair_step.dependOn(&vert.step);
         cfg.pair_step.dependOn(&install_vert.step);
@@ -122,7 +118,6 @@ pub fn addSpirvSteps(
         .optimize = optimize,
         .use_llvm = use_llvm_spirv,
         .imports = &spirv_shader_imports,
-        .install_step = b.getInstallStep(),
         .pair_step = spirv_step,
     });
 

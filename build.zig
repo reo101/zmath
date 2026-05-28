@@ -13,6 +13,26 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
+    const demo_core_debug = b.createModule(.{
+        .root_source_file = b.path("src/demos/core.zig"),
+        .target = target,
+        .optimize = .Debug,
+        .imports = &.{.{
+            .name = "zmath",
+            .module = zmath,
+        }},
+    });
+
+    const demo_euclidean_sdf_module = b.createModule(.{
+        .root_source_file = b.path("src/demos/euclidean_sdf.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{
+            .name = "zmath",
+            .module = zmath,
+        }},
+    });
+
     const exe = b.addExecutable(.{
         .name = "zmath",
         .root_module = b.createModule(.{
@@ -106,17 +126,7 @@ pub fn build(b: *std.Build) void {
                 },
                 .{
                     .name = "demo_core",
-                    .module = b.createModule(.{
-                        .root_source_file = b.path("src/demos/core.zig"),
-                        .target = target,
-                        .optimize = .Debug,
-                        .imports = &.{
-                            .{
-                                .name = "zmath",
-                                .module = zmath,
-                            },
-                        },
-                    }),
+                    .module = demo_core_debug,
                 },
             },
         }),
@@ -142,17 +152,7 @@ pub fn build(b: *std.Build) void {
                 },
                 .{
                     .name = "demo_core",
-                    .module = b.createModule(.{
-                        .root_source_file = b.path("src/demos/core.zig"),
-                        .target = target,
-                        .optimize = .Debug,
-                        .imports = &.{
-                            .{
-                                .name = "zmath",
-                                .module = zmath,
-                            },
-                        },
-                    }),
+                    .module = demo_core_debug,
                 },
             },
         }),
@@ -178,17 +178,7 @@ pub fn build(b: *std.Build) void {
                 },
                 .{
                     .name = "demo_core",
-                    .module = b.createModule(.{
-                        .root_source_file = b.path("src/demos/core.zig"),
-                        .target = target,
-                        .optimize = .Debug,
-                        .imports = &.{
-                            .{
-                                .name = "zmath",
-                                .module = zmath,
-                            },
-                        },
-                    }),
+                    .module = demo_core_debug,
                 },
             },
         }),
@@ -214,17 +204,7 @@ pub fn build(b: *std.Build) void {
                 },
                 .{
                     .name = "demo_core",
-                    .module = b.createModule(.{
-                        .root_source_file = b.path("src/demos/core.zig"),
-                        .target = target,
-                        .optimize = .Debug,
-                        .imports = &.{
-                            .{
-                                .name = "zmath",
-                                .module = zmath,
-                            },
-                        },
-                    }),
+                    .module = demo_core_debug,
                 },
             },
         }),
@@ -250,17 +230,7 @@ pub fn build(b: *std.Build) void {
                 },
                 .{
                     .name = "demo_core",
-                    .module = b.createModule(.{
-                        .root_source_file = b.path("src/demos/core.zig"),
-                        .target = target,
-                        .optimize = .Debug,
-                        .imports = &.{
-                            .{
-                                .name = "zmath",
-                                .module = zmath,
-                            },
-                        },
-                    }),
+                    .module = demo_core_debug,
                 },
             },
         }),
@@ -286,17 +256,7 @@ pub fn build(b: *std.Build) void {
                 },
                 .{
                     .name = "demo_core",
-                    .module = b.createModule(.{
-                        .root_source_file = b.path("src/demos/core.zig"),
-                        .target = target,
-                        .optimize = .Debug,
-                        .imports = &.{
-                            .{
-                                .name = "zmath",
-                                .module = zmath,
-                            },
-                        },
-                    }),
+                    .module = demo_core_debug,
                 },
             },
         }),
@@ -322,17 +282,7 @@ pub fn build(b: *std.Build) void {
                 },
                 .{
                     .name = "demo_core",
-                    .module = b.createModule(.{
-                        .root_source_file = b.path("src/demos/core.zig"),
-                        .target = target,
-                        .optimize = .Debug,
-                        .imports = &.{
-                            .{
-                                .name = "zmath",
-                                .module = zmath,
-                            },
-                        },
-                    }),
+                    .module = demo_core_debug,
                 },
             },
         }),
@@ -358,17 +308,7 @@ pub fn build(b: *std.Build) void {
                 },
                 .{
                     .name = "demo_euclidean_sdf",
-                    .module = b.createModule(.{
-                        .root_source_file = b.path("src/demos/euclidean_sdf.zig"),
-                        .target = target,
-                        .optimize = .Debug,
-                        .imports = &.{
-                            .{
-                                .name = "zmath",
-                                .module = zmath,
-                            },
-                        },
-                    }),
+                    .module = demo_euclidean_sdf_module,
                 },
             },
         }),

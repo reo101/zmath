@@ -82,7 +82,8 @@ fn runCase(
                 .sdf_estimate => sdf.estimateNormalWith(euclidean_sdf.sampleScene, &scene, hit.position, scene.cube_half_extent * 0.0035),
                 .exact_box => scene.cubeLocalToWorldDirection(local_normal),
             };
-            stats.checksum += @as(f64, world_normal.x + world_normal.y + world_normal.z + scene.viewDepth(hit.position));
+            const normal_coords = world_normal.named();
+            stats.checksum += @as(f64, normal_coords.e1 + normal_coords.e2 + normal_coords.e3 + scene.viewDepth(hit.position));
         }
     }
     stats.elapsed_ns = monotonicNanos() - start_ns;

@@ -64,9 +64,10 @@ Introduced `HyperCoords` and `RoundCoords` to provide metric-specific type safet
 
 ## Running
 
-1. **Verify Foundation:** `zig build test --summary all` (302+ tests passing)
+1. **Verify Foundation:** `zig build test --summary all` (304+ tests passing)
 2. **Run Demo:** `zig build run`
 3. **Run SIMD Benchmark:** `zig build bench-simd`
+4. **Build SPIR-V Shaders:** `zig build spirv-vga` (experimental/opt-in)
 
 ## Why "Somewhat" Efficient?
 
