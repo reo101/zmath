@@ -18,33 +18,33 @@ fn printState(writer: anytype, step: usize, app: demo.App) !void {
 
     try writer.print(
         "step {d} eye_chart=({d:.6},{d:.6},{d:.6}) w={d:.6} denom={d:.6}\n",
-        .{ step, curved.vec3x(eye_chart), curved.vec3y(eye_chart), curved.vec3z(eye_chart), pos[0], 1.0 + pos[0] },
+        .{ step, curved.vec3x(eye_chart), curved.vec3y(eye_chart), curved.vec3z(eye_chart), pos.inner.w, 1.0 + pos.inner.w },
     );
     try writer.print(
         "  pos=({d:.6},{d:.6},{d:.6},{d:.6})\n",
         .{
-            pos[0],
-            pos[1],
-            pos[2],
-            pos[3],
+            pos.inner.w,
+            pos.inner.x,
+            pos.inner.y,
+            pos.inner.z,
         },
     );
     try writer.print(
         "  fwd=({d:.6},{d:.6},{d:.6},{d:.6})\n",
         .{
-            fwd[0],
-            fwd[1],
-            fwd[2],
-            fwd[3],
+            fwd.inner.w,
+            fwd.inner.x,
+            fwd.inner.y,
+            fwd.inner.z,
         },
     );
     try writer.print(
         "  up =({d:.6},{d:.6},{d:.6},{d:.6})\n",
         .{
-            up[0],
-            up[1],
-            up[2],
-            up[3],
+            up.inner.w,
+            up.inner.x,
+            up.inner.y,
+            up.inner.z,
         },
     );
     if (walk) |w| {
@@ -66,33 +66,33 @@ fn printViewState(writer: anytype, step: usize, view: SphericalView) !void {
 
     try writer.print(
         "step {d} eye_chart=({d:.6},{d:.6},{d:.6}) w={d:.6} denom={d:.6}\n",
-        .{ step, curved.vec3x(eye_chart), curved.vec3y(eye_chart), curved.vec3z(eye_chart), pos[0], 1.0 + pos[0] },
+        .{ step, curved.vec3x(eye_chart), curved.vec3y(eye_chart), curved.vec3z(eye_chart), pos.inner.w, 1.0 + pos.inner.w },
     );
     try writer.print(
         "  pos=({d:.6},{d:.6},{d:.6},{d:.6})\n",
         .{
-            pos[0],
-            pos[1],
-            pos[2],
-            pos[3],
+            pos.inner.w,
+            pos.inner.x,
+            pos.inner.y,
+            pos.inner.z,
         },
     );
     try writer.print(
         "  fwd=({d:.6},{d:.6},{d:.6},{d:.6})\n",
         .{
-            fwd[0],
-            fwd[1],
-            fwd[2],
-            fwd[3],
+            fwd.inner.w,
+            fwd.inner.x,
+            fwd.inner.y,
+            fwd.inner.z,
         },
     );
     try writer.print(
         "  up =({d:.6},{d:.6},{d:.6},{d:.6})\n",
         .{
-            up[0],
-            up[1],
-            up[2],
-            up[3],
+            up.inner.w,
+            up.inner.x,
+            up.inner.y,
+            up.inner.z,
         },
     );
     if (walk) |w| {
@@ -139,6 +139,15 @@ pub fn main(init: std.process.Init) !void {
     var prev_fwd = app.camera.spherical.camera.forward;
     var prev_walk = app.camera.spherical.walkOrientation();
     var prev_projected: [8]?[2]f32 = [_]?[2]f32{null} ** 8;
+    var first_projected_discontinuity: ?usize = null;
+
+    const initial_scene = demo.curvedScene(app, screen_width, screen_height).?.spherical;
+    const initial_render_view = liftedWalkView(initial_scene.view, app.camera.euclid_pitch);
+    for (initial_scene.local_vertices, 0..) |local_vertex, i| {
+        const ambient = demo.sphericalDemoAmbientPoint(initial_scene.view.params, vec3FromVector(local_vertex));
+        const sample = initial_render_view.sampleProjectedAmbient(ambient, initial_scene.screen);
+        prev_projected[i] = if (sample.status == .visible) sample.projected else null;
+    }
 
     for (1..121) |step| {
         _ = app.applyCommand(.move_backward);
@@ -188,10 +197,10 @@ pub fn main(init: std.process.Init) !void {
             break;
         }
 
-        if (max_projected_jump > 20.0) {
-            try stdout.writeAll("! projected discontinuity\n");
+        if (max_projected_jump > 20.0 and first_projected_discontinuity == null) {
+            first_projected_discontinuity = step;
+            try stdout.writeAll("! projected discontinuity (continuing; not a camera jump)\n");
             try printState(stdout, step, app);
-            break;
         }
 
         if (position_dot < 0.0 or forward_dot < 0.0) {
@@ -210,6 +219,12 @@ pub fn main(init: std.process.Init) !void {
         prev_fwd = fwd;
         prev_walk = walk;
         prev_view = app.camera.spherical;
+    }
+
+    if (first_projected_discontinuity) |step| {
+        try stdout.print("# first_projected_discontinuity={d}\n", .{step});
+    } else {
+        try stdout.writeAll("# first_projected_discontinuity=none\n");
     }
 
     try stdout.flush();

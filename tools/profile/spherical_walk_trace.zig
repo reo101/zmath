@@ -3,6 +3,7 @@ const zmath = @import("zmath");
 const demo = @import("demo_core");
 
 const curved = zmath.geometry.curved;
+const Round = curved.AmbientFor(.spherical);
 
 const screen_width: usize = 160;
 const screen_height: usize = 90;
@@ -57,11 +58,7 @@ const VertexStats = struct {
 };
 
 fn vec3FromVector(v: demo.H.Vector) curved.Vec3 {
-    return .{
-        v.coeffNamed("e1"),
-        v.coeffNamed("e2"),
-        v.coeffNamed("e3"),
-    };
+    return curved.vec3(v.coeffNamed("e1"), v.coeffNamed("e2"), v.coeffNamed("e3"));
 }
 
 fn configureRepro(app: *demo.App) void {
@@ -75,7 +72,6 @@ fn configureRepro(app: *demo.App) void {
     app.camera.euclid_eye_y = 0.0;
     app.camera.euclid_eye_z = -59.213104;
     app.camera.spherical = .{
-        .metric = .spherical,
         .params = .{
             .radius = 1.480000,
             .angular_zoom = 1.000000,
@@ -84,10 +80,10 @@ fn configureRepro(app: *demo.App) void {
         .projection = .gnomonic,
         .clip = .{ .near = 0.080000, .far = std.math.inf(f32) },
         .camera = .{
-            .position = .{ -0.768220, -0.231342, 0.000000, 0.596922 },
-            .right = .{ -0.222363, 0.944205, -0.229501, 0.079760 },
-            .up = .{ 0.047435, 0.231729, 0.959841, 0.150856 },
-            .forward = .{ -0.598448, -0.035495, 0.161355, -0.783942 },
+            .position = Round.fromCoords(.{ -0.768220, -0.231342, 0.000000, 0.596922 }),
+            .right = Round.fromCoords(.{ -0.222363, 0.944205, -0.229501, 0.079760 }),
+            .up = Round.fromCoords(.{ 0.047435, 0.231729, 0.959841, 0.150856 }),
+            .forward = Round.fromCoords(.{ -0.598448, -0.035495, 0.161355, -0.783942 }),
         },
         .scene_sign = 1.0,
     };
@@ -142,7 +138,7 @@ pub fn main(init: std.process.Init) !void {
 
     for (0..trace_steps + 1) |step| {
         const scene = demo.curvedScene(app, screen_width, screen_height).?.spherical;
-        const eye_chart = curved.chartCoords(.spherical, scene.view.params, scene.view.camera.position);
+        const eye_chart = scene.view.chartCoords(scene.view.camera.position);
         const wrapped = scene.view.scene_sign != previous_scene_sign;
 
         var samples: [8]curved.ProjectedSample = undefined;
@@ -206,8 +202,8 @@ pub fn main(init: std.process.Init) !void {
                 step,
                 scene.view.scene_sign,
                 if (wrapped) "wrap" else "-",
-                eye_chart[0],
-                eye_chart[2],
+                curved.vec3x(eye_chart),
+                curved.vec3z(eye_chart),
                 averageProjectedY(&samples, &top_vertices) orelse -1.0,
                 averageProjectedY(&samples, &bottom_vertices) orelse -1.0,
             },

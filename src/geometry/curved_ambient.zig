@@ -169,7 +169,7 @@ fn AmbientFamily(
         }
 
         pub fn isFinite(v: Vector) bool {
-            inline for (v.coeffs) |component| {
+            inline for (v.coeffsArray()) |component| {
                 if (!std.math.isFinite(component)) return false;
             }
             return true;

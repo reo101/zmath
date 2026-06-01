@@ -75,31 +75,22 @@ pub const App = struct {
 };
 
 const RenderResources = struct {
-    spherical_shader: rl.Shader,
-    spherical_locations: SphericalShaderLocations,
-
     fn init() !RenderResources {
-        const spherical_shader = try rl.loadShaderFromMemory(
-            @embedFile("shaders/spherical_mesh.vs"),
-            @embedFile("shaders/spherical_mesh.fs"),
-        );
-        return .{
-            .spherical_shader = spherical_shader,
-            .spherical_locations = SphericalShaderLocations.init(spherical_shader),
-        };
+        return .{};
     }
 
     fn deinit(self: *RenderResources) void {
-        self.spherical_shader.unload();
+        _ = self;
     }
 };
 
 const SphericalShaderLocations = struct {
     rect: i32,
     screen: i32,
-    camera_pos: i32,
-    yaw: i32,
-    pitch: i32,
+    camera_origin: i32,
+    camera_right: i32,
+    camera_up: i32,
+    camera_forward: i32,
     radius: i32,
     zoom: i32,
     far_pass: i32,
@@ -108,9 +99,10 @@ const SphericalShaderLocations = struct {
         return .{
             .rect = rl.getShaderLocation(shader, "u_rect"),
             .screen = rl.getShaderLocation(shader, "u_screen"),
-            .camera_pos = rl.getShaderLocation(shader, "u_camera_pos"),
-            .yaw = rl.getShaderLocation(shader, "u_yaw"),
-            .pitch = rl.getShaderLocation(shader, "u_pitch"),
+            .camera_origin = rl.getShaderLocation(shader, "u_camera_origin"),
+            .camera_right = rl.getShaderLocation(shader, "u_camera_right"),
+            .camera_up = rl.getShaderLocation(shader, "u_camera_up"),
+            .camera_forward = rl.getShaderLocation(shader, "u_camera_forward"),
             .radius = rl.getShaderLocation(shader, "u_radius"),
             .zoom = rl.getShaderLocation(shader, "u_zoom"),
             .far_pass = rl.getShaderLocation(shader, "u_far_pass"),
@@ -124,9 +116,9 @@ const FaceRender = struct {
     color: rl.Color,
 };
 
-const max_cube_face_steps = 18;
+const max_cube_face_steps = 8;
 const max_cube_cells = story.cube_faces.len * max_cube_face_steps * max_cube_face_steps;
-const spherical_shader_face_steps = 24;
+const spherical_shader_face_steps = 12;
 const spherical_shader_edge_steps = spherical_shader_face_steps * 2;
 
 const face_colors = [_]rl.Color{
@@ -160,20 +152,12 @@ fn drawAtmosphere(screen: rl.Rectangle, mode: story.Mode) void {
 }
 
 fn drawWorld(resources: *const RenderResources, mode: story.Mode, camera: *const story.Camera, rect: rl.Rectangle) void {
+    _ = resources;
     drawGround(mode, camera, rect, .main, 255);
-    if (mode == .spherical) {
-        drawSphericalCubeShader(resources, camera, rect, 246);
-        return;
-    }
     drawCube(mode, camera, rect, .main, 246);
 }
 
 fn drawGround(mode: story.Mode, camera: *const story.Camera, rect: rl.Rectangle, pass: story.Pass, fade: u8) void {
-    if (mode == .spherical) {
-        drawSphericalGround(camera, rect, fade);
-        return;
-    }
-
     var x: i32 = -8;
     while (x <= 8) : (x += 1) {
         const tint = if (@mod(x, 4) == 0) style.alpha(style.white, fade / 2) else style.alpha(style.white, fade / 5);
@@ -206,7 +190,7 @@ fn drawGround(mode: story.Mode, camera: *const story.Camera, rect: rl.Rectangle,
 }
 
 fn drawSphericalGround(camera: *const story.Camera, rect: rl.Rectangle, fade: u8) void {
-    const step: i32 = 6;
+    const step: i32 = 12;
     const min_x = draw.toInt(rect.x);
     const min_y = draw.toInt(rect.y);
     const max_x = draw.toInt(rect.x + rect.width);
@@ -265,16 +249,17 @@ fn setSphericalShaderUniforms(resources: *const RenderResources, camera: *const 
         @floatFromInt(rl.getScreenHeight()),
     };
     const rect_values = [4]f32{ rect.x, rect.y, rect.width, rect.height };
-    const camera_pos = [3]f32{ camera.position.x, camera.position.y, camera.position.z };
+    const frame = story.sphericalShaderFrame(camera) orelse return;
     const radius = camera.curvatureRadiusValue(.spherical) orelse story.default_spherical_radius;
     const zoom: f32 = story.default_spherical_zoom;
     const far_pass_int: i32 = if (far_pass) 1 else 0;
 
     rl.setShaderValue(shader, locations.rect, &rect_values, .vec4);
     rl.setShaderValue(shader, locations.screen, &screen, .vec2);
-    rl.setShaderValue(shader, locations.camera_pos, &camera_pos, .vec3);
-    rl.setShaderValue(shader, locations.yaw, &camera.yaw, .float);
-    rl.setShaderValue(shader, locations.pitch, &camera.pitch, .float);
+    rl.setShaderValue(shader, locations.camera_origin, &frame.origin, .vec4);
+    rl.setShaderValue(shader, locations.camera_right, &frame.right, .vec4);
+    rl.setShaderValue(shader, locations.camera_up, &frame.up, .vec4);
+    rl.setShaderValue(shader, locations.camera_forward, &frame.forward, .vec4);
     rl.setShaderValue(shader, locations.radius, &radius, .float);
     rl.setShaderValue(shader, locations.zoom, &zoom, .float);
     rl.setShaderValue(shader, locations.far_pass, &far_pass_int, .int);
@@ -478,7 +463,7 @@ fn drawWorldLine(
 fn worldLineSteps(mode: story.Mode) usize {
     return switch (mode) {
         .perspective, .isometric => 32,
-        .spherical, .hyperbolic => 96,
+        .spherical, .hyperbolic => 48,
     };
 }
 

@@ -5,7 +5,9 @@ const zmath = @import("zmath");
 const Vga3 = zmath.flavours.vga.EuclideanFamily(3).Instantiate(f32);
 const Pga3 = zmath.flavours.pga.FamilyHelpers(zmath.flavours.pga.EuclideanFamily(3), f32);
 const curved = zmath.geometry.curved;
+const constant_curvature = zmath.geometry.constant_curvature;
 const curved_ground = zmath.render.curved_ground;
+const RoundAmbient = curved.AmbientFor(.spherical);
 
 pub const mode_count = 4;
 
@@ -113,9 +115,9 @@ pub const Camera = struct {
                 .curvature_radius = 0.0,
             },
             .isometric => .{
-                .position = .{ .x = 0.0, .y = 2.8, .z = -3.2 },
+                .position = .{ .x = 0.0, .y = 9.0, .z = -5.4 },
                 .yaw = std.math.pi / 4.0,
-                .pitch = -0.62,
+                .pitch = -0.72,
                 .curvature_radius = 0.0,
             },
             .spherical => .{
@@ -146,15 +148,26 @@ pub const Camera = struct {
     }
 
     pub fn relative(self: *const Camera, world: Vec3) Vec3 {
+        return self.relativeWith(world, self.yaw, self.pitch);
+    }
+
+    pub fn relativeIsometric(self: *const Camera, world: Vec3) Vec3 {
+        // Orthographic orbit controls feel opposite to the first-person camera
+        // unless the view transform is mirrored. Keep the input semantics the
+        // same as perspective and mirror the isometric view basis here.
+        return self.relativeWith(world, -self.yaw, -self.pitch);
+    }
+
+    fn relativeWith(self: *const Camera, world: Vec3, yaw: f32, pitch: f32) Vec3 {
         const delta = world.sub(self.position);
 
-        const cy = @cos(-self.yaw);
-        const sy = @sin(-self.yaw);
+        const cy = @cos(-yaw);
+        const sy = @sin(-yaw);
         const x1 = delta.x * cy - delta.z * sy;
         const z1 = delta.x * sy + delta.z * cy;
 
-        const cp = @cos(-self.pitch);
-        const sp = @sin(-self.pitch);
+        const cp = @cos(-pitch);
+        const sp = @sin(-pitch);
         return .{
             .x = x1,
             .y = delta.y * cp - z1 * sp,
@@ -181,87 +194,41 @@ pub const Camera = struct {
             .hyperbolic => 1.7,
         };
 
-        if (curvedMetricForMode(mode)) |metric| {
-            self.moveCurved(metric, local_x, local_y, local_z, speed * dt);
-        } else {
-            const forward = Vec3{ .x = -@sin(self.yaw), .y = 0.0, .z = @cos(self.yaw) };
-            const right = Vec3{ .x = @cos(self.yaw), .y = 0.0, .z = @sin(self.yaw) };
-            const movement = forward.scale(local_z).add(right.scale(local_x)).add(.{ .x = 0.0, .y = local_y, .z = 0.0 });
-            if (movement.normalized()) |dir| {
-                self.position = self.position.add(dir.scale(speed * dt));
-            }
+        const forward = Vec3{ .x = -@sin(self.yaw), .y = 0.0, .z = @cos(self.yaw) };
+        const right = Vec3{ .x = @cos(self.yaw), .y = 0.0, .z = @sin(self.yaw) };
+        const movement = forward.scale(local_z).add(right.scale(local_x)).add(.{ .x = 0.0, .y = local_y, .z = 0.0 });
+        if (movement.normalized()) |dir| {
+            self.position = self.position.add(dir.scale(speed * dt));
         }
+        self.clampCurvedChartPosition(mode);
 
         self.resolveCubeCollision(mode, previous_position);
 
         const look_speed: f32 = if (mode == .isometric) 1.0 else 1.35;
         const look_left = input.look_left;
         const look_right = input.look_right;
-        if (curvedMetricForMode(mode)) |metric| {
-            var yaw_delta: f32 = 0.0;
-            if (look_left) yaw_delta -= look_speed * dt;
-            if (look_right) yaw_delta += look_speed * dt;
-            self.turnCurved(metric, yaw_delta);
-        } else {
-            if (look_left) self.yaw += look_speed * dt;
-            if (look_right) self.yaw -= look_speed * dt;
-        }
-
-        if (mode != .isometric) {
-            if (input.look_up) self.pitch += look_speed * dt;
-            if (input.look_down) self.pitch -= look_speed * dt;
-            self.pitch = std.math.clamp(self.pitch, -1.15, 1.15);
-            if (curvedMetricForMode(mode)) |metric| {
-                self.syncCurvedPitch(metric);
-            }
-        }
-    }
-
-    fn moveCurved(self: *Camera, metric: CurvedMetric, local_x: f32, local_y: f32, local_z: f32, step: f32) void {
-        const input_len = @sqrt(local_x * local_x + local_y * local_y + local_z * local_z);
-        if (input_len <= 1e-6) return;
-
-        const horizontal_len = @sqrt(local_x * local_x + local_z * local_z);
-        const vertical_step = step * local_y / input_len;
-        const horizontal_step = step * horizontal_len / input_len;
-
-        switch (metric) {
-            .spherical => {
-                const view = self.sphericalViewPtr() orelse return;
-                if (horizontal_len > 1e-6) {
-                    const Round = curved.AmbientFor(.spherical);
-                    const basis = view.walkBasis() orelse return;
-                    const direction = Round.add(
-                        Round.scale(basis.right, local_x / horizontal_len),
-                        Round.scale(basis.forward, local_z / horizontal_len),
-                    );
-                    view.moveAlong(direction, horizontal_step);
-                }
-                if (@abs(vertical_step) > 1e-6) {
-                    const up = view.walkSurfaceUp() orelse view.camera.up;
-                    view.moveAlong(up, vertical_step);
-                }
-                view.wrapSphericalChart();
-                self.position = vecFromCurved(view.chartCoords(view.camera.position));
+        switch (mode) {
+            .isometric => {
+                if (look_left) self.yaw += look_speed * dt;
+                if (look_right) self.yaw -= look_speed * dt;
+                if (input.look_up) self.pitch -= look_speed * dt;
+                if (input.look_down) self.pitch += look_speed * dt;
             },
-            .hyperbolic => {
-                const view = self.hyperbolicViewPtr() orelse return;
-                if (horizontal_len > 1e-6) {
-                    const Hyper = curved.AmbientFor(.hyperbolic);
-                    const basis = view.walkBasis() orelse return;
-                    const direction = Hyper.add(
-                        Hyper.scale(basis.right, local_x / horizontal_len),
-                        Hyper.scale(basis.forward, local_z / horizontal_len),
-                    );
-                    view.moveAlong(direction, horizontal_step);
-                }
-                if (@abs(vertical_step) > 1e-6) {
-                    const up = view.walkSurfaceUp() orelse view.camera.up;
-                    view.moveAlong(up, vertical_step);
-                }
-                self.position = vecFromCurved(view.chartCoords(view.camera.position));
+            .spherical, .hyperbolic => {
+                if (look_left) self.yaw += look_speed * dt;
+                if (look_right) self.yaw -= look_speed * dt;
+                if (input.look_up) self.pitch += look_speed * dt;
+                if (input.look_down) self.pitch -= look_speed * dt;
+            },
+            .perspective => {
+                if (look_left) self.yaw += look_speed * dt;
+                if (look_right) self.yaw -= look_speed * dt;
+                if (input.look_up) self.pitch -= look_speed * dt;
+                if (input.look_down) self.pitch += look_speed * dt;
             },
         }
+        self.pitch = std.math.clamp(self.pitch, -1.15, 1.15);
+        if (curvedMetricForMode(mode)) |metric| self.rebuildCurvedView(metric);
     }
 
     fn resolveCubeCollision(self: *Camera, mode: Mode, previous_position: Vec3) void {
@@ -269,12 +236,7 @@ pub const Camera = struct {
         self.position = resolved;
 
         const metric = curvedMetricForMode(mode) orelse return;
-        const radius = self.curvedRadius(metric);
-        self.curvature_radius = radius;
-        self.curved_view = switch (metric) {
-            .spherical => .{ .spherical = initSphericalView(radius, self.position, self.yaw, self.pitch) },
-            .hyperbolic => .{ .hyperbolic = initHyperbolicView(radius, self.position, self.yaw, self.pitch) },
-        };
+        self.rebuildCurvedView(metric);
     }
 
     pub fn adjustCurvature(self: *Camera, mode: Mode, more_curved: bool) void {
@@ -283,23 +245,8 @@ pub const Camera = struct {
         const factor: f32 = if (more_curved) 0.86 else 1.0 / 0.86;
         const next_radius = std.math.clamp(self.curvedRadius(metric) * factor, bounds.min, bounds.max);
         self.curvature_radius = next_radius;
-        switch (metric) {
-            .spherical => {
-                const view = self.sphericalViewPtr() orelse return;
-                view.adjustRadius(next_radius, 0.4) catch {
-                    view.* = initSphericalView(next_radius, self.position, self.yaw, self.pitch);
-                };
-                view.wrapSphericalChart();
-                self.position = vecFromCurved(view.chartCoords(view.camera.position));
-            },
-            .hyperbolic => {
-                const view = self.hyperbolicViewPtr() orelse return;
-                view.adjustRadius(next_radius, 0.4) catch {
-                    view.* = initHyperbolicView(next_radius, self.position, self.yaw, self.pitch);
-                };
-                self.position = vecFromCurved(view.chartCoords(view.camera.position));
-            },
-        }
+        self.clampCurvedChartPosition(mode);
+        self.rebuildCurvedView(metric);
     }
 
     pub fn curvatureValue(self: Camera, mode: Mode) ?f32 {
@@ -315,6 +262,25 @@ pub const Camera = struct {
     pub fn curvatureRadiusValue(self: Camera, mode: Mode) ?f32 {
         const metric = curvedMetricForMode(mode) orelse return null;
         return self.curvedRadius(metric);
+    }
+
+    fn rebuildCurvedView(self: *Camera, metric: CurvedMetric) void {
+        const radius = self.curvedRadius(metric);
+        self.curvature_radius = radius;
+        self.curved_view = switch (metric) {
+            .spherical => .{ .spherical = initSphericalView(radius, self.position, self.yaw, self.pitch) },
+            .hyperbolic => .{ .hyperbolic = initHyperbolicView(radius, self.position, self.yaw, self.pitch) },
+        };
+    }
+
+    fn clampCurvedChartPosition(self: *Camera, mode: Mode) void {
+        const metric = curvedMetricForMode(mode) orelse return;
+        if (metric != .hyperbolic) return;
+        const radius = self.curvedRadius(metric);
+        const max_len = radius * 0.92;
+        const len = self.position.length();
+        if (len <= max_len or len <= 1e-5) return;
+        self.position = self.position.scale(max_len / len);
     }
 
     fn curvedRadius(self: Camera, metric: CurvedMetric) f32 {
@@ -356,34 +322,6 @@ pub const Camera = struct {
             };
         }
         return null;
-    }
-
-    fn turnCurved(self: *Camera, metric: CurvedMetric, angle: f32) void {
-        if (@abs(angle) <= 1e-6) return;
-        self.yaw -= angle;
-        switch (metric) {
-            .spherical => {
-                const view = self.sphericalViewPtr() orelse return;
-                view.turnSurfaceYaw(angle, self.pitch);
-            },
-            .hyperbolic => {
-                const view = self.hyperbolicViewPtr() orelse return;
-                view.turnSurfaceYaw(angle, self.pitch);
-            },
-        }
-    }
-
-    fn syncCurvedPitch(self: *Camera, metric: CurvedMetric) void {
-        switch (metric) {
-            .spherical => {
-                const view = self.sphericalViewPtr() orelse return;
-                view.syncSurfacePitch(self.pitch);
-            },
-            .hyperbolic => {
-                const view = self.hyperbolicViewPtr() orelse return;
-                view.syncSurfacePitch(self.pitch);
-            },
-        }
     }
 };
 
@@ -437,6 +375,37 @@ pub const Projected = struct {
     pos: rl.Vector2,
     depth: f32,
 };
+
+const CurvedProjectionParams = struct {
+    metric: constant_curvature.Metric,
+    radius: f32,
+    zoom: f32,
+};
+
+pub const SphericalShaderFrame = struct {
+    origin: [4]f32,
+    right: [4]f32,
+    up: [4]f32,
+    forward: [4]f32,
+};
+
+pub fn sphericalShaderFrame(camera: *const Camera) ?SphericalShaderFrame {
+    const spherical = switch (camera.curved_view orelse return null) {
+        .spherical => |view| view,
+        .hyperbolic => return null,
+    };
+    return .{
+        .origin = roundAmbientArray(spherical.camera.position),
+        .right = roundAmbientArray(spherical.camera.right),
+        .up = roundAmbientArray(spherical.camera.up),
+        .forward = roundAmbientArray(spherical.camera.forward),
+    };
+}
+
+fn roundAmbientArray(v: RoundAmbient.Vector) [4]f32 {
+    const coords = RoundAmbient.toCoords(v).inner;
+    return .{ coords.w, coords.x, coords.y, coords.z };
+}
 
 pub const Pass = enum {
     main,
@@ -591,7 +560,7 @@ fn pushOutNearestCubeFace(position: Vec3, bounds: CubeBounds) Vec3 {
 pub fn project(mode: Mode, camera: *const Camera, world: Vec3, rect: rl.Rectangle, pass: Pass) ?Projected {
     return switch (mode) {
         .perspective => projectPerspective(camera.relative(world), rect),
-        .isometric => projectIsometric(camera.relative(world), rect),
+        .isometric => projectIsometric(camera.relativeIsometric(world), rect),
         .spherical, .hyperbolic => projectCurved(camera, world, rect, pass),
     };
 }
@@ -624,25 +593,28 @@ fn projectIsometric(rel: Vec3, rect: rl.Rectangle) ?Projected {
 fn projectCurved(camera: *const Camera, world: Vec3, rect: rl.Rectangle, pass: Pass) ?Projected {
     _ = pass;
     const view = camera.curved_view orelse return null;
-    return switch (view) {
-        .spherical => |spherical| projectCurvedSample(
-            spherical.sampleProjectedAmbient(sphericalSceneAmbient(spherical.params, world), screenForRect(rect, spherical.params.angular_zoom)),
-            rect,
-        ),
-        .hyperbolic => |hyperbolic| projectCurvedSample(
-            hyperbolic.sampleProjectedPoint(curvedVec(world), screenForRect(rect, hyperbolic.params.angular_zoom)),
-            rect,
-        ),
+    const view_params: CurvedProjectionParams = switch (view) {
+        .spherical => |spherical| .{
+            .metric = constant_curvature.Metric.spherical,
+            .radius = spherical.params.radius,
+            .zoom = spherical.params.angular_zoom,
+        },
+        .hyperbolic => |hyperbolic| .{
+            .metric = constant_curvature.Metric.hyperbolic,
+            .radius = hyperbolic.params.radius,
+            .zoom = hyperbolic.params.angular_zoom,
+        },
     };
-}
+    const frame = constant_curvature.frameFromChart(view_params.metric, view_params.radius, ccVec(camera.position), camera.yaw, camera.pitch) orelse return null;
+    const ambient = constant_curvature.embedConformalGa(view_params.metric, view_params.radius, ccVec(world)) orelse return null;
+    const sample = constant_curvature.samplePoint(frame, ambient) orelse return null;
 
-fn projectCurvedSample(sample: curved.ProjectedSample, rect: rl.Rectangle) ?Projected {
-    if (sample.status != .visible) return null;
-    const projected = sample.projected orelse return null;
+    const center = rectCenter(rect);
+    const focal = @min(rect.width, rect.height) * 0.82 * view_params.zoom;
     return .{
         .pos = .{
-            .x = rect.x + projected[0],
-            .y = rect.y + projected[1],
+            .x = center.x + sample.x / sample.z * focal,
+            .y = center.y - sample.y / sample.z * focal,
         },
         .depth = sample.distance,
     };
@@ -710,8 +682,8 @@ fn curvedMetricForMode(mode: Mode) ?CurvedMetric {
     };
 }
 
-pub const default_spherical_radius: f32 = 7.1;
-pub const default_hyperbolic_radius: f32 = 5.6;
+pub const default_spherical_radius: f32 = 10.0;
+pub const default_hyperbolic_radius: f32 = 14.0;
 pub const default_spherical_zoom: f32 = 1.0;
 pub const default_hyperbolic_zoom: f32 = 0.78;
 
@@ -770,6 +742,10 @@ fn sphericalSceneChart(params: curved.Params, local: Vec3) curved.Vec3 {
 
 fn curvedVec(point: Vec3) curved.Vec3 {
     return curved.vec3(point.x, point.y, point.z);
+}
+
+fn ccVec(point: Vec3) constant_curvature.Vec3 {
+    return .{ .x = point.x, .y = point.y, .z = point.z };
 }
 
 fn vecFromCurved(point: curved.Vec3) Vec3 {

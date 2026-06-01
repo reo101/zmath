@@ -57,6 +57,10 @@ pub fn dot(center: rl.Vector2, radius: f32, color: rl.Color) void {
 pub fn quad(points: [4]rl.Vector2, color: rl.Color) void {
     rl.drawTriangle(points[2], points[1], points[0], color);
     rl.drawTriangle(points[3], points[2], points[0], color);
+    // Some raylib/OpenGL paths inherit back-face culling state. Emit the
+    // opposite winding too so 2D demo quads are unconditionally double-sided.
+    rl.drawTriangle(points[0], points[1], points[2], color);
+    rl.drawTriangle(points[0], points[2], points[3], color);
 }
 
 pub fn quadLines(points: [4]rl.Vector2, width: f32, color: rl.Color) void {

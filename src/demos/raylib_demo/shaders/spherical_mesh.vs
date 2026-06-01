@@ -5,9 +5,10 @@ in vec4 vertexColor;
 
 uniform vec4 u_rect;
 uniform vec2 u_screen;
-uniform vec3 u_camera_pos;
-uniform float u_yaw;
-uniform float u_pitch;
+uniform vec4 u_camera_origin;
+uniform vec4 u_camera_right;
+uniform vec4 u_camera_up;
+uniform vec4 u_camera_forward;
 uniform float u_radius;
 uniform float u_zoom;
 uniform int u_far_pass;
@@ -36,41 +37,21 @@ vec4 sceneAmbient(vec3 p) {
     return normalize(base * cos(heightTheta) + up * sin(heightTheta));
 }
 
-vec4 tangentAt(vec4 origin, vec3 localDir) {
-    float step = max(u_radius * 0.003, 0.02);
-    vec4 p = sceneAmbient(u_camera_pos + localDir * step);
-    vec4 tangent = p - origin * dot(origin, p);
-    float len = length(tangent);
-    if (len <= 0.00001) return vec4(0.0);
-    return tangent / len;
+vec4 relativeCoords(vec4 point, vec4 origin, vec4 right, vec4 up, vec4 forward) {
+    return vec4(
+        dot(point, origin),
+        dot(point, right),
+        dot(point, up),
+        dot(point, forward)
+    );
 }
 
-void cameraFrame(out vec4 origin, out vec4 right, out vec4 up, out vec4 forward) {
-    origin = sceneAmbient(u_camera_pos);
-
-    vec3 localRight = vec3(cos(u_yaw), 0.0, sin(u_yaw));
-    vec3 localForward = vec3(-sin(u_yaw), 0.0, cos(u_yaw));
-    vec3 localUp = vec3(0.0, 1.0, 0.0);
-
-    right = tangentAt(origin, localRight);
-    vec4 flatForward = tangentAt(origin, localForward);
-    vec4 flatUp = tangentAt(origin, localUp);
-
-    forward = normalize(flatForward * cos(u_pitch) + flatUp * sin(u_pitch));
-    up = normalize(flatUp * cos(u_pitch) - flatForward * sin(u_pitch));
-}
-
-vec3 relativeDirection(vec4 point, vec4 right, vec4 up, vec4 forward) {
-    vec3 rel = vec3(dot(point, right), dot(point, up), dot(point, forward));
-    float len = max(length(rel), 0.00001);
-    return rel / len;
-}
-
-vec2 projectStereographicDirection(vec3 dir) {
-    float denom = max(1.0 + dir.z, 0.0001);
-    vec2 raw = dir.xy * (2.0 / denom);
+vec2 projectConformalModel(vec4 rel) {
+    float denom = 1.0 + rel.x;
+    if (abs(denom) <= 0.0001) return vec2(1.0e9, 1.0e9);
+    vec2 model = rel.yz / denom;
     float aspect = max(u_rect.z / max(u_rect.w * 2.0, 1.0), 0.001);
-    return vec2(raw.x * u_zoom / aspect, raw.y * u_zoom);
+    return vec2(model.x * u_zoom / aspect, model.y * u_zoom);
 }
 
 vec4 clipFromRectSpace(vec2 rectSpace, float depth01) {
@@ -83,15 +64,14 @@ vec4 clipFromRectSpace(vec2 rectSpace, float depth01) {
 }
 
 void main() {
-    vec4 origin;
-    vec4 right;
-    vec4 up;
-    vec4 forward;
-    cameraFrame(origin, right, up, forward);
+    vec4 origin = normalize(u_camera_origin);
+    vec4 right = normalize(u_camera_right);
+    vec4 up = normalize(u_camera_up);
+    vec4 forward = normalize(u_camera_forward);
 
     vec4 point = sceneAmbient(vertexPosition);
-    vec3 nearDir = relativeDirection(point, right, up, forward);
-    float selectedSide = (u_far_pass == 0) ? nearDir.z : -nearDir.z;
+    vec4 nearRel = relativeCoords(point, origin, right, up, forward);
+    float selectedSide = (u_far_pass == 0) ? nearRel.w : -nearRel.w;
     fragPassSide = selectedSide;
 
     if (u_far_pass != 0) {
@@ -99,10 +79,10 @@ void main() {
         forward = -forward;
     }
 
-    vec3 dir = relativeDirection(point, right, up, forward);
-    vec2 rectSpace = projectStereographicDirection(dir);
+    vec4 rel = relativeCoords(point, origin, right, up, forward);
+    vec2 rectSpace = projectConformalModel(rel);
 
-    float w = clamp(dot(sceneAmbient(u_camera_pos), point), -1.0, 1.0);
+    float w = clamp(dot(u_camera_origin, point), -1.0, 1.0);
     float distance = acos(w) * max(u_radius, 0.001);
     fragDepth = clamp(distance / (PI * max(u_radius, 0.001)), 0.0, 1.0);
     fragColor = vertexColor;

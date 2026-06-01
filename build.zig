@@ -395,6 +395,8 @@ pub fn build(b: *std.Build) void {
     const demo_raylib_run_cmd = b.addRunArtifact(demo_raylib_exe);
     const demo_raylib_step = b.step("demo-raylib", "Run the demo with the raylib backend");
     demo_raylib_step.dependOn(&demo_raylib_run_cmd.step);
+    const raylib_demo_alias_step = b.step("raylib-demo", "Alias for demo-raylib");
+    raylib_demo_alias_step.dependOn(&demo_raylib_run_cmd.step);
 
     const profile_raylib_spherical_cube_exe = b.addExecutable(.{
         .name = "zmath-profile-raylib-spherical-cube",
