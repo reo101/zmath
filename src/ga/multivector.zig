@@ -91,26 +91,26 @@ fn canUseLaneWiseSimd(comptime T: type, comptime lane_count: usize) bool {
 }
 
 fn StorageFor(comptime T: type, comptime lane_count: usize) type {
-    return if (canUseLaneWiseSimd(T, lane_count)) @Vector(lane_count, T) else [lane_count]T;
+    return if (comptime canUseLaneWiseSimd(T, lane_count)) @Vector(lane_count, T) else [lane_count]T;
 }
 
-fn coeffsToStorage(comptime T: type, comptime lane_count: usize, coeffs: [lane_count]T) StorageFor(T, lane_count) {
-    return if (canUseLaneWiseSimd(T, lane_count)) @bitCast(coeffs) else coeffs;
+inline fn coeffsToStorage(comptime T: type, comptime lane_count: usize, coeffs: [lane_count]T) StorageFor(T, lane_count) {
+    return if (comptime canUseLaneWiseSimd(T, lane_count)) @bitCast(coeffs) else coeffs;
 }
 
-fn storageToCoeffs(comptime T: type, comptime lane_count: usize, storage: StorageFor(T, lane_count)) [lane_count]T {
-    return if (canUseLaneWiseSimd(T, lane_count)) @bitCast(storage) else storage;
+inline fn storageToCoeffs(comptime T: type, comptime lane_count: usize, storage: StorageFor(T, lane_count)) [lane_count]T {
+    return if (comptime canUseLaneWiseSimd(T, lane_count)) @bitCast(storage) else storage;
 }
 
-fn coeffsToSimd(comptime T: type, comptime lane_count: usize, coeffs: [lane_count]T) @Vector(lane_count, T) {
+inline fn coeffsToSimd(comptime T: type, comptime lane_count: usize, coeffs: [lane_count]T) @Vector(lane_count, T) {
     return @bitCast(coeffs);
 }
 
-fn storageToSimd(comptime T: type, comptime lane_count: usize, storage: StorageFor(T, lane_count)) @Vector(lane_count, T) {
-    return if (canUseLaneWiseSimd(T, lane_count)) storage else @bitCast(storage);
+inline fn storageToSimd(comptime T: type, comptime lane_count: usize, storage: StorageFor(T, lane_count)) @Vector(lane_count, T) {
+    return if (comptime canUseLaneWiseSimd(T, lane_count)) storage else @bitCast(storage);
 }
 
-fn simdToCoeffs(comptime T: type, comptime lane_count: usize, vector: @Vector(lane_count, T)) [lane_count]T {
+inline fn simdToCoeffs(comptime T: type, comptime lane_count: usize, vector: @Vector(lane_count, T)) [lane_count]T {
     return @bitCast(vector);
 }
 
@@ -476,6 +476,11 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         /// Initializes the multivector from coefficients in `blades` order.
         pub inline fn init(coeffs: [stored_blade_count]T) Self {
             return .{ .coeffs = coeffsToStorage(T, stored_blade_count, coeffs) };
+        }
+
+        /// Initializes the multivector from its underlying coefficient storage.
+        pub inline fn initStorage(coeffs: Storage) Self {
+            return .{ .coeffs = coeffs };
         }
 
         /// Returns the additive identity for this carrier type.
