@@ -1,5 +1,5 @@
 const std = @import("std");
-const flavours = @import("../flavours.zig");
+const flavours = @import("flavours");
 
 pub const Metric = enum {
     spherical,

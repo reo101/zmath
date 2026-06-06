@@ -1,4 +1,4 @@
-const curved_projection = @import("../render/curved_projection.zig");
+const curved_projection = @import("render").curved_projection;
 const curved_ambient = @import("curved_ambient.zig");
 
 pub const Metric = enum { hyperbolic, elliptic, spherical };

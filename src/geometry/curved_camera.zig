@@ -1,5 +1,5 @@
 const std = @import("std");
-const projection = @import("../render/projection.zig");
+const projection = @import("render").projection;
 const curved_charts = @import("curved_charts.zig");
 const curved_tangent = @import("curved_tangent.zig");
 const curved_types = @import("curved_types.zig");

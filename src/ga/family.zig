@@ -1,5 +1,5 @@
 const std = @import("std");
-const ga = @import("../ga.zig");
+const ga = @import("ga");
 const blades = ga.blades;
 const blade_parsing = ga.blade_parsing;
 

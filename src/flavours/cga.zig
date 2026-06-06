@@ -1,5 +1,5 @@
 const std = @import("std");
-const ga = @import("../ga.zig");
+const ga = @import("ga");
 const family = ga.family;
 const conformal_helpers = @import("conformal_helpers.zig");
 

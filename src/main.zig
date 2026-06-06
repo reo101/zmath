@@ -4,7 +4,7 @@
 //! working with multivectors, and using the comptime expression compiler.
 
 const std = @import("std");
-const zmath = @import("root.zig");
+const zmath = @import("zmath");
 const ga = zmath.ga;
 
 /// Define a 3D Euclidean Algebra bound to f64 coefficients.
@@ -65,7 +65,7 @@ pub fn main(init: std.process.Init) !void {
 test "canonical example logic" {
     const v = Cl3.Vector.init(.{ 1.0, 2.0, 3.0 });
     const e2 = Cl3.Basis.e(2);
-    
+
     // Manual reflection check
     const reflected = e2.gp(v).gp(e2).negate().gradePart(1);
     try std.testing.expectApproxEqAbs(@as(f64, 1.0), reflected.named().e1, 1e-10);

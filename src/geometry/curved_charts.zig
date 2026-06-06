@@ -1,7 +1,7 @@
 const std = @import("std");
 const curved_types = @import("curved_types.zig");
-const hpga = @import("../flavours/hpga.zig");
-const epga = @import("../flavours/epga.zig");
+const hpga = @import("flavours").hpga;
+const epga = @import("flavours").epga;
 
 pub const Metric = curved_types.Metric;
 pub const Params = curved_types.Params;

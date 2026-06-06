@@ -1,8 +1,8 @@
 const std = @import("std");
 const canvas_api = @import("canvas.zig");
-const geometry = @import("../geometry.zig");
+const geometry = @import("geometry");
 const curved_projection = @import("curved_projection.zig");
-const ga = @import("../ga.zig");
+const ga = @import("ga");
 
 const curved = struct {
     pub const Metric = geometry.curved.Metric;

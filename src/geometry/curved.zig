@@ -4,7 +4,7 @@ const curved_sampling = @import("curved_sampling.zig");
 const curved_surface = @import("curved_surface.zig");
 const curved_types = @import("curved_types.zig");
 const curved_view = @import("curved_view.zig");
-const curved_projection = @import("../render/curved_projection.zig");
+const curved_projection = @import("render").curved_projection;
 
 pub const Metric = curved_types.Metric;
 pub const ChartModel = curved_types.ChartModel;

@@ -1,5 +1,5 @@
 const std = @import("std");
-const ga = @import("../ga.zig");
+const ga = @import("ga");
 const multivector = ga.multivector;
 const h = ga.Algebra(ga.euclideanSignature(3)).Instantiate(f32);
 

@@ -1,5 +1,5 @@
 const std = @import("std");
-const curved_ambient = @import("../geometry/curved_ambient.zig");
+const curved_ambient = @import("geometry").curved_ambient;
 
 const Flat3 = curved_ambient.Flat3;
 const Vec3 = Flat3.Vector;

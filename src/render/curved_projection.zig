@@ -1,6 +1,6 @@
 const std = @import("std");
 const projection = @import("projection.zig");
-const curved_ambient = @import("../geometry/curved_ambient.zig");
+const curved_ambient = @import("geometry").curved_ambient;
 
 pub const Vec3 = curved_ambient.Flat3.Vector;
 

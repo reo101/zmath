@@ -1,5 +1,5 @@
 const std = @import("std");
-const geometry = @import("../geometry.zig");
+const geometry = @import("geometry");
 
 const curved = struct {
     pub const Vec3 = geometry.curved.Vec3;

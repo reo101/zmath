@@ -2,7 +2,7 @@ const std = @import("std");
 const blades = @import("blades.zig");
 const blade_parsing = @import("blade_parsing.zig");
 const multivector = @import("multivector.zig");
-const parse = @import("../parse.zig");
+const parse = @import("parse");
 const node_storage = parse.node_storage;
 const pratt = parse.pratt;
 

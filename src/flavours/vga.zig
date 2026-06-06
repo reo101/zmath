@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const ga = @import("../ga.zig");
+pub const ga = @import("ga");
 const family = ga.family;
 
 pub fn EuclideanFamily(comptime euclidean_dimensions: usize) type {

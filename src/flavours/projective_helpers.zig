@@ -1,4 +1,4 @@
-const ga = @import("../ga.zig");
+const ga = @import("ga");
 const multivector = ga.multivector;
 
 pub const RoundMetric = enum {

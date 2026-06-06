@@ -3,7 +3,7 @@ const multivector = @import("multivector.zig");
 const blades = @import("blades.zig");
 const blade_parsing = @import("blade_parsing.zig");
 const expression = @import("expression.zig");
-const meta = @import("../meta.zig");
+const meta = @import("meta");
 
 const euclidean2 = blades.euclideanSignature(2);
 

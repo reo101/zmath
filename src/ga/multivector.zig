@@ -1,7 +1,7 @@
 const std = @import("std");
 const blade_parsing = @import("blade_parsing.zig");
 const blade_ops = @import("blades.zig");
-const meta = @import("../meta.zig");
+const meta = @import("meta");
 
 /// Bitset representation of a basis blade.
 pub const BladeMask = blade_ops.BladeMask;

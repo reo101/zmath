@@ -1,10 +1,10 @@
 const std = @import("std");
 
-pub const ga = @import("ga.zig");
-pub const flavours = @import("flavours.zig");
-pub const geometry = @import("geometry.zig");
-pub const parse = @import("parse.zig");
-pub const render = @import("render.zig");
+pub const ga = @import("ga");
+pub const flavours = @import("flavours");
+pub const geometry = @import("geometry");
+pub const parse = @import("parse");
+pub const render = @import("render");
 pub const visualizer = @import("ga/visualizer.zig");
 
 test "root surface links ga and flavours entrypoints" {

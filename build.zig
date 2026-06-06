@@ -8,9 +8,97 @@ pub fn build(b: *std.Build) void {
     const compare_spirv = b.option(bool, "compare-spirv", "Emit SPIR-V size comparison for GA vs raw shader variants") orelse false;
     const fuzz_use_llvm = b.option(bool, "fuzz-llvm", "Force LLVM backend for fuzz test builds") orelse true;
 
+    const meta_module = b.addModule("meta", .{
+        .root_source_file = b.path("src/meta.zig"),
+        .target = target,
+    });
+
+    const parse_module = b.addModule("parse", .{
+        .root_source_file = b.path("src/parse.zig"),
+        .target = target,
+        .imports = &.{.{
+            .name = "meta",
+            .module = meta_module,
+        }},
+    });
+
+    const ga_module = b.addModule("ga", .{
+        .root_source_file = b.path("src/ga.zig"),
+        .target = target,
+        .imports = &.{
+            .{
+                .name = "meta",
+                .module = meta_module,
+            },
+            .{
+                .name = "parse",
+                .module = parse_module,
+            },
+        },
+    });
+
+    ga_module.addImport("ga", ga_module);
+
+    const flavours_module = b.addModule("flavours", .{
+        .root_source_file = b.path("src/flavours.zig"),
+        .target = target,
+        .imports = &.{.{
+            .name = "ga",
+            .module = ga_module,
+        }},
+    });
+
+    const geometry_module = b.addModule("geometry", .{
+        .root_source_file = b.path("src/geometry.zig"),
+        .target = target,
+        .imports = &.{
+            .{
+                .name = "ga",
+                .module = ga_module,
+            },
+            .{
+                .name = "flavours",
+                .module = flavours_module,
+            },
+        },
+    });
+
+    const render_module = b.addModule("render", .{
+        .root_source_file = b.path("src/render.zig"),
+        .target = target,
+        .imports = &.{.{
+            .name = "ga",
+            .module = ga_module,
+        }},
+    });
+    geometry_module.addImport("render", render_module);
+    render_module.addImport("geometry", geometry_module);
+
     const zmath = b.addModule("zmath", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
+        .imports = &.{
+            .{
+                .name = "ga",
+                .module = ga_module,
+            },
+            .{
+                .name = "parse",
+                .module = parse_module,
+            },
+            .{
+                .name = "flavours",
+                .module = flavours_module,
+            },
+            .{
+                .name = "geometry",
+                .module = geometry_module,
+            },
+            .{
+                .name = "render",
+                .module = render_module,
+            },
+        },
     });
 
     const demo_core_debug = b.createModule(.{
@@ -83,6 +171,41 @@ pub fn build(b: *std.Build) void {
     bench_simd_step.dependOn(&run_bench_simd.step);
 
     build_spirv.addSpirvSteps(b, optimize, use_llvm_spirv, compare_spirv);
+
+    const ga_tests = b.addTest(.{
+        .name = "ga-module",
+        .root_module = ga_module,
+    });
+    const run_ga_tests = b.addRunArtifact(ga_tests);
+    run_ga_tests.setName("run test ga-module");
+
+    const parse_tests = b.addTest(.{
+        .name = "parse-module",
+        .root_module = parse_module,
+    });
+    const run_parse_tests = b.addRunArtifact(parse_tests);
+    run_parse_tests.setName("run test parse-module");
+
+    const flavours_tests = b.addTest(.{
+        .name = "flavours-module",
+        .root_module = flavours_module,
+    });
+    const run_flavours_tests = b.addRunArtifact(flavours_tests);
+    run_flavours_tests.setName("run test flavours-module");
+
+    const geometry_tests = b.addTest(.{
+        .name = "geometry-module",
+        .root_module = geometry_module,
+    });
+    const run_geometry_tests = b.addRunArtifact(geometry_tests);
+    run_geometry_tests.setName("run test geometry-module");
+
+    const render_tests = b.addTest(.{
+        .name = "render-module",
+        .root_module = render_module,
+    });
+    const run_render_tests = b.addRunArtifact(render_tests);
+    run_render_tests.setName("run test render-module");
 
     const zmath_tests = b.addTest(.{
         .name = "zmath-module",
@@ -515,6 +638,11 @@ pub fn build(b: *std.Build) void {
     compile_fail_step.dependOn(&compile_fail_hodge_dual.step);
 
     const test_step = b.step("test", "Run tests");
+    test_step.dependOn(&run_ga_tests.step);
+    test_step.dependOn(&run_parse_tests.step);
+    test_step.dependOn(&run_flavours_tests.step);
+    test_step.dependOn(&run_geometry_tests.step);
+    test_step.dependOn(&run_render_tests.step);
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(&run_module_surface_tests.step);

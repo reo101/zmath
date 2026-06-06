@@ -72,16 +72,40 @@ pub fn addSpirvSteps(
     spirv_build_options.addOption(bool, "enable_simd_fast_paths", true);
     const spirv_build_options_module = spirv_build_options.createModule();
 
+    const spirv_meta = b.addModule("meta-spirv", .{
+        .root_source_file = b.path("src/meta.zig"),
+        .target = spirv_target,
+    });
+
+    const spirv_parse = b.addModule("parse-spirv", .{
+        .root_source_file = b.path("src/parse.zig"),
+        .target = spirv_target,
+        .imports = &.{.{
+            .name = "meta",
+            .module = spirv_meta,
+        }},
+    });
+
     const spirv_ga = b.addModule("ga-spirv", .{
         .root_source_file = b.path("src/ga.zig"),
         .target = spirv_target,
         .imports = &.{
+            .{
+                .name = "meta",
+                .module = spirv_meta,
+            },
+            .{
+                .name = "parse",
+                .module = spirv_parse,
+            },
             .{
                 .name = "build_options",
                 .module = spirv_build_options_module,
             },
         },
     });
+
+    spirv_ga.addImport("ga", spirv_ga);
 
     const spirv_vga = b.addModule("vga-spirv", .{
         .root_source_file = b.path("src/flavours/vga.zig"),

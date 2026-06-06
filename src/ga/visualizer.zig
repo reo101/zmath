@@ -1,5 +1,6 @@
-const canvas = @import("../render/canvas.zig");
-const projection = @import("../render/projection.zig");
+const render = @import("render");
+const canvas = render.canvas;
+const projection = render.projection;
 
 pub const Canvas = canvas.Canvas;
 pub const MarkerColor = canvas.MarkerColor;

@@ -1,6 +1,6 @@
 const std = @import("std");
 const canvas_api = @import("canvas.zig");
-const geometry = @import("../geometry.zig");
+const geometry = @import("geometry");
 const curved_canvas = @import("curved_canvas.zig");
 const nav_geom = @import("curved_navigator_geometry.zig");
 

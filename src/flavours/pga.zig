@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const ga = @import("../ga.zig");
+pub const ga = @import("ga");
 const blade_parsing = ga.blade_parsing;
 const blades = ga.blades;
 const family = ga.family;
