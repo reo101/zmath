@@ -19,9 +19,10 @@ pub const out_color = @extern(*addrspace(.output) @Vector(4, f32), .{
 });
 
 export fn main() callconv(.spirv_fragment) void {
-    const color = in_color.*;
-    const color_xy = Vec(2).initStorage(.{ color[0], color[1] });
+    const color: Vec(3) = .initStorage(in_color.*);
+    const color_xy: Vec(2) = .initStorage(color.xy());
+    const rgb = color.xyz();
     const intensity = @min(vga.norm(color_xy), 1.0);
 
-    out_color.* = .{ color[0], color[1], color[2], intensity };
+    out_color.* = .{ rgb[0], rgb[1], rgb[2], intensity };
 }

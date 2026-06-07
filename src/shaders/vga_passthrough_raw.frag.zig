@@ -1,7 +1,6 @@
 const std = @import("std");
 const gpu = std.gpu;
 
-/// Final fragment color.
 pub const out_color = @extern(*addrspace(.output) @Vector(4, f32), .{
     .name = "out_color",
     .decoration = .{ .location = 0 },
