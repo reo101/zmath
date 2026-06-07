@@ -170,7 +170,52 @@ pub fn build(b: *std.Build) void {
     const run_bench_simd = b.addRunArtifact(bench_simd_exe);
     bench_simd_step.dependOn(&run_bench_simd.step);
 
-    build_spirv.addSpirvSteps(b, optimize, use_llvm_spirv, compare_spirv);
+    const spirv_steps = build_spirv.addSpirvSteps(b, optimize, use_llvm_spirv, compare_spirv);
+
+    const vulkan_glfw_translate = b.addTranslateC(.{
+        .root_source_file = b.path("tools/vulkan_glfw.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    addEnvIncludePaths(b, vulkan_glfw_translate, "C_INCLUDE_PATH");
+    addEnvIncludePaths(b, vulkan_glfw_translate, "CPATH");
+    const vulkan_glfw_module = vulkan_glfw_translate.createModule();
+
+    const shader_playground_exe = b.addExecutable(.{
+        .name = "zmath-shader-playground",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/shader_playground.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{.{
+                .name = "vulkan_glfw",
+                .module = vulkan_glfw_module,
+            }},
+        }),
+    });
+    shader_playground_exe.root_module.linkSystemLibrary("glfw", .{});
+    shader_playground_exe.root_module.linkSystemLibrary("vulkan", .{});
+
+    const shader_playground_build_step = b.step("shader-playground-build", "Build the Vulkan SPIR-V shader playground");
+    shader_playground_build_step.dependOn(&shader_playground_exe.step);
+
+    const run_shader_playground = b.addRunArtifact(shader_playground_exe);
+    run_shader_playground.step.dependOn(spirv_steps.raw);
+    const shader_playground_step = b.step("shader-playground", "Run the Vulkan SPIR-V shader playground with driver-valid raw shaders");
+    shader_playground_step.dependOn(&run_shader_playground.step);
+    if (b.args) |args| {
+        run_shader_playground.addArgs(args);
+    }
+
+    const run_shader_playground_ga = b.addRunArtifact(shader_playground_exe);
+    run_shader_playground_ga.step.dependOn(spirv_steps.vga);
+    run_shader_playground_ga.addArgs(&.{
+        "zig-out/shaders/vga_passthrough.vert.spv",
+        "zig-out/shaders/vga_passthrough.frag.spv",
+    });
+    const shader_playground_ga_step = b.step("shader-playground-ga", "Run the Vulkan SPIR-V shader playground with GA shaders; currently useful for driver/compiler debugging");
+    shader_playground_ga_step.dependOn(&run_shader_playground_ga.step);
 
     const ga_tests = b.addTest(.{
         .name = "ga-module",
@@ -651,4 +696,22 @@ pub fn build(b: *std.Build) void {
 
     const fuzz_expr_step = b.step("fuzz-expr", "Run the expression parser/evaluator fuzz smoke test");
     fuzz_expr_step.dependOn(&run_expression_fuzz.step);
+}
+
+fn addEnvIncludePaths(b: *std.Build, translate_c: *std.Build.Step.TranslateC, name: []const u8) void {
+    const value = b.graph.environ_map.get(name) orelse return;
+    var it = std.mem.splitScalar(u8, value, ':');
+    while (it.next()) |path| {
+        if (path.len == 0) continue;
+        translate_c.addSystemIncludePath(.{ .cwd_relative = path });
+    }
+}
+
+fn addEnvIncludePaths(b: *std.Build, translate_c: *std.Build.Step.TranslateC, name: []const u8) void {
+    const value = b.graph.environ_map.get(name) orelse return;
+    var it = std.mem.splitScalar(u8, value, ':');
+    while (it.next()) |path| {
+        if (path.len == 0) continue;
+        translate_c.addSystemIncludePath(.{ .cwd_relative = path });
+    }
 }

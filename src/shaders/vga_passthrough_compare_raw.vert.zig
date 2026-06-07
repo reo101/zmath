@@ -1,17 +1,13 @@
 const std = @import("std");
 const gpu = std.gpu;
-const ga = @import("ga");
-const vga = @import("vga");
 
-fn Vec(n: usize) type {
-    return ga.Algebra(.euclidean(n)).Vector(f32);
-}
-
+/// Vertex output color at location 0.
 pub const out_color = @extern(*addrspace(.output) @Vector(3, f32), .{
     .name = "out_color",
     .decoration = .{ .location = 0 },
 });
 
+/// Built-in output for clip-space position.
 pub const gl_position = gpu.position_out;
 
 export fn main() callconv(.spirv_vertex) void {
@@ -21,8 +17,7 @@ export fn main() callconv(.spirv_vertex) void {
         else => .{ 0.0, 0.85 },
     };
 
-    const position = Vec(2).initStorage(pos);
-    const radial = @min(vga.norm(position), 1.0);
+    const radial = @min(@sqrt(pos[0] * pos[0] + pos[1] * pos[1]), 1.0);
 
     gl_position.* = .{ pos[0], pos[1], 0.0, 1.0 };
     out_color.* = .{ radial, 1.0 - radial, 0.25 };

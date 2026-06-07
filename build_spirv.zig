@@ -42,8 +42,10 @@ pub const SpirvShaderPair = struct {
             .use_lld = false,
         });
 
-        const install_vert = b.addInstallFile(vert.getEmittedBin(), b.fmt("shaders/{s}.vert.spv", .{self.name}));
-        const install_frag = b.addInstallFile(frag.getEmittedBin(), b.fmt("shaders/{s}.frag.spv", .{self.name}));
+        const optimized_vert = optimizeSpirv(b, vert.getEmittedBin(), b.fmt("{s}.vert.opt.spv", .{self.name}));
+        const optimized_frag = optimizeSpirv(b, frag.getEmittedBin(), b.fmt("{s}.frag.opt.spv", .{self.name}));
+        const install_vert = b.addInstallFile(optimized_vert, b.fmt("shaders/{s}.vert.spv", .{self.name}));
+        const install_frag = b.addInstallFile(optimized_frag, b.fmt("shaders/{s}.frag.spv", .{self.name}));
 
         cfg.pair_step.dependOn(&vert.step);
         cfg.pair_step.dependOn(&install_vert.step);
@@ -52,12 +54,32 @@ pub const SpirvShaderPair = struct {
     }
 };
 
+fn optimizeSpirv(b: *std.Build, input: std.Build.LazyPath, basename: []const u8) std.Build.LazyPath {
+    const optimize_cmd = b.addSystemCommand(&.{
+        "spirv-opt",
+        "--skip-validation",
+        "--eliminate-dead-functions",
+        "--eliminate-dead-code-aggressive",
+        "--eliminate-local-single-block",
+        "--eliminate-local-single-store",
+    });
+    optimize_cmd.addFileArg(input);
+    optimize_cmd.addArg("-o");
+    return optimize_cmd.addOutputFileArg(basename);
+}
+
+pub const SpirvSteps = struct {
+    vga: *std.Build.Step,
+    raw: *std.Build.Step,
+    compare: *std.Build.Step,
+};
+
 pub fn addSpirvSteps(
     b: *std.Build,
     optimize: std.builtin.OptimizeMode,
     use_llvm_spirv: bool,
     compare_spirv: bool,
-) void {
+) SpirvSteps {
     const spirv_target = b.resolveTargetQuery(.{
         .cpu_arch = .spirv32,
         .os_tag = .vulkan,
@@ -123,9 +145,14 @@ pub fn addSpirvSteps(
     });
 
     const spirv_step = b.step("spirv-vga", "Build the VGA-based SPIR-V vertex and fragment shaders");
+    const spirv_raw_step = b.step("spirv-raw", "Build raw SPIR-V vertex and fragment shaders for driver baselines");
     const spirv_compare_step = b.step("spirv-compare", "Build GA and raw SPIR-V vertex shader variants for size comparison");
 
     const spirv_shader_imports = [_]std.Build.Module.Import{
+        .{
+            .name = "ga",
+            .module = spirv_ga,
+        },
         .{
             .name = "vga",
             .module = spirv_vga,
@@ -145,26 +172,46 @@ pub fn addSpirvSteps(
         .pair_step = spirv_step,
     });
 
+    const raw_shader_imports = [_]std.Build.Module.Import{.{
+        .name = "build_options",
+        .module = spirv_build_options_module,
+    }};
+
     const raw_vert = b.addObject(.{
         .name = "vga_passthrough_raw.vert",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/shaders/vga_passthrough_raw.vert.zig"),
+            .root_source_file = b.path("src/shaders/vga_passthrough_compare_raw.vert.zig"),
             .target = spirv_target,
             .optimize = optimize,
             .strip = true,
-            .imports = &.{
-                .{
-                    .name = "build_options",
-                    .module = spirv_build_options_module,
-                },
-            },
+            .imports = &raw_shader_imports,
         }),
         .use_llvm = use_llvm_spirv,
         .use_lld = false,
     });
-    const install_raw_vert = b.addInstallFile(raw_vert.getEmittedBin(), "shaders/vga_passthrough_raw.vert.spv");
+    const optimized_raw_vert = optimizeSpirv(b, raw_vert.getEmittedBin(), "vga_passthrough_raw.vert.opt.spv");
+    const install_raw_vert = b.addInstallFile(optimized_raw_vert, "shaders/vga_passthrough_raw.vert.spv");
+    spirv_raw_step.dependOn(&raw_vert.step);
+    spirv_raw_step.dependOn(&install_raw_vert.step);
     spirv_compare_step.dependOn(&raw_vert.step);
     spirv_compare_step.dependOn(&install_raw_vert.step);
+
+    const raw_frag = b.addObject(.{
+        .name = "vga_passthrough_raw.frag",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/shaders/vga_passthrough_raw.frag.zig"),
+            .target = spirv_target,
+            .optimize = optimize,
+            .strip = true,
+            .imports = &raw_shader_imports,
+        }),
+        .use_llvm = use_llvm_spirv,
+        .use_lld = false,
+    });
+    const optimized_raw_frag = optimizeSpirv(b, raw_frag.getEmittedBin(), "vga_passthrough_raw.frag.opt.spv");
+    const install_raw_frag = b.addInstallFile(optimized_raw_frag, "shaders/vga_passthrough_raw.frag.spv");
+    spirv_raw_step.dependOn(&raw_frag.step);
+    spirv_raw_step.dependOn(&install_raw_frag.step);
 
     const ga_vert = b.addObject(.{
         .name = "vga_passthrough.vert",
@@ -178,7 +225,8 @@ pub fn addSpirvSteps(
         .use_llvm = use_llvm_spirv,
         .use_lld = false,
     });
-    const install_ga_vert = b.addInstallFile(ga_vert.getEmittedBin(), "shaders/vga_passthrough_ga.vert.spv");
+    const optimized_ga_vert = optimizeSpirv(b, ga_vert.getEmittedBin(), "vga_passthrough_ga.vert.opt.spv");
+    const install_ga_vert = b.addInstallFile(optimized_ga_vert, "shaders/vga_passthrough_ga.vert.spv");
     spirv_compare_step.dependOn(&ga_vert.step);
     spirv_compare_step.dependOn(&install_ga_vert.step);
 
@@ -188,4 +236,10 @@ pub fn addSpirvSteps(
         compare_sizes_cmd.step.dependOn(&install_raw_vert.step);
         spirv_compare_step.dependOn(&compare_sizes_cmd.step);
     }
+
+    return .{
+        .vga = spirv_step,
+        .raw = spirv_raw_step,
+        .compare = spirv_compare_step,
+    };
 }

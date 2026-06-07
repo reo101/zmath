@@ -39,7 +39,8 @@
           }:
           let
             zig = inputs'.zig-flake.packages.zig_0_16_0;
-            raylibBuildInputs = [
+            nativeGraphicsInputs = [
+              pkgs.glfw
               pkgs.libGL
               pkgs.libx11
               pkgs.libxcursor
@@ -49,10 +50,12 @@
               pkgs.libxinerama
               pkgs.libxrandr
               pkgs.libxrender
+              pkgs.vulkan-headers
+              pkgs.vulkan-loader
             ];
-            raylibLibraryPath = lib.makeLibraryPath raylibBuildInputs;
-            raylibIncludePath = lib.makeSearchPathOutput "dev" "include" raylibBuildInputs;
-            raylibPkgConfigPath = lib.makeSearchPathOutput "dev" "lib/pkgconfig" raylibBuildInputs;
+            nativeGraphicsLibraryPath = lib.makeLibraryPath nativeGraphicsInputs;
+            nativeGraphicsIncludePath = lib.makeSearchPathOutput "dev" "include" nativeGraphicsInputs;
+            nativeGraphicsPkgConfigPath = lib.makeSearchPathOutput "dev" "lib/pkgconfig" nativeGraphicsInputs;
           in
           {
             devShells.default = pkgs.mkShell {
@@ -60,14 +63,16 @@
                 zig
                 inputs'.zls.packages.default
                 pkgs.pkg-config
+                pkgs.spirv-tools
+                pkgs.vulkan-tools
               ];
-              buildInputs = raylibBuildInputs;
+              buildInputs = nativeGraphicsInputs;
 
               env = {
-                PKG_CONFIG_PATH = raylibPkgConfigPath;
-                C_INCLUDE_PATH = raylibIncludePath;
-                LIBRARY_PATH = raylibLibraryPath;
-                LD_LIBRARY_PATH = raylibLibraryPath;
+                PKG_CONFIG_PATH = nativeGraphicsPkgConfigPath;
+                C_INCLUDE_PATH = nativeGraphicsIncludePath;
+                LIBRARY_PATH = nativeGraphicsLibraryPath;
+                LD_LIBRARY_PATH = nativeGraphicsLibraryPath;
               };
             };
           };

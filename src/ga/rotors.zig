@@ -82,14 +82,14 @@ fn assertFloatMultivector(comptime M: type) void {
 }
 
 /// Returns the Euclidean norm squared of a multivector.
-pub fn normSquared(mv: anytype) @TypeOf(mv).Coefficient {
+pub inline fn normSquared(mv: anytype) @TypeOf(mv).Coefficient {
     const M = @TypeOf(mv);
     comptime assertFloatMultivector(M);
     return mv.scalarProduct(mv);
 }
 
 /// Returns the Euclidean norm of a multivector.
-pub fn norm(mv: anytype) @TypeOf(mv).Coefficient {
+pub inline fn norm(mv: anytype) @TypeOf(mv).Coefficient {
     const M = @TypeOf(mv);
     comptime assertFloatMultivector(M);
     return @sqrt(normSquared(mv));

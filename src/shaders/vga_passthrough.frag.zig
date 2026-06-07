@@ -1,19 +1,27 @@
 const std = @import("std");
+const ga = @import("ga");
 const vga = @import("vga");
 
 fn Vec(n: usize) type {
-    return vga.ga.Algebra(.euclidean(n)).Vector(f32);
+    return ga.Algebra(.euclidean(n)).Vector(f32);
 }
 
 /// Interpolated color from the vertex shader.
-pub extern var in_color: Vec(3) addrspace(.input);
+pub const in_color = @extern(*addrspace(.input) @Vector(3, f32), .{
+    .name = "in_color",
+    .decoration = .{ .location = 0 },
+});
 
 /// Final fragment color.
-pub extern var out_color: Vec(4) addrspace(.output);
+pub const out_color = @extern(*addrspace(.output) @Vector(4, f32), .{
+    .name = "out_color",
+    .decoration = .{ .location = 0 },
+});
 
 export fn main() callconv(.spirv_fragment) void {
-    const color_xy = Vec(2).initStorage(.{ in_color.coeffs[0], in_color.coeffs[1] });
+    const color = in_color.*;
+    const color_xy = Vec(2).initStorage(.{ color[0], color[1] });
     const intensity = @min(vga.norm(color_xy), 1.0);
 
-    out_color = Vec(4).initStorage(.{ color_xy.coeffs[0], color_xy.coeffs[1], in_color.coeffs[2], intensity });
+    out_color.* = .{ color[0], color[1], color[2], intensity };
 }

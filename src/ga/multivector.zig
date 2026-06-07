@@ -81,6 +81,7 @@ pub fn ensureMultivector(comptime T: type) void {
 
 fn isSimdCoeffType(comptime T: type) bool {
     return switch (@typeInfo(T)) {
+        .int => true,
         .float => true,
         else => false,
     };
@@ -95,23 +96,31 @@ fn StorageFor(comptime T: type, comptime lane_count: usize) type {
 }
 
 inline fn coeffsToStorage(comptime T: type, comptime lane_count: usize, coeffs: [lane_count]T) StorageFor(T, lane_count) {
-    return if (comptime canUseLaneWiseSimd(T, lane_count)) @bitCast(coeffs) else coeffs;
+    return if (comptime canUseLaneWiseSimd(T, lane_count)) coeffsToSimd(T, lane_count, coeffs) else coeffs;
 }
 
 inline fn storageToCoeffs(comptime T: type, comptime lane_count: usize, storage: StorageFor(T, lane_count)) [lane_count]T {
-    return if (comptime canUseLaneWiseSimd(T, lane_count)) @bitCast(storage) else storage;
+    return if (comptime canUseLaneWiseSimd(T, lane_count)) simdToCoeffs(T, lane_count, storage) else storage;
 }
 
 inline fn coeffsToSimd(comptime T: type, comptime lane_count: usize, coeffs: [lane_count]T) @Vector(lane_count, T) {
-    return @bitCast(coeffs);
+    var vector: @Vector(lane_count, T) = undefined;
+    inline for (0..lane_count) |lane| {
+        vector[lane] = coeffs[lane];
+    }
+    return vector;
 }
 
 inline fn storageToSimd(comptime T: type, comptime lane_count: usize, storage: StorageFor(T, lane_count)) @Vector(lane_count, T) {
-    return if (comptime canUseLaneWiseSimd(T, lane_count)) storage else @bitCast(storage);
+    return if (comptime canUseLaneWiseSimd(T, lane_count)) storage else coeffsToSimd(T, lane_count, storage);
 }
 
 inline fn simdToCoeffs(comptime T: type, comptime lane_count: usize, vector: @Vector(lane_count, T)) [lane_count]T {
-    return @bitCast(vector);
+    var coeffs: [lane_count]T = undefined;
+    inline for (0..lane_count) |lane| {
+        coeffs[lane] = vector[lane];
+    }
+    return coeffs;
 }
 
 fn scalarProductSigns(comptime T: type, comptime masks: []const BladeMask, comptime sig: MetricSignature) [masks.len]T {
@@ -120,6 +129,13 @@ fn scalarProductSigns(comptime T: type, comptime masks: []const BladeMask, compt
         signs[index] = @intFromEnum(mask.geometricProductClassWithSignature(mask, sig));
     }
     return signs;
+}
+
+fn scalarProductSignsArePositive(comptime masks: []const BladeMask, comptime sig: MetricSignature) bool {
+    inline for (masks) |mask| {
+        if (mask.geometricProductClassWithSignature(mask, sig) != .positive) return false;
+    }
+    return true;
 }
 
 fn countMarkedMasks(comptime dimensions: usize, comptime marked: [blade_ops.bladeCount(dimensions)]bool) usize {
@@ -475,7 +491,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
 
         /// Initializes the multivector from coefficients in `blades` order.
         pub inline fn init(coeffs: [stored_blade_count]T) Self {
-            return .{ .coeffs = coeffsToStorage(T, stored_blade_count, coeffs) };
+            return .initStorage(coeffsToStorage(T, stored_blade_count, coeffs));
         }
 
         /// Initializes the multivector from its underlying coefficient storage.
@@ -841,15 +857,18 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         }
 
         /// Returns the scalar product between two multivectors.
-        pub fn scalarProduct(self: Self, rhs: anytype) T {
+        pub inline fn scalarProduct(self: Self, rhs: anytype) T {
             const Rhs = @TypeOf(rhs);
             comptime assertCompatibleMultivector(Self, Rhs);
 
             if (comptime blade_ops.sameBladeSet(blade_masks, Rhs.blades) and canUseLaneWiseSimd(T, Self.stored_blade_count)) {
+                const lhs_lanes = storageToSimd(T, Self.stored_blade_count, self.coeffs);
+                const rhs_lanes = storageToSimd(T, Self.stored_blade_count, rhs.coeffs);
+                if (comptime scalarProductSignsArePositive(blade_masks, sig)) {
+                    return @reduce(.Add, lhs_lanes * rhs_lanes);
+                }
                 const signs = comptime scalarProductSigns(T, blade_masks, sig);
-                const lhs_lanes = coeffsToSimd(T, Self.stored_blade_count, self.coeffsArray());
-                const rhs_lanes = coeffsToSimd(T, Self.stored_blade_count, rhs.coeffsArray());
-                const sign_lanes = coeffsToSimd(T, Self.stored_blade_count, signs);
+                const sign_lanes = comptime coeffsToSimd(T, Self.stored_blade_count, signs);
                 return @reduce(.Add, lhs_lanes * rhs_lanes * sign_lanes);
             }
 
@@ -926,17 +945,17 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         }
 
         /// Returns the Euclidean norm squared of this multivector.
-        pub fn normSquared(self: Self) T {
+        pub inline fn normSquared(self: Self) T {
             return self.scalarProduct(self);
         }
 
         /// Returns the Euclidean norm (magnitude) of this multivector.
-        pub fn norm(self: Self) T {
+        pub inline fn norm(self: Self) T {
             return @sqrt(@abs(self.scalarProduct(self)));
         }
 
         /// Returns the Euclidean norm (magnitude) of this multivector.
-        pub fn magnitude(self: Self) T {
+        pub inline fn magnitude(self: Self) T {
             return self.norm();
         }
 
