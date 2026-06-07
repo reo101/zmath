@@ -123,6 +123,99 @@ inline fn simdToCoeffs(comptime T: type, comptime lane_count: usize, vector: @Ve
     return coeffs;
 }
 
+fn xyzwComponentIndex(comptime lane_count: usize, comptime component_name: u8) i32 {
+    return switch (component_name) {
+        'x' => 0,
+        'y' => if (lane_count >= 2) 1 else @compileError("swizzle component `y` is not available"),
+        'z' => if (lane_count >= 3) 2 else @compileError("swizzle component `z` is not available"),
+        'w' => if (lane_count >= 4) 3 else @compileError("swizzle component `w` is not available"),
+        else => @compileError("swizzle components must be one of `x`, `y`, `z`, or `w`"),
+    };
+}
+
+fn swizzleMask(comptime lane_count: usize, comptime pattern: []const u8) @Vector(pattern.len, i32) {
+    if (pattern.len == 0 or pattern.len > 4) {
+        @compileError("swizzle pattern length must be between 1 and 4");
+    }
+
+    var mask: @Vector(pattern.len, i32) = undefined;
+    inline for (pattern, 0..) |component_name, index| {
+        mask[index] = xyzwComponentIndex(lane_count, component_name);
+    }
+    return mask;
+}
+
+fn swizzleIsIdentity(comptime lane_count: usize, comptime pattern: []const u8) bool {
+    if (pattern.len != lane_count) return false;
+    inline for (pattern, 0..) |component_name, index| {
+        if (xyzwComponentIndex(lane_count, component_name) != index) return false;
+    }
+    return true;
+}
+
+inline fn swizzleSimd(comptime T: type, comptime lane_count: usize, lanes: @Vector(lane_count, T), comptime pattern: []const u8) @Vector(pattern.len, T) {
+    if (comptime !isSimdCoeffType(T)) {
+        @compileError("vector swizzles require integer or float coefficients");
+    }
+    if (comptime swizzleIsIdentity(lane_count, pattern)) {
+        return lanes;
+    }
+    return @shuffle(T, lanes, undefined, swizzleMask(lane_count, pattern));
+}
+
+fn NamedValue(comptime T: type, comptime field_names: anytype) type {
+    return @Struct(
+        .auto,
+        null,
+        field_names[0..],
+        &@splat(T),
+        &@splat(.{}),
+    );
+}
+
+fn NamedPtrViewType(comptime T: type, comptime field_names: anytype) type {
+    return @Struct(
+        .@"extern",
+        null,
+        field_names[0..],
+        &@splat(T),
+        &@splat(.{}),
+    );
+}
+
+fn xyzwFieldNames(comptime lane_count: usize) [lane_count][]const u8 {
+    if (lane_count < 1 or lane_count > 4) {
+        @compileError("xyzw named access requires 1 to 4 coefficients");
+    }
+
+    const all = [_][]const u8{ "x", "y", "z", "w" };
+    var names: [lane_count][]const u8 = undefined;
+    inline for (0..lane_count) |lane| {
+        names[lane] = all[lane];
+    }
+    return names;
+}
+
+fn XyzwNamed(comptime T: type, comptime lane_count: usize) type {
+    const field_names = comptime xyzwFieldNames(lane_count);
+    return @Struct(
+        .auto,
+        null,
+        field_names[0..],
+        &@splat(T),
+        &@splat(.{}),
+    );
+}
+
+fn initXyzwNamed(comptime T: type, comptime lane_count: usize, lanes: @Vector(lane_count, T)) XyzwNamed(T, lane_count) {
+    const field_names = comptime xyzwFieldNames(lane_count);
+    var result: XyzwNamed(T, lane_count) = undefined;
+    inline for (field_names, 0..) |field_name, index| {
+        @field(result, field_name) = lanes[index];
+    }
+    return result;
+}
+
 fn scalarProductSigns(comptime T: type, comptime masks: []const BladeMask, comptime sig: MetricSignature) [masks.len]T {
     var signs: [masks.len]T = undefined;
     inline for (masks, 0..) |mask, index| {
@@ -266,6 +359,29 @@ fn writeBlade(
     }
 }
 
+fn namedIndexName(comptime named_index: usize) []const u8 {
+    const arch = @import("builtin").target.cpu.arch;
+    if (arch == .spirv32 or arch == .spirv64) {
+        // HACK: Use a literal lookup on SPIR-V because
+        // `std.fmt.comptimePrint` in this name table crashes
+        // Zig's SPIR-V backend when `.named()` is referenced.
+        return switch (named_index) {
+            0 => "0",
+            1 => "1",
+            2 => "2",
+            3 => "3",
+            4 => "4",
+            5 => "5",
+            6 => "6",
+            7 => "7",
+            8 => "8",
+            9 => "9",
+            else => @compileError("SPIR-V named coefficient views only support basis indices 0 through 9"),
+        };
+    }
+    return std.fmt.comptimePrint("{d}", .{named_index});
+}
+
 fn bladeName(comptime mask: BladeMask, comptime dimensions: usize, comptime prefix: ?u8, comptime basis_names: []const []const u8) []const u8 {
     @setEvalBranchQuota(5_000_000);
     if (mask.toInt() == 0) return "s";
@@ -348,8 +464,8 @@ fn signedBladeImpl(
 /// This type is the core of the geometric algebra library. It provides:
 /// - **Storage**: Compact representation of multivectors as coefficients.
 ///   Small floating-point carriers use Zig SIMD vectors directly.
-/// - **Named Fields**: Layout-compatible access to coefficients using basis-blade
-///   names (e.g. `.named().e12`) for algebras with up to 5 dimensions.
+/// - **Named Fields**: Value access to coefficients using basis-blade names
+///   (e.g. `.named().e12`) for algebras with up to 5 dimensions.
 /// - **GA Operations**: Type-safe implementations of the geometric product (`.gp()`),
 ///   wedge product (`.wedge()`), dot products, contractions, and more.
 /// - **Metric Awareness**: A concrete metric signature is baked in via `sig`,
@@ -398,9 +514,9 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         pub const use_simd = canUseLaneWiseSimd(T, stored_blade_count);
         /// The underlying storage type.
         pub const Storage = StorageFor(T, stored_blade_count);
-        /// An `extern struct` providing named field access to coefficients.
+        /// Field names used by `Named` in coefficient storage order.
         /// Only populated for algebras with up to 5 dimensions.
-        pub const Named = if (dimensions <= 5) off: {
+        pub const named_field_names = if (dimensions <= 5) names: {
             const basis_names = blk: {
                 var names: [dimensions][]const u8 = undefined;
                 for (1..dimensions + 1, &names) |i, *name| {
@@ -408,26 +524,23 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
                         name.* = custom_names[i - 1];
                     } else {
                         const named_index = naming_options.basis_spans.resolveInternalToNamed(i, dimensions).?;
-                        name.* = std.fmt.comptimePrint("{d}", .{named_index});
+                        name.* = namedIndexName(named_index);
                     }
                 }
                 break :blk names;
             };
 
             var field_names: [stored_blade_count][]const u8 = undefined;
-
             for (blade_masks, 0..) |mask, i| {
                 field_names[i] = bladeName(mask, dimensions, if (naming_options.basis_names != null) null else naming_options.basis_prefix, &basis_names);
             }
+            break :names field_names;
+        } else [_][]const u8{};
 
-            break :off @Struct(
-                .@"extern",
-                null,
-                field_names[0..],
-                &@splat(T),
-                &@splat(.{}),
-            );
-        } else extern struct {};
+        /// A value type providing named field access to coefficients.
+        /// Only populated for algebras with up to 5 dimensions.
+        pub const Named = if (dimensions <= 5) NamedValue(T, named_field_names) else struct {};
+        pub const NamedPtrView = if (dimensions <= 5) NamedPtrViewType(T, named_field_names) else extern struct {};
 
         /// Compact storage of all represented coefficients.
         coeffs: Storage,
@@ -437,17 +550,97 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         fn NamedPtrType(comptime Ptr: type) type {
             const info = @typeInfo(Ptr);
             if (info != .pointer or info.pointer.size != .one or info.pointer.child != Self) {
-                @compileError("named() expects a multivector pointer receiver");
+                @compileError("namedPtr() expects a multivector pointer receiver");
             }
-            return if (info.pointer.is_const) *const Named else *Named;
+            return if (info.pointer.is_const) *const NamedPtrView else *NamedPtrView;
         }
 
-        /// Layout-compatible view providing named field access (e.g. `.named().e12`).
-        pub inline fn named(self: anytype) NamedPtrType(@TypeOf(self)) {
+        /// Returns a value providing named field access (e.g. `.named().e12`).
+        pub inline fn named(self: Self) Named {
             if (comptime dimensions > 5) {
                 @compileError("named coefficient access is only available for algebras with at most 5 dimensions");
             }
+            const coeffs_array = self.coeffsArray();
+            var result: Named = undefined;
+            inline for (named_field_names, 0..) |field_name, index| {
+                @field(result, field_name) = coeffs_array[index];
+            }
+            return result;
+        }
+
+        /// Returns a layout-compatible named pointer view for non-SIMD storage.
+        pub inline fn namedPtr(self: anytype) NamedPtrType(@TypeOf(self)) {
+            if (comptime dimensions > 5) {
+                @compileError("named pointer access is only available for algebras with at most 5 dimensions");
+            }
+            if (comptime canUseLaneWiseSimd(T, Self.stored_blade_count)) {
+                @compileError("namedPtr() is unavailable for SIMD-backed carriers; use named() instead");
+            }
             return @ptrCast(&self.coeffs);
+        }
+
+        fn assertXyzwVectorCarrier() void {
+            if (dimensions == 0 or dimensions > 4) {
+                @compileError("xyzw access requires a 1D to 4D vector carrier");
+            }
+            if (!blade_ops.sameBladeSet(blade_masks, &blade_ops.gradeBladeMasks(dimensions, 1))) {
+                @compileError("xyzw access is only available on grade-1 vector carriers");
+            }
+        }
+
+        /// A value type with generated `x`, `y`, `z`, `w` fields.
+        pub const Xyzw = if (stored_blade_count >= 1 and stored_blade_count <= 4) XyzwNamed(T, stored_blade_count) else struct {};
+
+        /// Returns `x`/`y`/`z`/`w` named access for vector coefficients.
+        pub inline fn xyzw(self: Self) Xyzw {
+            comptime assertXyzwVectorCarrier();
+            return initXyzwNamed(T, stored_blade_count, storageToSimd(T, stored_blade_count, self.coeffs));
+        }
+
+        /// Returns the vector `x` component.
+        pub inline fn x(self: Self) T {
+            return self.swizzle("x")[0];
+        }
+
+        /// Returns the vector `y` component.
+        pub inline fn y(self: Self) T {
+            return self.swizzle("y")[0];
+        }
+
+        /// Returns the vector `z` component.
+        pub inline fn z(self: Self) T {
+            return self.swizzle("z")[0];
+        }
+
+        /// Returns the vector `w` component.
+        pub inline fn w(self: Self) T {
+            return self.swizzle("w")[0];
+        }
+
+        /// Returns a SIMD vector swizzle of `x`, `y`, `z`, and `w` components.
+        pub inline fn swizzle(self: Self, comptime pattern: []const u8) @Vector(pattern.len, T) {
+            comptime assertXyzwVectorCarrier();
+            return swizzleSimd(T, stored_blade_count, storageToSimd(T, stored_blade_count, self.coeffs), pattern);
+        }
+
+        /// Returns an array swizzle of `x`, `y`, `z`, and `w` components.
+        pub inline fn swizzleArray(self: Self, comptime pattern: []const u8) [pattern.len]T {
+            return simdToCoeffs(T, pattern.len, self.swizzle(pattern));
+        }
+
+        /// Returns the `xy` swizzle.
+        pub inline fn xy(self: Self) @Vector(2, T) {
+            return self.swizzle("xy");
+        }
+
+        /// Returns the `xyz` swizzle.
+        pub inline fn xyz(self: Self) @Vector(3, T) {
+            return self.swizzle("xyz");
+        }
+
+        /// Returns the `xyzw` swizzle.
+        pub inline fn xyzwVector(self: Self) @Vector(4, T) {
+            return self.swizzle("xyzw");
         }
 
         /// Returns a multivector type for the same coefficient type and signature
@@ -577,7 +770,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         }
 
         /// Returns the coefficient of a (comptime/runtime) blade mask.
-        pub fn coeff(self: Self, mask: BladeMask) T {
+        pub inline fn coeff(self: Self, mask: BladeMask) T {
             if (@inComptime()) {
                 if (comptime mask.toInt() >= blade_ops.bladeCount(dimensions)) {
                     @compileError("blade mask outside the algebra dimensions");
@@ -599,22 +792,23 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
 
         /// Returns the coefficient for a signed-blade name such as `e12`.
         /// Uses this carrier's configured naming options.
-        pub fn coeffNamed(self: Self, comptime name: []const u8) T {
+        pub inline fn coeffNamed(self: Self, comptime name: []const u8) T {
             return self.coeffNamedWithOptions(name, naming_options);
         }
 
         /// Returns the coefficient for a signed-blade name under naming options.
-        pub fn coeffNamedWithOptions(
+        pub inline fn coeffNamedWithOptions(
             self: Self,
             comptime name: []const u8,
             comptime options: blade_parsing.SignedBladeNamingOptions,
         ) T {
+            @setEvalBranchQuota(10_000);
             const spec = comptime blade_parsing.parseSignedBlade(name, dimensions, options, true);
             return self.coeff(spec.mask) * @intFromEnum(spec.sign);
         }
 
         /// Returns the scalar coefficient.
-        pub fn scalarCoeff(self: Self) T {
+        pub inline fn scalarCoeff(self: Self) T {
             return self.coeff(BladeMask.init(0));
         }
 
@@ -1595,6 +1789,19 @@ test "multivector Named struct supports alias fields without a prefix" {
     try std.testing.expectEqual(@as(f32, 1.0), v.coeffNamed("x"));
     try std.testing.expectEqual(@as(f32, 2.0), v.coeffNamed("y"));
     try std.testing.expect(E2.signedBlade("x").eql(E2.e(1)));
+}
+
+test "vector xyzw helpers expose fields and swizzles" {
+    const Vec4 = Vector(f32, .euclidean(4));
+    const v = Vec4.init(.{ 1.0, 2.0, 3.0, 4.0 });
+    const n = v.xyzw();
+
+    try std.testing.expectEqual(@as(f32, 1.0), n.x);
+    try std.testing.expectEqual(@as(f32, 4.0), n.w);
+    try std.testing.expectEqual([_]f32{ 3.0, 2.0, 1.0 }, v.swizzleArray("zyx"));
+    try std.testing.expectEqual(@Vector(2, f32){ 1.0, 2.0 }, v.xy());
+    try std.testing.expectEqual(@as(f32, 1.0), v.x());
+    try std.testing.expectEqual(@Vector(3, f32){ 4.0, 2.0, 4.0 }, v.swizzle("wyw"));
 }
 
 test "free signed blade helpers preserve explicit naming options" {
