@@ -20,8 +20,8 @@ pub const out_color = @extern(*addrspace(.output) @Vector(4, f32), .{
 
 export fn main() callconv(.spirv_fragment) void {
     const color: Vec(3) = .initStorage(in_color.*);
-    const color_xy: Vec(2) = .initStorage(color.xy());
-    const rgb = color.xyz();
+    const color_xy = color.swizzleVector("xy");
+    const rgb = color.swizzle("xyz");
     const intensity = @min(vga.norm(color_xy), 1.0);
 
     out_color.* = .{ rgb[0], rgb[1], rgb[2], intensity };

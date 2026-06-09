@@ -91,12 +91,42 @@ fn canUseLaneWiseSimd(comptime T: type, comptime lane_count: usize) bool {
     return isSimdCoeffType(T) and lane_count >= 2 and lane_count <= 4;
 }
 
+fn XyzwStorageFields(comptime T: type, comptime lane_count: usize) type {
+    const component_names = [_][]const u8{ "x", "y", "z", "w" };
+
+    var field_names: [lane_count][]const u8 = undefined;
+    var field_types: [lane_count]type = undefined;
+    inline for (0..lane_count) |lane| {
+        field_names[lane] = component_names[lane];
+        field_types[lane] = T;
+    }
+
+    return @Struct(
+        .@"extern",
+        null,
+        field_names[0..],
+        field_types[0..],
+        &@splat(.{}),
+    );
+}
+
+fn SimdStorageFor(comptime T: type, comptime lane_count: usize) type {
+    return extern union {
+        raw: @Vector(lane_count, T),
+        xyzw: XyzwStorageFields(T, lane_count),
+    };
+}
+
 fn StorageFor(comptime T: type, comptime lane_count: usize) type {
     return if (comptime canUseLaneWiseSimd(T, lane_count)) @Vector(lane_count, T) else [lane_count]T;
 }
 
 inline fn coeffsToStorage(comptime T: type, comptime lane_count: usize, coeffs: [lane_count]T) StorageFor(T, lane_count) {
     return if (comptime canUseLaneWiseSimd(T, lane_count)) coeffsToSimd(T, lane_count, coeffs) else coeffs;
+}
+
+inline fn rawToStorage(comptime T: type, comptime lane_count: usize, raw: @Vector(lane_count, T)) StorageFor(T, lane_count) {
+    return if (comptime canUseLaneWiseSimd(T, lane_count)) raw else simdToCoeffs(T, lane_count, raw);
 }
 
 inline fn storageToCoeffs(comptime T: type, comptime lane_count: usize, storage: StorageFor(T, lane_count)) [lane_count]T {
@@ -153,6 +183,19 @@ fn swizzleIsIdentity(comptime lane_count: usize, comptime pattern: []const u8) b
     return true;
 }
 
+fn swizzleBladeMasks(comptime dimensions: usize, comptime pattern: []const u8) [pattern.len]BladeMask {
+    var masks: [pattern.len]BladeMask = undefined;
+    inline for (pattern, 0..) |component_name, index| {
+        inline for (pattern[0..index]) |previous| {
+            if (component_name == previous) {
+                @compileError("swizzleVector() patterns cannot contain duplicate components");
+            }
+        }
+        masks[index] = blade_ops.basisVectorMask(dimensions, @intCast(xyzwComponentIndex(dimensions, component_name) + 1));
+    }
+    return masks;
+}
+
 inline fn swizzleSimd(comptime T: type, comptime lane_count: usize, lanes: @Vector(lane_count, T), comptime pattern: []const u8) @Vector(pattern.len, T) {
     if (comptime !isSimdCoeffType(T)) {
         @compileError("vector swizzles require integer or float coefficients");
@@ -188,39 +231,6 @@ fn NamedPtrViewType(comptime T: type, comptime field_names: anytype) type {
         &@splat(T),
         &@splat(.{}),
     );
-}
-
-fn xyzwFieldNames(comptime lane_count: usize) [lane_count][]const u8 {
-    if (lane_count < 1 or lane_count > 4) {
-        @compileError("xyzw named access requires 1 to 4 coefficients");
-    }
-
-    const all = [_][]const u8{ "x", "y", "z", "w" };
-    var names: [lane_count][]const u8 = undefined;
-    inline for (0..lane_count) |lane| {
-        names[lane] = all[lane];
-    }
-    return names;
-}
-
-fn XyzwNamed(comptime T: type, comptime lane_count: usize) type {
-    const field_names = comptime xyzwFieldNames(lane_count);
-    return @Struct(
-        .auto,
-        null,
-        field_names[0..],
-        &@splat(T),
-        &@splat(.{}),
-    );
-}
-
-fn initXyzwNamed(comptime T: type, comptime lane_count: usize, lanes: @Vector(lane_count, T)) XyzwNamed(T, lane_count) {
-    const field_names = comptime xyzwFieldNames(lane_count);
-    var result: XyzwNamed(T, lane_count) = undefined;
-    inline for (field_names, 0..) |field_name, index| {
-        @field(result, field_name) = lanes[index];
-    }
-    return result;
 }
 
 fn scalarProductSigns(comptime T: type, comptime masks: []const BladeMask, comptime sig: MetricSignature) [masks.len]T {
@@ -605,33 +615,13 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             }
         }
 
-        /// A value type with generated `x`, `y`, `z`, `w` fields.
-        pub const Xyzw = if (stored_blade_count >= 1 and stored_blade_count <= 4) XyzwNamed(T, stored_blade_count) else struct {};
-
-        /// Returns `x`/`y`/`z`/`w` named access for vector coefficients.
-        pub inline fn xyzw(self: Self) Xyzw {
+        /// Returns a union view over raw SIMD storage and generated `x/y/z/w` fields.
+        pub inline fn storageView(self: Self) SimdStorageFor(T, stored_blade_count) {
+            if (comptime isSpirvTarget()) {
+                @compileError("storageView() is unavailable on SPIR-V; union views generate invalid logical-pointer IR");
+            }
             comptime assertXyzwVectorCarrier();
-            return initXyzwNamed(T, stored_blade_count, storageToSimd(T, stored_blade_count, self.coeffs));
-        }
-
-        /// Returns the vector `x` component.
-        pub inline fn x(self: Self) T {
-            return self.swizzle("x")[0];
-        }
-
-        /// Returns the vector `y` component.
-        pub inline fn y(self: Self) T {
-            return self.swizzle("y")[0];
-        }
-
-        /// Returns the vector `z` component.
-        pub inline fn z(self: Self) T {
-            return self.swizzle("z")[0];
-        }
-
-        /// Returns the vector `w` component.
-        pub inline fn w(self: Self) T {
-            return self.swizzle("w")[0];
+            return .{ .raw = storageToSimd(T, stored_blade_count, self.coeffs) };
         }
 
         /// Returns a SIMD vector swizzle of `x`, `y`, `z`, and `w` components.
@@ -640,24 +630,18 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             return swizzleSimd(T, stored_blade_count, storageToSimd(T, stored_blade_count, self.coeffs), pattern);
         }
 
-        /// Returns an array swizzle of `x`, `y`, `z`, and `w` components.
-        pub inline fn swizzleArray(self: Self, comptime pattern: []const u8) [pattern.len]T {
-            return simdToCoeffs(T, pattern.len, self.swizzle(pattern));
-        }
-
-        /// Returns the `xy` swizzle.
-        pub inline fn xy(self: Self) @Vector(2, T) {
-            return self.swizzle("xy");
-        }
-
-        /// Returns the `xyz` swizzle.
-        pub inline fn xyz(self: Self) @Vector(3, T) {
-            return self.swizzle("xyz");
-        }
-
-        /// Returns the `xyzw` swizzle.
-        pub inline fn xyzwVector(self: Self) @Vector(4, T) {
-            return self.swizzle("xyzw");
+        /// Returns a same-algebra grade-1 carrier from a swizzle pattern.
+        ///
+        /// Unlike `swizzle()`, this returns a multivector with the selected
+        /// basis-vector masks and a smaller coefficient store. Repeated
+        /// components are rejected because a multivector cannot store the same
+        /// basis blade twice.
+        pub inline fn swizzleVector(self: Self, comptime pattern: []const u8) Rebind(&swizzleBladeMasks(dimensions, pattern)) {
+            const lanes = self.swizzle(pattern);
+            if (comptime canUseLaneWiseSimd(T, pattern.len)) {
+                return .initStorage(lanes);
+            }
+            return .init(simdToCoeffs(T, pattern.len, lanes));
         }
 
         /// Returns a carrier type restricted to a single blade mask.
@@ -699,8 +683,18 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         }
 
         /// Initializes the multivector from its underlying coefficient storage.
-        pub inline fn initStorage(coeffs: Storage) Self {
-            return .{ .coeffs = coeffs };
+        pub inline fn initStorage(coeffs: anytype) Self {
+            const Coeffs = @TypeOf(coeffs);
+            if (comptime Coeffs == Storage) {
+                return .{ .coeffs = coeffs };
+            }
+            if (comptime canUseLaneWiseSimd(T, stored_blade_count) and Coeffs == @Vector(stored_blade_count, T)) {
+                return .{ .coeffs = rawToStorage(T, stored_blade_count, coeffs) };
+            }
+            if (comptime Coeffs == [stored_blade_count]T) {
+                return .{ .coeffs = coeffsToStorage(T, stored_blade_count, coeffs) };
+            }
+            @compileError("initStorage() expects this carrier's Storage, raw SIMD vector, or coefficient array");
         }
 
         /// Returns the additive identity for this carrier type.
@@ -1844,19 +1838,26 @@ test "multivector Named struct supports alias fields without a prefix" {
     try std.testing.expect(E2.signedBlade("x").eql(E2.e(1)));
 }
 
-test "vector xyzw helpers expose fields and swizzles" {
+test "vector swizzle helper supports arbitrary xyzw patterns" {
     const Vec4 = Vector(f32, .euclidean(4));
     const v = Vec4.init(.{ 1.0, 2.0, 3.0, 4.0 });
-    const n = v.xyzw();
 
-    try std.testing.expectEqual(@as(f32, 1.0), n.x);
-    try std.testing.expectEqual(@as(f32, 4.0), n.w);
-    try std.testing.expectEqual([_]f32{ 3.0, 2.0, 1.0 }, v.swizzleArray("zyx"));
-    try std.testing.expectEqual(@Vector(2, f32){ 1.0, 2.0 }, v.xy());
-    try std.testing.expectEqual(@as(f32, 1.0), v.x());
+    try std.testing.expectEqual(@Vector(1, f32){1.0}, v.swizzle("x"));
+    try std.testing.expectEqual(@Vector(2, f32){ 1.0, 2.0 }, v.swizzle("xy"));
+    try std.testing.expectEqual(@Vector(3, f32){ 3.0, 2.0, 1.0 }, v.swizzle("zyx"));
+    try std.testing.expectEqual(@Vector(3, f32){ 4.0, 2.0, 4.0 }, v.swizzle("wyw"));
+    const view = v.storageView();
+    try std.testing.expectEqual(@as(f32, 1.0), view.xyzw.x);
+    try std.testing.expectEqual(@as(f32, 4.0), view.xyzw.w);
+    try std.testing.expectEqual(@Vector(4, f32){ 1.0, 2.0, 3.0, 4.0 }, view.raw);
     try std.testing.expectEqual(@as(f32, 1.0), v.e1());
     try std.testing.expectEqual(@as(f32, 2.0), v.e2());
-    try std.testing.expectEqual(@Vector(3, f32){ 4.0, 2.0, 4.0 }, v.swizzle("wyw"));
+
+    const zy = v.swizzleVector("zy");
+    try std.testing.expectEqual(@as(usize, 2), @TypeOf(zy).stored_blade_count);
+    try std.testing.expectEqual(@as(usize, 4), @TypeOf(zy).dimensions);
+    try std.testing.expectEqual(@as(f32, 3.0), zy.coeffNamed("e3"));
+    try std.testing.expectEqual(@as(f32, 2.0), zy.coeffNamed("e2"));
 }
 
 test "free signed blade helpers preserve explicit naming options" {
