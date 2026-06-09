@@ -580,8 +580,8 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             }
             const coeffs_array = self.coeffsArray();
             var result: Named = undefined;
-            inline for (named_field_names, 0..) |field_name, index| {
-                @field(result, field_name) = coeffs_array[index];
+            inline for (named_field_names, coeffs_array) |field_name, coefficient| {
+                @field(result, field_name) = coefficient;
             }
             return result;
         }
