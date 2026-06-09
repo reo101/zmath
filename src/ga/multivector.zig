@@ -173,6 +173,13 @@ fn NamedValue(comptime T: type, comptime field_names: anytype) type {
     );
 }
 
+fn isSpirvTarget() bool {
+    return switch (@import("builtin").target.cpu.arch) {
+        .spirv32, .spirv64 => true,
+        else => false,
+    };
+}
+
 fn NamedPtrViewType(comptime T: type, comptime field_names: anytype) type {
     return @Struct(
         .@"extern",
@@ -360,8 +367,7 @@ fn writeBlade(
 }
 
 fn namedIndexName(comptime named_index: usize) []const u8 {
-    const arch = @import("builtin").target.cpu.arch;
-    if (arch == .spirv32 or arch == .spirv64) {
+    if (comptime isSpirvTarget()) {
         // HACK: Use a literal lookup on SPIR-V because
         // `std.fmt.comptimePrint` in this name table crashes
         // Zig's SPIR-V backend when `.named()` is referenced.
@@ -556,6 +562,8 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         }
 
         /// Returns a value providing named field access (e.g. `.named().e12`).
+        /// Prefer `coeffNamed()`, `basisCoeff()`, or swizzles in shader hot paths
+        /// when avoiding a temporary named aggregate matters.
         pub inline fn named(self: Self) Named {
             if (comptime dimensions > 5) {
                 @compileError("named coefficient access is only available for algebras with at most 5 dimensions");
@@ -570,6 +578,9 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
 
         /// Returns a layout-compatible named pointer view for non-SIMD storage.
         pub inline fn namedPtr(self: anytype) NamedPtrType(@TypeOf(self)) {
+            if (comptime isSpirvTarget()) {
+                @compileError("namedPtr() is unavailable on SPIR-V; pointer-based views generate invalid logical-pointer IR");
+            }
             if (comptime dimensions > 5) {
                 @compileError("named pointer access is only available for algebras with at most 5 dimensions");
             }
@@ -577,6 +588,12 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
                 @compileError("namedPtr() is unavailable for SIMD-backed carriers; use named() instead");
             }
             return @ptrCast(&self.coeffs);
+        }
+
+        /// Returns a multivector type for the same coefficient type and signature
+        /// but with a different set of stored blade masks.
+        pub fn Rebind(comptime new_masks: []const BladeMask) type {
+            return MultivectorWithNaming(T, new_masks, sig, naming_options);
         }
 
         fn assertXyzwVectorCarrier() void {
@@ -641,12 +658,6 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         /// Returns the `xyzw` swizzle.
         pub inline fn xyzwVector(self: Self) @Vector(4, T) {
             return self.swizzle("xyzw");
-        }
-
-        /// Returns a multivector type for the same coefficient type and signature
-        /// but with a different set of stored blade masks.
-        pub fn Rebind(comptime new_masks: []const BladeMask) type {
-            return MultivectorWithNaming(T, new_masks, sig, naming_options);
         }
 
         /// Returns a carrier type restricted to a single blade mask.
@@ -769,6 +780,14 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             return sum;
         }
 
+        inline fn coeffAtStoredIndex(self: Self, comptime index: usize) T {
+            if (comptime index >= stored_blade_count) return coeffZero(T);
+            if (comptime canUseLaneWiseSimd(T, stored_blade_count)) {
+                return storageToSimd(T, stored_blade_count, self.coeffs)[index];
+            }
+            return self.coeffs[index];
+        }
+
         /// Returns the coefficient of a (comptime/runtime) blade mask.
         pub inline fn coeff(self: Self, mask: BladeMask) T {
             if (@inComptime()) {
@@ -790,6 +809,35 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             }
         }
 
+        /// Returns the coefficient of an internal basis vector by one-based index.
+        pub inline fn basisCoeff(self: Self, comptime one_based_index: usize) T {
+            if (one_based_index == 0 or one_based_index > dimensions) {
+                @compileError("basis vector index is one-based and must be within the algebra dimensions");
+            }
+            const index = comptime Self.getBladeIndex(blade_ops.basisVectorMask(dimensions, one_based_index));
+            return self.coeffAtStoredIndex(index);
+        }
+
+        /// Returns the `e1` coefficient without constructing a named view.
+        pub inline fn e1(self: Self) T {
+            return self.basisCoeff(1);
+        }
+
+        /// Returns the `e2` coefficient without constructing a named view.
+        pub inline fn e2(self: Self) T {
+            return self.basisCoeff(2);
+        }
+
+        /// Returns the `e3` coefficient without constructing a named view.
+        pub inline fn e3(self: Self) T {
+            return self.basisCoeff(3);
+        }
+
+        /// Returns the `e4` coefficient without constructing a named view.
+        pub inline fn e4(self: Self) T {
+            return self.basisCoeff(4);
+        }
+
         /// Returns the coefficient for a signed-blade name such as `e12`.
         /// Uses this carrier's configured naming options.
         pub inline fn coeffNamed(self: Self, comptime name: []const u8) T {
@@ -804,7 +852,12 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         ) T {
             @setEvalBranchQuota(10_000);
             const spec = comptime blade_parsing.parseSignedBlade(name, dimensions, options, true);
-            return self.coeff(spec.mask) * @intFromEnum(spec.sign);
+            const index = comptime Self.getBladeIndex(spec.mask);
+            const value = self.coeffAtStoredIndex(index);
+            return switch (comptime spec.sign) {
+                .positive => value,
+                .negative => -value,
+            };
         }
 
         /// Returns the scalar coefficient.
@@ -1801,6 +1854,8 @@ test "vector xyzw helpers expose fields and swizzles" {
     try std.testing.expectEqual([_]f32{ 3.0, 2.0, 1.0 }, v.swizzleArray("zyx"));
     try std.testing.expectEqual(@Vector(2, f32){ 1.0, 2.0 }, v.xy());
     try std.testing.expectEqual(@as(f32, 1.0), v.x());
+    try std.testing.expectEqual(@as(f32, 1.0), v.e1());
+    try std.testing.expectEqual(@as(f32, 2.0), v.e2());
     try std.testing.expectEqual(@Vector(3, f32){ 4.0, 2.0, 4.0 }, v.swizzle("wyw"));
 }
 
