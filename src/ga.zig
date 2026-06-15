@@ -194,7 +194,17 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
                     return rotors.norm(mv);
                 }
 
-                /// Returns the Euclidean norm squared of a multivector.
+                /// Returns the metric scalar product of a multivector with itself.
+                pub fn scalarNormSquared(mv: anytype) T {
+                    return mv.scalarNormSquared();
+                }
+
+                /// Returns the raw coefficient-space norm squared, ignoring the metric.
+                pub fn coeffNormSquared(mv: anytype) T {
+                    return mv.coeffNormSquared();
+                }
+
+                /// Alias for `scalarNormSquared()`.
                 pub fn normSquared(mv: anytype) T {
                     return rotors.normSquared(mv);
                 }
@@ -219,16 +229,18 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
                     return rotors.norm(mv);
                 }
 
+                /// Short alias for the basis-complement/Poincaré dual.
+                /// Prefer `complementDual()` in public examples when ambiguity
+                /// with metric/Hodge duality matters.
+                pub fn dual(mv: anytype) @TypeOf(mv.complementDual()) {
+                    return mv.complementDual();
+                }
+
                 /// Returns the basis-complement/Poincaré dual of a multivector.
                 ///
                 /// This is the metric-independent projective dual used by
                 /// `join()`/anti-products. For a metric-aware Hodge dual, use
                 /// `hodgeDual()` on non-degenerate metrics.
-                pub fn dual(mv: anytype) @TypeOf(mv.dual()) {
-                    return mv.dual();
-                }
-
-                /// Explicit alias for the basis-complement/Poincaré dual.
                 pub fn complementDual(mv: anytype) @TypeOf(mv.complementDual()) {
                     return mv.complementDual();
                 }
@@ -250,9 +262,19 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
                     return lhs.wedge(rhs);
                 }
 
+                /// Explicit direct-space meet alias for `wedge()`.
+                pub fn meet(lhs: anytype, rhs: anytype) @TypeOf(lhs.meet(rhs)) {
+                    return lhs.meet(rhs);
+                }
+
                 /// Returns the regressive product (join/exterior antiproduct).
                 pub fn regressiveProduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.antiWedge(rhs)) {
                     return lhs.antiWedge(rhs);
+                }
+
+                /// Explicit alias for the regressive product.
+                pub fn join(lhs: anytype, rhs: anytype) @TypeOf(lhs.join(rhs)) {
+                    return lhs.join(rhs);
                 }
 
                 /// Returns the geometric antiproduct of two multivectors.
@@ -265,9 +287,54 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
                     return lhs.dot(rhs);
                 }
 
+                /// Returns the scalar product of two multivectors.
+                pub fn scalarProduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.scalarProduct(rhs)) {
+                    return lhs.scalarProduct(rhs);
+                }
+
+                /// Returns the left contraction of two multivectors.
+                pub fn leftContraction(lhs: anytype, rhs: anytype) @TypeOf(lhs.leftContraction(rhs)) {
+                    return lhs.leftContraction(rhs);
+                }
+
+                /// Returns the right contraction of two multivectors.
+                pub fn rightContraction(lhs: anytype, rhs: anytype) @TypeOf(lhs.rightContraction(rhs)) {
+                    return lhs.rightContraction(rhs);
+                }
+
                 /// Returns the antidot product of two multivectors.
                 pub fn antidotProduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.antiDot(rhs)) {
                     return lhs.antiDot(rhs);
+                }
+
+                /// Applies the sandwich product `versor * value * ~versor`.
+                pub fn sandwich(value: anytype, versor: anytype) @TypeOf(value.sandwich(versor)) {
+                    return value.sandwich(versor);
+                }
+
+                /// Alias for `sandwich()` at transform call sites.
+                pub fn transform(value: anytype, versor: anytype) @TypeOf(value.transform(versor)) {
+                    return value.transform(versor);
+                }
+
+                /// Returns the reverse involution.
+                pub fn reverse(mv: anytype) @TypeOf(mv.reverse()) {
+                    return mv.reverse();
+                }
+
+                /// Returns the grade involution.
+                pub fn gradeInvolution(mv: anytype) @TypeOf(mv.gradeInvolution()) {
+                    return mv.gradeInvolution();
+                }
+
+                /// Returns the Clifford conjugate.
+                pub fn cliffordConjugate(mv: anytype) @TypeOf(mv.cliffordConjugate()) {
+                    return mv.cliffordConjugate();
+                }
+
+                /// Returns the multiplicative inverse if defined.
+                pub fn inverse(mv: anytype) @TypeOf(mv.inverse()) {
+                    return mv.inverse();
                 }
 
                 /// Compiles a multivector expression string at comptime.

@@ -394,6 +394,10 @@ fn ConstantValue(comptime T: type, comptime sig: blades.MetricSignature) type {
             return Self.fromFull(self.toFull().complementDual().cast(Full));
         }
 
+        pub fn hodgeDual(self: Self) Self {
+            return Self.fromFull(self.toFull().hodgeDual().cast(Full));
+        }
+
         pub fn antiGeometric(self: Self, rhs: Self) Self {
             return Self.fromFull(self.toFull().antiGeometric(rhs.toFull()).cast(Full));
         }
@@ -442,6 +446,7 @@ fn ParserTypes(comptime T: type, comptime sig: blades.MetricSignature) type {
             slash: void,
             inverse: void,
             complement_dual: void,
+            hodge_dual: void,
             number: []const u8,
             blade: blade_parsing.SignedBladeSpec,
             placeholder: []const u8,
@@ -473,6 +478,7 @@ fn ParserTypes(comptime T: type, comptime sig: blades.MetricSignature) type {
             left_contraction: Binary,
             right_contraction: Binary,
             complement_dual: usize,
+            hodge_dual: usize,
         };
 
         pub const NodeInfo = struct {
@@ -680,6 +686,19 @@ fn parserBuildComplementDual(
     }
 
     return self.newNode(.{ .complement_dual = child }, .{});
+}
+
+fn parserBuildHodgeDual(
+    comptime T: type,
+    comptime sig: blades.MetricSignature,
+    self: anytype,
+    child: usize,
+) @TypeOf(self.*).ParserError!usize {
+    if (self.nodeInfo(child).constant) |constant| {
+        return parserConstantNode(T, sig, self, constant.hodgeDual());
+    }
+
+    return self.newNode(.{ .hodge_dual = child }, .{});
 }
 
 fn parserBuildAntiGeometric(
@@ -908,6 +927,11 @@ fn parserLexLatexOperator(
     {
         return .{ .complement_dual = {} };
     }
+    if (parserLatexNameEql(name, "hodge") or
+        parserLatexNameEql(name, "hodgedual"))
+    {
+        return .{ .hodge_dual = {} };
+    }
 
     self.position = start;
     return error.UnexpectedToken;
@@ -1091,6 +1115,7 @@ fn parserParsePrefix(
 const InfixOperatorKind = enum {
     inverse,
     complement_dual,
+    hodge_dual,
     implicit_gp,
     gp,
     divide,
@@ -1107,7 +1132,7 @@ const InfixOperatorKind = enum {
 
 fn infixOperatorBindingPower(kind: InfixOperatorKind) pratt.BindingPower {
     return switch (kind) {
-        .inverse, .complement_dual => pratt.postfix(9),
+        .inverse, .complement_dual, .hodge_dual => pratt.postfix(9),
         .implicit_gp => pratt.leftAssoc(7),
         .gp, .divide, .wedge, .dot, .anti_geometric, .anti_dot, .left_contraction, .right_contraction => pratt.leftAssoc(5),
         .join => pratt.leftAssoc(4),
@@ -1120,6 +1145,7 @@ fn infixOperatorNodeCost(kind: InfixOperatorKind) usize {
         .divide, .sub => 2,
         .inverse,
         .complement_dual,
+        .hodge_dual,
         .implicit_gp,
         .gp,
         .wedge,
@@ -1145,6 +1171,7 @@ fn infixOperatorKindForTag(tag: anytype) ?InfixOperatorKind {
     return switch (tag) {
         .inverse => .inverse,
         .complement_dual => .complement_dual,
+        .hodge_dual => .hodge_dual,
         .number, .blade, .placeholder, .lparen => .implicit_gp,
         .star => .gp,
         .slash => .divide,
@@ -1174,6 +1201,7 @@ fn ParserPrattContext(
         pub const operator_table = pratt.initTable(TokenTag, .{
             .inverse = infixOperatorBindingPower(.inverse),
             .complement_dual = infixOperatorBindingPower(.complement_dual),
+            .hodge_dual = infixOperatorBindingPower(.hodge_dual),
             .number = infixOperatorBindingPower(.implicit_gp),
             .blade = infixOperatorBindingPower(.implicit_gp),
             .placeholder = infixOperatorBindingPower(.implicit_gp),
@@ -1224,6 +1252,10 @@ fn ParserPrattContext(
                 .complement_dual => blk: {
                     try parserAdvance(T, sig, self.parser);
                     break :blk parserBuildComplementDual(T, sig, self.parser, lhs);
+                },
+                .hodge_dual => blk: {
+                    try parserAdvance(T, sig, self.parser);
+                    break :blk parserBuildHodgeDual(T, sig, self.parser, lhs);
                 },
                 .gp, .divide, .wedge, .dot, .anti_geometric, .anti_dot, .left_contraction, .right_contraction, .join, .add, .sub => blk: {
                     try parserAdvance(T, sig, self.parser);
@@ -1372,6 +1404,7 @@ fn compilerStorageCaps(
         switch (token) {
             .inverse => operator_node_count += infixOperatorNodeCost(.inverse),
             .complement_dual => operator_node_count += infixOperatorNodeCost(.complement_dual),
+            .hodge_dual => operator_node_count += infixOperatorNodeCost(.hodge_dual),
             .star, .slash, .wedge, .join, .dot, .anti_geometric, .anti_dot, .left_contraction, .right_contraction, .plus, .minus => {
                 operator_node_count += infixOperatorNodeCost(infixOperatorKindForTag(std.meta.activeTag(token)).?);
                 expecting_prefix = true;
@@ -1528,6 +1561,7 @@ fn evalNode(
         .left_contraction => |binary| evalNode(T, sig, placeholder_names, compiled, binary.lhs, args).leftContraction(evalNode(T, sig, placeholder_names, compiled, binary.rhs, args)).cast(Full),
         .right_contraction => |binary| evalNode(T, sig, placeholder_names, compiled, binary.lhs, args).rightContraction(evalNode(T, sig, placeholder_names, compiled, binary.rhs, args)).cast(Full),
         .complement_dual => |child| evalNode(T, sig, placeholder_names, compiled, child, args).complementDual().cast(Full),
+        .hodge_dual => |child| evalNode(T, sig, placeholder_names, compiled, child, args).hodgeDual().cast(Full),
     };
 }
 
@@ -1555,6 +1589,7 @@ fn evalNodeRuntimeArgs(
         .left_contraction => |binary| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.lhs, args)).leftContraction(try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.rhs, args)).cast(Full),
         .right_contraction => |binary| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.lhs, args)).rightContraction(try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.rhs, args)).cast(Full),
         .complement_dual => |child| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, child, args)).complementDual().cast(Full),
+        .hodge_dual => |child| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, child, args)).hodgeDual().cast(Full),
     };
 }
 
@@ -1581,6 +1616,7 @@ fn evalNodeRuntimeSlots(
         .left_contraction => |binary| (try evalNodeRuntimeSlots(T, sig, nodes, binary.lhs, slot_values)).leftContraction(try evalNodeRuntimeSlots(T, sig, nodes, binary.rhs, slot_values)).cast(Full),
         .right_contraction => |binary| (try evalNodeRuntimeSlots(T, sig, nodes, binary.lhs, slot_values)).rightContraction(try evalNodeRuntimeSlots(T, sig, nodes, binary.rhs, slot_values)).cast(Full),
         .complement_dual => |child| (try evalNodeRuntimeSlots(T, sig, nodes, child, slot_values)).complementDual().cast(Full),
+        .hodge_dual => |child| (try evalNodeRuntimeSlots(T, sig, nodes, child, slot_values)).hodgeDual().cast(Full),
     };
 }
 
@@ -1818,6 +1854,8 @@ test "expression supports GA operators" {
     try std.testing.expect(eval(f32, sig, options, "e1 \\star", .{}).eql(e1.complementDual()));
     try std.testing.expect(eval(f32, sig, options, "e1 \\dual", .{}).eql(e1.complementDual()));
     try std.testing.expect(eval(f32, sig, options, "e1 \\complementDual", .{}).eql(e1.complementDual()));
+    try std.testing.expect(eval(f32, sig, options, "e1 \\hodge", .{}).eql(e1.hodgeDual()));
+    try std.testing.expect(eval(f32, sig, options, "e1 \\hodgeDual", .{}).eql(e1.hodgeDual()));
     try std.testing.expect(eval(f32, sig, options, "e1 ⟇ e2", .{}).eql(e1.antiGeometric(e2)));
     try std.testing.expect(eval(f32, sig, options, "e1 \\ganti e2", .{}).eql(e1.antiGeometric(e2)));
     try std.testing.expect(eval(f32, sig, options, "e1 ∘ e2", .{}).eql(e1.antiDot(e2)));
@@ -2106,6 +2144,7 @@ test "AST shape of simple expressions" {
             left_contraction: Binary,
             right_contraction: Binary,
             complement_dual: *const Self,
+            hodge_dual: *const Self,
 
             const Binary = struct {
                 lhs: *const Self,
@@ -2185,6 +2224,10 @@ test "AST shape of simple expressions" {
             return self.push(.{ .complement_dual = child });
         }
 
+        fn hodgeDual(self: *Self, child: *const ExpectedAst.Tree) *const ExpectedAst.Tree {
+            return self.push(.{ .hodge_dual = child });
+        }
+
         fn fromFlat(self: *Self, nodes: []const Node, index: usize) *const ExpectedAst.Tree {
             return switch (nodes[index]) {
                 .constant => |value| self.constant(value),
@@ -2204,6 +2247,7 @@ test "AST shape of simple expressions" {
                 .left_contraction => |binary| self.leftContraction(self.fromFlat(nodes, binary.lhs), self.fromFlat(nodes, binary.rhs)),
                 .right_contraction => |binary| self.rightContraction(self.fromFlat(nodes, binary.lhs), self.fromFlat(nodes, binary.rhs)),
                 .complement_dual => |child| self.complementDual(self.fromFlat(nodes, child)),
+                .hodge_dual => |child| self.hodgeDual(self.fromFlat(nodes, child)),
             };
         }
 
@@ -2332,6 +2376,12 @@ test "AST shape of simple expressions" {
     try expectAst("{x}★", struct {
         fn build(arena: *TreeArena) ExpectedAst {
             return arena.expected(&.{"x"}, arena.complementDual(arena.placeholder(0)));
+        }
+    }.build);
+
+    try expectAst("{x} \\hodge", struct {
+        fn build(arena: *TreeArena) ExpectedAst {
+            return arena.expected(&.{"x"}, arena.hodgeDual(arena.placeholder(0)));
         }
     }.build);
 

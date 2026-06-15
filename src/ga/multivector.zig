@@ -717,10 +717,21 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             return .init(.{@intFromEnum(spec.sign)});
         }
 
-        /// Constructs a signed blade from runtime basis-vector indices.
-        pub fn fromIndices(indices: []const usize) FullType {
+        /// Constructs a signed blade from runtime internal one-based basis indices.
+        pub fn fromInternalIndices(indices: []const usize) FullType {
             const raw = fullSignedBladeFromIndicesWithSignature(T, sig, indices);
             return .init(raw.coeffsArray());
+        }
+
+        /// Constructs a signed blade from runtime named basis indices.
+        pub fn fromNamedIndices(indices: []const usize) SignedBladeParseError!FullType {
+            const raw = try fullSignedBladeFromNamedIndicesWithOptions(T, sig, naming_options, indices);
+            return .init(raw.coeffsArray());
+        }
+
+        /// Legacy alias for `fromInternalIndices()`.
+        pub fn fromIndices(indices: []const usize) FullType {
+            return fromInternalIndices(indices);
         }
 
         /// Writes this multivector value through a generic writer interface.
@@ -859,14 +870,26 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             return self.coeff(BladeMask.init(0));
         }
 
-        /// Sets the coefficient of a blade mask if it is stored in this carrier.
-        pub fn setCoeff(self: *Self, mask: BladeMask, value: T) void {
+        /// Sets the coefficient of a stored blade mask, or returns `BladeNotStored`.
+        pub fn setCoeffOrError(self: *Self, mask: BladeMask, value: T) error{BladeNotStored}!void {
             const index = Self.getBladeIndex(mask);
-            if (index < Self.stored_blade_count) {
-                var coeffs_array = self.coeffsArray();
-                coeffs_array[index] = value;
-                self.coeffs = coeffsToStorage(T, stored_blade_count, coeffs_array);
-            }
+            if (index >= Self.stored_blade_count) return error.BladeNotStored;
+
+            var coeffs_array = self.coeffsArray();
+            coeffs_array[index] = value;
+            self.coeffs = coeffsToStorage(T, stored_blade_count, coeffs_array);
+        }
+
+        /// Sets the coefficient of a blade mask if it is stored in this carrier.
+        /// Prefer `setCoeffOrError()` when accidentally targeting an excluded
+        /// blade would be a bug.
+        pub fn setCoeff(self: *Self, mask: BladeMask, value: T) void {
+            self.setCoeffOrError(mask, value) catch {};
+        }
+
+        /// Sets the coefficient of a stored blade mask and panics if absent.
+        pub fn setCoeffExact(self: *Self, mask: BladeMask, value: T) void {
+            self.setCoeffOrError(mask, value) catch @panic("blade is not stored in this multivector carrier");
         }
 
         /// Returns `-self`.
@@ -1185,17 +1208,27 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             return self.gradePart(0);
         }
 
-        /// Returns the Euclidean norm squared of this multivector.
-        pub inline fn normSquared(self: Self) T {
+        /// Returns the metric scalar product of this multivector with itself.
+        pub inline fn scalarNormSquared(self: Self) T {
             return self.scalarProduct(self);
         }
 
-        /// Returns the Euclidean norm (magnitude) of this multivector.
-        pub inline fn norm(self: Self) T {
-            return @sqrt(@abs(self.scalarProduct(self)));
+        /// Returns the raw coefficient-space norm squared, ignoring the metric.
+        pub inline fn coeffNormSquared(self: Self) T {
+            return self.sumCoeffsSquared();
         }
 
-        /// Returns the Euclidean norm (magnitude) of this multivector.
+        /// Alias for `scalarNormSquared()` kept for compact call sites.
+        pub inline fn normSquared(self: Self) T {
+            return self.scalarNormSquared();
+        }
+
+        /// Returns `sqrt(abs(scalarNormSquared()))`.
+        pub inline fn norm(self: Self) T {
+            return @sqrt(@abs(self.scalarNormSquared()));
+        }
+
+        /// Alias for `norm()`.
         pub inline fn magnitude(self: Self) T {
             return self.norm();
         }
@@ -1307,6 +1340,21 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             return self.outerProduct(rhs);
         }
 
+        /// Explicit projective/direct-space meet alias for `wedge()`.
+        pub fn meet(self: Self, rhs: anytype) @TypeOf(self.wedge(rhs)) {
+            return self.wedge(rhs);
+        }
+
+        /// Applies the sandwich product `versor * self * ~versor`.
+        pub fn sandwich(self: Self, versor: anytype) @TypeOf(versor.gp(self).gp(versor.reverse())) {
+            return versor.gp(self).gp(versor.reverse());
+        }
+
+        /// Alias for `sandwich()` at geometric call sites.
+        pub fn transform(self: Self, versor: anytype) @TypeOf(self.sandwich(versor)) {
+            return self.sandwich(versor);
+        }
+
         /// Returns the regressive product (join) of two multivectors.
         /// A v B = dual(dual(A) ^ dual(B))
         pub fn join(self: Self, rhs: anytype) Rebind(&blade_ops.dualMasks(dimensions, &blade_ops.outerProductMasks(dimensions, &blade_ops.dualMasks(dimensions, blade_masks), &blade_ops.dualMasks(dimensions, @TypeOf(rhs).blades)))) {
@@ -1342,6 +1390,9 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         /// Returns the multiplicative inverse of this multivector if it exists.
         /// Only valid for elements where self.gp(self.reverse()) is a non-zero scalar.
         pub fn inverse(self: Self) ?Self {
+            if (comptime !isFloatType(T)) {
+                @compileError("inverse() currently requires floating-point coefficients");
+            }
             const rev = self.reverse();
             const denominator_mv = self.gp(rev);
             const denominator = denominator_mv.scalarCoeff();
@@ -1356,13 +1407,16 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             }
 
             if (denominator == 0) return null;
-            return rev.scale(1.0 / denominator);
+            return rev.scale(@as(T, 1) / denominator);
         }
 
-        /// Returns the exponential exp(self).
+        /// Returns the exponential exp(self) as an even multivector.
         /// Currently only implemented for bivectors in Euclidean space
         /// where B^2 is a negative scalar.
-        pub fn exp(self: Self) Self {
+        pub fn exp(self: Self) EvenType {
+            if (comptime !isFloatType(T)) {
+                @compileError("exp() currently requires floating-point coefficients");
+            }
             // For a bivector B, if B^2 = -theta^2 (scalar), then
             // exp(B) = cos(theta) + (B/theta) * sin(theta)
             const b2_mv = self.gp(self);
@@ -1382,27 +1436,32 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
                 const theta = @sqrt(-b2);
 
                 if (theta == 0) {
-                    var res_coeffs = std.mem.zeroes([stored_blade_count]T);
-                    const scalar_idx = Self.getBladeIndex(BladeMask.init(0));
-                    if (scalar_idx < stored_blade_count) res_coeffs[scalar_idx] = 1;
-                    return Self.init(res_coeffs);
+                    const Result = EvenType;
+                    var res_coeffs = std.mem.zeroes([Result.stored_blade_count]T);
+                    const scalar_idx = Result.getBladeIndex(BladeMask.init(0));
+                    if (scalar_idx < Result.stored_blade_count) res_coeffs[scalar_idx] = 1;
+                    return Result.init(res_coeffs);
                 }
 
                 const c = @cos(theta);
                 const s = @sin(theta);
 
                 // Result = cos(theta) + (B/theta) * sin(theta)
-                var res_coeffs = std.mem.zeroes([stored_blade_count]T);
-                const scalar_idx = Self.getBladeIndex(BladeMask.init(0));
-                if (scalar_idx < stored_blade_count) res_coeffs[scalar_idx] = c;
+                const Result = EvenType;
+                var res_coeffs = std.mem.zeroes([Result.stored_blade_count]T);
+                const scalar_idx = Result.getBladeIndex(BladeMask.init(0));
+                if (scalar_idx < Result.stored_blade_count) res_coeffs[scalar_idx] = c;
 
-                inline for (blade_masks, 0..) |mask, i| {
+                inline for (blade_masks) |mask| {
                     if (mask.bitset.mask != 0) {
-                        res_coeffs[i] = self.coeff(mask) * (s / theta);
+                        const result_idx = Result.getBladeIndex(mask);
+                        if (result_idx < Result.stored_blade_count) {
+                            res_coeffs[result_idx] = self.coeff(mask) * (s / theta);
+                        }
                     }
                 }
 
-                return Self.init(res_coeffs);
+                return Result.init(res_coeffs);
             }
 
             // Fallback for general case or non-Euclidean could be power series,
@@ -1438,7 +1497,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
     };
 }
 
-/// Runtime signed-blade construction under an arbitrary `Cl(p, q, r)` signature.
+/// Runtime signed-blade construction from internal one-based basis indices under an arbitrary `Cl(p, q, r)` signature.
 pub fn fullSignedBladeFromIndicesWithSignature(
     comptime T: type,
     comptime sig: MetricSignature,
@@ -1454,6 +1513,35 @@ pub fn fullSignedBladeFromIndicesWithSignature(
     var spec = SignedBladeSpec{ .sign = .positive, .mask = BladeMask.init(0) };
     for (indices) |basis_index| {
         std.debug.assert(1 <= basis_index and basis_index <= dimensions);
+        if (sig.basisSquareClass(basis_index) == .degenerate and spec.mask.bitset.isSet(basis_index - 1)) {
+            return FullMultivector(T, sig).zero();
+        }
+        blade_ops.applyBasisIndexWithSignature(&spec, basis_index, sig);
+    }
+
+    const Full = FullMultivector(T, sig);
+    var coeffs = std.mem.zeroes([Full.stored_blade_count]T);
+    coeffs[spec.mask.index()] = signedUnit(T, spec.sign);
+    return Full.init(coeffs);
+}
+
+/// Runtime signed-blade construction from configured named basis indices.
+pub fn fullSignedBladeFromNamedIndicesWithOptions(
+    comptime T: type,
+    comptime sig: MetricSignature,
+    comptime naming_options: blade_parsing.SignedBladeNamingOptions,
+    indices: []const usize,
+) SignedBladeParseError!FullMultivector(T, sig) {
+    ensureNumeric(T);
+    const dimensions = comptime sig.dimensions();
+
+    if (comptime !supportsNegativeCoefficients(T)) {
+        @compileError("runtime signed-blade construction requires signed or floating-point coefficients");
+    }
+
+    var spec = SignedBladeSpec{ .sign = .positive, .mask = BladeMask.init(0) };
+    for (indices) |named_index| {
+        const basis_index = try blade_parsing.resolveNamedBasisIndexRuntime(named_index, dimensions, naming_options);
         if (sig.basisSquareClass(basis_index) == .degenerate and spec.mask.bitset.isSet(basis_index - 1)) {
             return FullMultivector(T, sig).zero();
         }
@@ -1801,10 +1889,21 @@ pub fn BasisWithNamingOptions(
             return Mv(&.{spec.mask}).init(.{@intFromEnum(spec.sign)});
         }
 
-        /// Returns a runtime signed blade from a list of indices.
-        pub fn fromIndices(indices: []const usize) Full {
+        /// Returns a runtime signed blade from internal one-based basis indices.
+        pub fn fromInternalIndices(indices: []const usize) Full {
             const raw = fullSignedBladeFromIndicesWithSignature(T, sig, indices);
             return Full.init(raw.coeffsArray());
+        }
+
+        /// Returns a runtime signed blade from configured named basis indices.
+        pub fn fromNamedIndices(indices: []const usize) SignedBladeParseError!Full {
+            const raw = try fullSignedBladeFromNamedIndicesWithOptions(T, sig, naming_options, indices);
+            return Full.init(raw.coeffsArray());
+        }
+
+        /// Legacy alias for `fromInternalIndices()`.
+        pub fn fromIndices(indices: []const usize) Full {
+            return fromInternalIndices(indices);
         }
     };
 }
