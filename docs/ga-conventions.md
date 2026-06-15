@@ -50,10 +50,11 @@ The expression compiler follows the same names:
 `e1..en` for Euclidean directions and `e0` for the degenerate projective
 basis vector.
 
-Default 3D PGA points are trivectors:
+Default 3D PGA points are trivectors built as the complement dual of their
+homogeneous coordinate vector:
 
 ```text
-P(x, y, z) = x*e_2_3_0 + y*e_3_1_0 + z*e_1_2_0 + e123
+P(x, y, z) = complementDual(e0 + x*e1 + y*e2 + z*e3)
 ```
 
 Planes are vectors:

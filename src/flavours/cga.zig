@@ -71,8 +71,16 @@ pub fn FamilyHelpers(comptime FamilyType: type, comptime T: type) type {
             return lhs.wedge(rhs);
         }
 
+        pub fn meet(lhs: anytype, rhs: anytype) @TypeOf(lhs.meet(rhs)) {
+            return lhs.meet(rhs);
+        }
+
         pub fn regressiveProduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.antiWedge(rhs)) {
             return lhs.antiWedge(rhs);
+        }
+
+        pub fn join(lhs: anytype, rhs: anytype) @TypeOf(lhs.join(rhs)) {
+            return lhs.join(rhs);
         }
 
         pub fn geometricAntiproduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.antiGeometric(rhs)) {
@@ -94,6 +102,14 @@ pub fn FamilyHelpers(comptime FamilyType: type, comptime T: type) type {
         pub fn hodgeDual(mv: anytype) @TypeOf(mv.hodgeDual()) {
             return mv.hodgeDual();
         }
+
+        pub fn sandwich(value: anytype, versor: anytype) @TypeOf(value.sandwich(versor)) {
+            return value.sandwich(versor);
+        }
+
+        pub fn transform(value: anytype, versor: anytype) @TypeOf(value.sandwich(versor).cast(@TypeOf(value))) {
+            return value.sandwich(versor).cast(@TypeOf(value));
+        }
     };
 }
 
@@ -109,12 +125,16 @@ pub const Sphere = default_helpers.Sphere;
 pub const Plane = default_helpers.Plane;
 pub const geometricProduct = default_helpers.geometricProduct;
 pub const exteriorProduct = default_helpers.exteriorProduct;
+pub const meet = default_helpers.meet;
 pub const regressiveProduct = default_helpers.regressiveProduct;
+pub const join = default_helpers.join;
 pub const geometricAntiproduct = default_helpers.geometricAntiproduct;
 pub const dotProduct = default_helpers.dotProduct;
 pub const antidotProduct = default_helpers.antidotProduct;
 pub const complementDual = default_helpers.complementDual;
 pub const hodgeDual = default_helpers.hodgeDual;
+pub const sandwich = default_helpers.sandwich;
+pub const transform = default_helpers.transform;
 
 test "cga origin and infinity are null vectors" {
     // n_o^2 = 0, n_inf^2 = 0
@@ -169,7 +189,9 @@ test "cga basis naming uses custom aliases" {
 
 test "cga exposes complement and anti-product aliases" {
     try std.testing.expect(complementDual(no).eql(no.complementDual()));
+    try std.testing.expect(meet(no, ninf).eql(no.wedge(ninf)));
     try std.testing.expect(regressiveProduct(no, ninf).eql(no.antiWedge(ninf)));
+    try std.testing.expect(join(no, ninf).eql(no.join(ninf)));
     try std.testing.expect(geometricAntiproduct(no, ninf).eql(no.antiGeometric(ninf)));
     try std.testing.expect(antidotProduct(no, ninf).eql(no.antiDot(ninf)));
 }

@@ -29,6 +29,8 @@ pub fn FamilyHelpers(comptime FamilyType: type, comptime T: type) type {
     const Shared = projective_helpers.EuclideanProjectiveHelpers(T, H);
 
     return struct {
+        const Self = @This();
+
         pub const h = H;
 
         pub const Point = struct {
@@ -41,8 +43,10 @@ pub fn FamilyHelpers(comptime FamilyType: type, comptime T: type) type {
             }
 
             pub fn init(x: T, y: T, z: T) H.Full {
-                // PGA points are trivectors: x*e230 + y*e310 + z*e120 + e123.
-                return H.exprAs(H.Full, "{x}*e_2_3_0 + {y}*e_3_1_0 + {z}*e_1_2_0 + e123", .{ .x = x, .y = y, .z = z });
+                if (comptime H.Full.dimensions != 4) {
+                    @compileError("`Point.init(x, y, z)` is only available for 3D PGA; use `Point.fromCoords()` for other dimensions");
+                }
+                return Shared.Point.fromCoords(.{ x, y, z });
             }
 
             pub fn directionFromCoords(coords: [H.Full.dimensions - 1]T) H.Full {
@@ -50,7 +54,10 @@ pub fn FamilyHelpers(comptime FamilyType: type, comptime T: type) type {
             }
 
             pub fn direction(x: T, y: T, z: T) H.Full {
-                return H.exprAs(H.Full, "{x}*e_2_3_0 + {y}*e_3_1_0 + {z}*e_1_2_0", .{ .x = x, .y = y, .z = z });
+                if (comptime H.Full.dimensions != 4) {
+                    @compileError("`Point.direction(x, y, z)` is only available for 3D PGA; use `Point.directionFromCoords()` for other dimensions");
+                }
+                return Shared.Point.directionFromCoords(.{ x, y, z });
             }
         };
 
@@ -61,8 +68,10 @@ pub fn FamilyHelpers(comptime FamilyType: type, comptime T: type) type {
             }
         };
 
-        /// Converts a PGA multivector (intended to be a rotor) to a 4x4 matrix.
-        /// Assumes the multivector acts on points P = x*e1 + y*e2 + z*e3 + e0.
+        pub const Motor = H.Even;
+        pub const Rotor = H.Even;
+
+        /// Converts a PGA versor/motor action on basis vectors to a 4x4 matrix.
         pub fn toMatrix4x4(mv: anytype) [4][4]T {
             multivector.ensureMultivector(@TypeOf(mv));
             const E = H.Basis;
@@ -97,8 +106,16 @@ pub fn FamilyHelpers(comptime FamilyType: type, comptime T: type) type {
             return lhs.wedge(rhs);
         }
 
+        pub fn meet(lhs: anytype, rhs: anytype) @TypeOf(lhs.meet(rhs)) {
+            return lhs.meet(rhs);
+        }
+
         pub fn regressiveProduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.antiWedge(rhs)) {
             return lhs.antiWedge(rhs);
+        }
+
+        pub fn join(lhs: anytype, rhs: anytype) @TypeOf(lhs.join(rhs)) {
+            return lhs.join(rhs);
         }
 
         pub fn geometricAntiproduct(lhs: anytype, rhs: anytype) @TypeOf(lhs.antiGeometric(rhs)) {
@@ -115,6 +132,48 @@ pub fn FamilyHelpers(comptime FamilyType: type, comptime T: type) type {
 
         pub fn complementDual(mv: anytype) @TypeOf(mv.complementDual()) {
             return mv.complementDual();
+        }
+
+        pub fn sandwich(value: anytype, motor: anytype) @TypeOf(value.sandwich(motor)) {
+            return value.sandwich(motor);
+        }
+
+        pub fn transform(value: anytype, motor: anytype) @TypeOf(motor.reverse().gp(value).gp(motor).cast(@TypeOf(value))) {
+            return motor.reverse().gp(value).gp(motor).cast(@TypeOf(value));
+        }
+
+        pub fn identityMotor() H.Even {
+            return H.Scalar.init(.{1}).cast(H.Even);
+        }
+
+        pub fn translatorFromCoords(delta: [H.Full.dimensions - 1]T) H.Even {
+            const E = H.Basis;
+            var result = Self.identityMotor();
+            inline for (delta, 0..) |component, i| {
+                const basis = E.e(i + 1).wedge(E.e(0)).gradePart(2);
+                result = result.add(basis.scale(-0.5 * component)).cast(H.Even);
+            }
+            return result;
+        }
+
+        pub fn translator(x: T, y: T, z: T) H.Even {
+            if (comptime H.Full.dimensions != 4) {
+                @compileError("`translator(x, y, z)` is only available for 3D PGA; use `translatorFromCoords()` for other dimensions");
+            }
+            return Self.translatorFromCoords(.{ x, y, z });
+        }
+
+        pub fn rotorInPlane(comptime a: usize, comptime b_idx: usize, angle_radians: T) H.Even {
+            const E = H.Basis;
+            const half_angle = angle_radians / 2.0;
+            const plane = E.e(a).wedge(E.e(b_idx)).gradePart(2);
+            return H.Scalar.init(.{@cos(half_angle)})
+                .add(plane.scale(@sin(half_angle)))
+                .cast(H.Even);
+        }
+
+        pub fn composeMotors(lhs: anytype, rhs: anytype) H.Even {
+            return lhs.gp(rhs).cast(H.Even);
         }
 
         fn projectiveBasisMask(comptime Mv: type) blades.BladeMask {
@@ -183,15 +242,26 @@ pub fn InstantiateHelpers(comptime T: type) type {
 const default_helpers = InstantiateHelpers(default_scalar);
 pub const Point = default_helpers.Point;
 pub const Plane = default_helpers.Plane;
+pub const Motor = default_helpers.Motor;
+pub const Rotor = default_helpers.Rotor;
 pub const toMatrix4x4 = default_helpers.toMatrix4x4;
 pub const ambientCoords = default_helpers.ambientCoords;
 pub const geometricProduct = default_helpers.geometricProduct;
 pub const exteriorProduct = default_helpers.exteriorProduct;
+pub const meet = default_helpers.meet;
 pub const regressiveProduct = default_helpers.regressiveProduct;
+pub const join = default_helpers.join;
 pub const geometricAntiproduct = default_helpers.geometricAntiproduct;
 pub const dotProduct = default_helpers.dotProduct;
 pub const antidotProduct = default_helpers.antidotProduct;
 pub const complementDual = default_helpers.complementDual;
+pub const sandwich = default_helpers.sandwich;
+pub const transform = default_helpers.transform;
+pub const identityMotor = default_helpers.identityMotor;
+pub const translatorFromCoords = default_helpers.translatorFromCoords;
+pub const translator = default_helpers.translator;
+pub const rotorInPlane = default_helpers.rotorInPlane;
+pub const composeMotors = default_helpers.composeMotors;
 pub const metricDual = default_helpers.metricDual;
 pub const bulkDual = default_helpers.bulkDual;
 pub const metricAntidual = default_helpers.metricAntidual;
@@ -255,34 +325,22 @@ test "ideal point (pure e0 multivector) has zero scalar product with itself" {
 }
 
 test "euclidean point representation and join" {
-    const E = h.Basis;
-    const e1 = E.e(1);
-    const e2 = E.e(2);
-    const e3 = E.e(3);
-    const e0 = E.e(0);
+    const p = Point.init(1, 0, 0);
+    const q = Point.init(0, 1, 0);
 
-    // In PGA a Euclidean point is P = x*e1 + y*e2 + z*e3 + e0
-    // Build point P = e1 + e0 (x=1, y=0, z=0)
-    const p = e1.add(e0);
+    // In this PGA facade, points are trivectors and their line is a join.
+    const line = join(p, q).gradePart(2);
 
-    // Build point Q = e2 + e0 (x=0, y=1, z=0)
-    const q = e2.add(e0);
-
-    // The join (outer product) of two points gives the line through them
-    const line = p.outerProduct(q);
-
-    // The line should have a non-zero e12 component (the direction part)
-    try std.testing.expect(line.coeffNamed("e12") != 0.0);
-
-    // The line should also have moment components involving e0
-    _ = e3; // e3 unused here but available for 3D tests
+    try std.testing.expect(line.sumCoeffsSquared() != 0.0);
 }
 
-test "fullSignedBladeFromIndicesWithSignature respects degenerate square" {
-    // Repeated degenerate index should give zero
-    const result = h.Basis.fromIndices(&.{ dimensions, dimensions });
-    // e0*e0 = 0, so the scalar part must be zero
-    try std.testing.expectEqual(@as(f64, 0.0), result.scalarCoeff());
+test "runtime blade helpers distinguish named and internal indices" {
+    const E = h.Basis;
+
+    // Internal index 4 is named e0 in the default PGA basis.
+    try std.testing.expect(E.fromInternalIndices(&.{ dimensions, dimensions }).eql(E.Full.zero()));
+    try std.testing.expect((try E.fromNamedIndices(&.{ 0, 0 })).eql(E.Full.zero()));
+    try std.testing.expect((try E.fromNamedIndices(&.{0})).eql(E.e(0).cast(E.Full)));
 }
 
 test "pga signed blade parser accepts e0 alias for degenerate basis" {
@@ -298,12 +356,12 @@ test "pga signed blade parser accepts e0 alias for degenerate basis" {
 
 test "Point.init correctly constructs trivectors" {
     const p = Point.init(1, 2, 3);
+    const coords = ambientCoords(p);
 
-    // x*e230 + y*e310 + z*e120 + e123
-    try std.testing.expectEqual(@as(f32, 1), p.coeffNamed("e_2_3_0"));
-    try std.testing.expectEqual(@as(f32, 2), p.coeffNamed("e_3_1_0"));
-    try std.testing.expectEqual(@as(f32, 3), p.coeffNamed("e_1_2_0"));
-    try std.testing.expectEqual(@as(f32, 1), p.coeffNamed("e123"));
+    try std.testing.expectEqual(@as(f32, 1), coords[0]);
+    try std.testing.expectEqual(@as(f32, 1), coords[1]);
+    try std.testing.expectEqual(@as(f32, 2), coords[2]);
+    try std.testing.expectEqual(@as(f32, 3), coords[3]);
 }
 
 test "toMatrix4x4 with identity rotor" {
@@ -342,13 +400,35 @@ test "pga helpers support non-3d families through coordinate arrays" {
     try std.testing.expectApproxEqAbs(@as(f32, 2.0), coords[2], 1e-6);
 }
 
+test "pga motors translate and rotate points" {
+    const p = Point.init(1, 2, 3);
+    const moved = transform(p, translator(4, -1, 2));
+    const moved_coords = ambientCoords(moved);
+
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), moved_coords[0], 1e-5);
+    try std.testing.expectApproxEqAbs(@as(f32, 5.0), moved_coords[1], 1e-5);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), moved_coords[2], 1e-5);
+    try std.testing.expectApproxEqAbs(@as(f32, 5.0), moved_coords[3], 1e-5);
+
+    const turn = rotorInPlane(1, 2, std.math.pi / 2.0);
+    const rotated = transform(Point.init(1, 0, 0), turn);
+    const rotated_coords = ambientCoords(rotated);
+
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), rotated_coords[0], 1e-5);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), rotated_coords[1], 1e-5);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), rotated_coords[2], 1e-5);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), rotated_coords[3], 1e-5);
+}
+
 test "pga exposes complement and anti-product aliases" {
     const E = h.Basis;
     const e0 = E.e(0);
     const e1 = E.e(1);
 
     try std.testing.expect(complementDual(e1).eql(e1.complementDual()));
+    try std.testing.expect(meet(e1, e0).eql(e1.wedge(e0)));
     try std.testing.expect(regressiveProduct(e1, e0).eql(e1.antiWedge(e0)));
+    try std.testing.expect(join(e1, e0).eql(e1.join(e0)));
     try std.testing.expect(geometricAntiproduct(e1, e0).eql(e1.antiGeometric(e0)));
     try std.testing.expect(antidotProduct(e1, e0).eql(e1.antiDot(e0)));
 }
