@@ -39,6 +39,8 @@ fn HelpersFor(comptime H: type, comptime T: type) type {
         pub const RotorError = rotors.RotorError;
 
         pub const radiansFromDegrees = rotors.radiansFromDegrees;
+        pub const scalarNormSquared = rotors.scalarNormSquared;
+        pub const coeffNormSquared = rotors.coeffNormSquared;
         pub const normSquared = rotors.normSquared;
         pub const norm = rotors.norm;
         pub const normalize = rotors.normalize;
@@ -79,6 +81,8 @@ pub fn InstantiateHelpers(comptime T: type) type {
 const default_helpers = InstantiateHelpers(default_scalar);
 pub const RotorError = rotors.RotorError;
 pub const radiansFromDegrees = rotors.radiansFromDegrees;
+pub const scalarNormSquared = rotors.scalarNormSquared;
+pub const coeffNormSquared = rotors.coeffNormSquared;
 pub const normSquared = rotors.normSquared;
 pub const norm = rotors.norm;
 pub const normalize = rotors.normalize;

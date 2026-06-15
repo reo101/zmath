@@ -81,18 +81,28 @@ fn assertFloatMultivector(comptime M: type) void {
     }
 }
 
-/// Returns the Euclidean norm squared of a multivector.
-pub inline fn normSquared(mv: anytype) @TypeOf(mv).Coefficient {
+/// Returns the metric scalar product of a multivector with itself.
+pub inline fn scalarNormSquared(mv: anytype) @TypeOf(mv).Coefficient {
     const M = @TypeOf(mv);
     comptime assertFloatMultivector(M);
-    return mv.scalarProduct(mv);
+    return mv.scalarNormSquared();
 }
 
-/// Returns the Euclidean norm of a multivector.
-pub inline fn norm(mv: anytype) @TypeOf(mv).Coefficient {
+/// Returns the raw coefficient-space norm squared, ignoring the metric.
+pub inline fn coeffNormSquared(mv: anytype) @TypeOf(mv).Coefficient {
     const M = @TypeOf(mv);
     comptime assertFloatMultivector(M);
-    return @sqrt(normSquared(mv));
+    return mv.coeffNormSquared();
+}
+
+/// Alias for `scalarNormSquared()`.
+pub inline fn normSquared(mv: anytype) @TypeOf(mv).Coefficient {
+    return scalarNormSquared(mv);
+}
+
+/// Returns `sqrt(abs(scalarNormSquared()))`.
+pub inline fn norm(mv: anytype) @TypeOf(mv).Coefficient {
+    return @sqrt(@abs(scalarNormSquared(mv)));
 }
 
 /// Returns the basis-complement/Poincaré dual of a multivector.
@@ -312,6 +322,15 @@ test "rotorFromTo handles antiparallel vectors" {
 
     try std.testing.expect(nearlyEqual(rotated_e1.coeffNamed("e1"), -1.0, 1e-12));
     try std.testing.expect(nearlyEqual(rotated_e1.coeffNamed("e2"), 0.0, 1e-12));
+}
+
+test "norm helpers distinguish scalar and coefficient norms" {
+    const M11 = multivector.Basis(f64, .{ .p = 1, .q = 1 });
+    const e2 = M11.e(2);
+
+    try std.testing.expectEqual(@as(f64, -1.0), scalarNormSquared(e2));
+    try std.testing.expectEqual(@as(f64, 1.0), coeffNormSquared(e2));
+    try std.testing.expectEqual(@as(f64, 1.0), norm(e2));
 }
 
 test "safe rotor helpers return ZeroVector on invalid input" {
