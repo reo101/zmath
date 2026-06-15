@@ -57,11 +57,15 @@ pub fn main() void {
 | CGA | `Cl(n+1, 1, 0)` | spheres, circles, conformal transforms |
 | STA | `Cl(1, 3, 0)` | relativistic spacetime |
 
-## Duals
+## Conventions
 
-- `dual()` / `complementDual()` is the metric-independent Poincaré dual.
-- `hodgeDual()` is metric-aware and only available for non-degenerate metrics.
+- Prefer `complementDual()` for the metric-independent Poincaré dual.
+- `dual()` is only a short alias for `complementDual()`.
+- Use `hodgeDual()` for the metric-aware dual on non-degenerate metrics.
 - PGA/RGA-style bulk and weight duals live under `zmath.flavours.pga`.
+
+See `docs/ga-conventions.md` for the product, duality, expression, and PGA
+representation conventions.
 
 ## Commands
 

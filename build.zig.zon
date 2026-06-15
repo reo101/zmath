@@ -10,6 +10,7 @@
         "build.zig.zon",
         "LICENSE",
         "README.md",
+        "docs",
         "src",
         "tools",
     },
