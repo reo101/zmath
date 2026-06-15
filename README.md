@@ -70,7 +70,7 @@ representation conventions.
 ## Commands
 
 ```sh
-zig build test --summary all   # current suite: 160 tests
+zig build test --summary all   # current suite: 162 tests
 zig build run                  # usage example
 zig build demo                 # terminal demo
 zig build bench-simd           # micro-benchmark

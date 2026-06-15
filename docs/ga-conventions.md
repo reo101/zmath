@@ -66,6 +66,13 @@ Planes are vectors:
 So for default PGA, `wedge()`/`meet()` is the direct incidence product and
 `join()` is the regressive product built through complement duality.
 
+The PGA facade also exposes basic motor helpers:
+
+- `translatorFromCoords()` / `translator()` builds translation motors.
+- `rotorInPlane()` builds origin-centered rotation motors.
+- `transform()` applies the point/object action used by the facade.
+- `composeMotors()` composes even motors with the geometric product.
+
 ## Runtime blade indices
 
 There are two runtime blade constructors because projective algebras often use
