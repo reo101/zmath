@@ -70,7 +70,10 @@ The PGA facade also exposes basic motor helpers:
 
 - `translatorFromCoords()` / `translator()` builds translation motors.
 - `rotorInPlane()` builds origin-centered rotation motors.
-- `transform()` applies the point/object action used by the facade.
+- `transform()` applies the point/object action used by the facade (`~M P M`).
+- `sandwich()` keeps the core GA sandwich order (`M P ~M`) for raw call sites.
+- `toPointMatrix4x4()` converts the facade point action to a homogeneous matrix.
+- `toMatrix4x4()` is the lower-level basis-vector action matrix.
 - `composeMotors()` composes even motors with the geometric product.
 
 ## Runtime blade indices

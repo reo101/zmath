@@ -189,7 +189,7 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
                     return Self.signedBlade(T, name);
                 }
 
-                /// Returns the Euclidean norm of a multivector.
+                /// Returns `sqrt(abs(scalarNormSquared()))` for a multivector.
                 pub fn norm(mv: anytype) T {
                     return rotors.norm(mv);
                 }

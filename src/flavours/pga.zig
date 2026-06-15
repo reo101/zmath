@@ -71,7 +71,8 @@ pub fn FamilyHelpers(comptime FamilyType: type, comptime T: type) type {
         pub const Motor = H.Even;
         pub const Rotor = H.Even;
 
-        /// Converts a PGA versor/motor action on basis vectors to a 4x4 matrix.
+        /// Converts the raw PGA versor action on basis vectors to a 4x4 matrix.
+        /// For homogeneous point transforms, use `toPointMatrix4x4()`.
         pub fn toMatrix4x4(mv: anytype) [4][4]T {
             multivector.ensureMultivector(@TypeOf(mv));
             const E = H.Basis;
@@ -90,6 +91,29 @@ pub fn FamilyHelpers(comptime FamilyType: type, comptime T: type) type {
                 mat[1][j] = @floatCast(n.e2);
                 mat[2][j] = @floatCast(n.e3);
                 mat[3][j] = @floatCast(n.e0);
+            }
+            return mat;
+        }
+
+        /// Converts the facade's point `transform()` action to a homogeneous 4x4 matrix.
+        pub fn toPointMatrix4x4(motor: anytype) [4][4]T {
+            if (comptime H.Full.dimensions != 4) {
+                @compileError("`toPointMatrix4x4()` is only available for 3D PGA");
+            }
+
+            const columns = [_]H.Full{
+                Self.Point.initHomogeneousCoords(1, .{ 0, 0, 0 }),
+                Self.Point.direction(1, 0, 0),
+                Self.Point.direction(0, 1, 0),
+                Self.Point.direction(0, 0, 1),
+            };
+
+            var mat: [4][4]T = undefined;
+            inline for (columns, 0..) |point, j| {
+                const coords = Self.ambientCoords(Self.transform(point, motor));
+                inline for (0..4) |i| {
+                    mat[i][j] = coords[i];
+                }
             }
             return mat;
         }
@@ -245,6 +269,7 @@ pub const Plane = default_helpers.Plane;
 pub const Motor = default_helpers.Motor;
 pub const Rotor = default_helpers.Rotor;
 pub const toMatrix4x4 = default_helpers.toMatrix4x4;
+pub const toPointMatrix4x4 = default_helpers.toPointMatrix4x4;
 pub const ambientCoords = default_helpers.ambientCoords;
 pub const geometricProduct = default_helpers.geometricProduct;
 pub const exteriorProduct = default_helpers.exteriorProduct;
@@ -373,6 +398,27 @@ test "toMatrix4x4 with identity rotor" {
     try std.testing.expectEqual(@as(f32, 1.0), mat[1][1]);
     try std.testing.expectEqual(@as(f32, 1.0), mat[2][2]);
     try std.testing.expectEqual(@as(f32, 1.0), mat[3][3]);
+}
+
+test "toPointMatrix4x4 matches PGA point transforms" {
+    const mat = toPointMatrix4x4(translator(4, -1, 2));
+
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), mat[0][0], 1e-5);
+    try std.testing.expectApproxEqAbs(@as(f32, 4.0), mat[1][0], 1e-5);
+    try std.testing.expectApproxEqAbs(@as(f32, -1.0), mat[2][0], 1e-5);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), mat[3][0], 1e-5);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), mat[1][1], 1e-5);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), mat[2][2], 1e-5);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), mat[3][3], 1e-5);
+
+    const p = Point.init(1, 2, 3);
+    const moved = transform(p, translator(4, -1, 2));
+    const coords = ambientCoords(moved);
+
+    try std.testing.expectApproxEqAbs(coords[0], mat[0][0] + mat[0][1] + 2 * mat[0][2] + 3 * mat[0][3], 1e-5);
+    try std.testing.expectApproxEqAbs(coords[1], mat[1][0] + mat[1][1] + 2 * mat[1][2] + 3 * mat[1][3], 1e-5);
+    try std.testing.expectApproxEqAbs(coords[2], mat[2][0] + mat[2][1] + 2 * mat[2][2] + 3 * mat[2][3], 1e-5);
+    try std.testing.expectApproxEqAbs(coords[3], mat[3][0] + mat[3][1] + 2 * mat[3][2] + 3 * mat[3][3], 1e-5);
 }
 
 test "pga exposes configurable Euclidean families" {
