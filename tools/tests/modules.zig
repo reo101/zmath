@@ -3,6 +3,7 @@ const zmath = @import("zmath");
 
 const curved = zmath.geometry.curved;
 const constant_curvature = zmath.geometry.constant_curvature;
+const spherical_game = zmath.geometry.spherical_game;
 const projection = zmath.render.projection;
 
 const StorageKind = enum { array, vector };
@@ -51,6 +52,7 @@ fn gaCarrierShape(comptime Carrier: type) CarrierShape {
 test "import geometry and render test modules" {
     _ = curved;
     _ = constant_curvature;
+    _ = spherical_game;
     _ = projection;
     try std.testing.expect(true);
 }

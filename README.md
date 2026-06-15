@@ -45,7 +45,7 @@ pub fn main() void {
 
 - `zmath.ga`: generic algebra factory, multivectors, products, duals, expression compiler.
 - `zmath.flavours`: convenience facades for VGA, PGA, CGA, STA, EPGA, HPGA.
-- `zmath.geometry`: constant-curvature geometry helpers.
+- `zmath.geometry`: constant-curvature and spherical-game geometry helpers.
 - `zmath.render`: small software-render/projection helpers used by the demos.
 
 ## GA flavour comparison
@@ -70,7 +70,7 @@ representation conventions.
 ## Commands
 
 ```sh
-zig build test --summary all   # current suite: 163 tests
+zig build test --summary all   # current suite: 168 tests
 zig build run                  # usage example
 zig build demo                 # terminal demo
 zig build bench-simd           # micro-benchmark

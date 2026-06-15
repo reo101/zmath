@@ -10,6 +10,12 @@ pub const curved_tangent = @import("geometry/curved_tangent.zig");
 pub const curved_types = @import("geometry/curved_types.zig");
 pub const curved_view = @import("geometry/curved_view.zig");
 pub const constant_curvature = @import("geometry/constant_curvature.zig");
+pub const spherical_game = @import("geometry/spherical_game.zig");
+
+test "spherical game module links" {
+    _ = spherical_game.Pose.north(1.0);
+    try std.testing.expect(true);
+}
 
 test "constant curvature conformal embeddings round-trip through GA helpers" {
     const sample = constant_curvature.Vec3{ .x = 0.4, .y = -0.2, .z = 0.7 };
