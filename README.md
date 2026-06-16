@@ -77,10 +77,13 @@ zig build bench-simd           # micro-benchmark
 zig build fuzz-expr            # expression parser/evaluator smoke fuzz
 zig build spirv-vga            # local SPIR-V shader build
 zig build shader-playground    # local Vulkan/GLFW shader playground
+zig build spherical-game-raylib-build # build local raylib S3 GA demo
+zig build spherical-game-raylib       # run local raylib S3 GA demo
 ```
 
-The shader playground is opt-in; run it from the Nix devshell so Vulkan,
-GLFW, and `spirv-opt` are on the include/library paths.
+The shader playground and raylib S3 demo are opt-in; run them from the Nix
+devshell so Vulkan/GLFW/raylib and `spirv-opt` are on the include/library
+paths.
 
 ## License
 
