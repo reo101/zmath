@@ -56,6 +56,8 @@ pub fn main() void {
 | PGA | `Cl(n, 0, 1)` | Euclidean rigid motion |
 | CGA | `Cl(n+1, 1, 0)` | spheres, circles, conformal transforms |
 | STA | `Cl(1, 3, 0)` | relativistic spacetime |
+| EPGA | `Cl(n+1, 0, 0)` | elliptic/projective geometry |
+| HPGA | `Cl(n, 1, 0)` | hyperbolic projective geometry |
 
 ## Conventions
 
@@ -75,8 +77,12 @@ zig build run                  # usage example
 zig build demo                 # terminal demo
 zig build bench-simd           # micro-benchmark
 zig build fuzz-expr            # expression parser/evaluator smoke fuzz
-zig build spirv-vga            # local SPIR-V shader build
-zig build shader-playground    # local Vulkan/GLFW shader playground
+zig build spirv-vga                 # build VGA-based SPIR-V shaders
+zig build spirv-raw                 # build raw SPIR-V shader baseline
+zig build spirv-compare             # compare GA vs raw SPIR-V shader size
+zig build shader-playground-build   # build local Vulkan/GLFW shader playground
+zig build shader-playground         # run playground with raw shaders
+zig build shader-playground-ga      # run playground with GA shaders
 zig build spherical-game-raylib-build # build local raylib S3 GA demo
 zig build spherical-game-raylib       # run local raylib S3 GA demo
 ```
