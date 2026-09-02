@@ -449,6 +449,21 @@ pub const Scene = struct {
         const cosine = std.math.clamp(sg.dot(self.camera().position, self.cube.center), -1.0, 1.0);
         return std.math.acos(cosine) * self.radius;
     }
+
+    /// Walk distance from the viewer to the conjugate point of the cube
+    /// center (where the cube sits antipodal and the unfolded sky peaks).
+    /// The reverse-perspective morph compresses into a small walk window
+    /// around it, so the frontend paces movement by this gap.
+    pub fn conjugateGap(self: Scene) f32 {
+        return @abs(std.math.pi * self.radius - self.distanceToCube());
+    }
+
+    /// Movement speed multiplier for a given conjugate gap: full speed far
+    /// away, down to a third inside the warping window, so the face-cycling
+    /// reads as a gradual unfold instead of a snap.
+    pub fn speedScaleForGap(gap_units: f32) f32 {
+        return std.math.clamp(gap_units / 5.0, 1.0 / 3.0, 1.0);
+    }
 };
 
 pub fn sampleStats(tracer: Tracer, width: usize, height: usize) ViewStats {
@@ -578,6 +593,15 @@ test "center ray hits the cube front face near the expected distance" {
         sg.dot(hit.point, scene.cube.planes[@intFromEnum(Face.front)].inward_normal),
         1e-4,
     );
+}
+
+test "walk speed eases near the conjugate window" {
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0 / 3.0), Scene.speedScaleForGap(0.0), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), Scene.speedScaleForGap(5.0), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), Scene.speedScaleForGap(50.0), 1e-6);
+
+    const scene = Scene.init();
+    try std.testing.expect(scene.conjugateGap() > 5.0);
 }
 
 test "straight up far from the cube is wrapped ground, not sky" {

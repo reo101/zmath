@@ -82,7 +82,10 @@ pub fn main() void {
 fn update(world: *scene.Scene, dt: f32) void {
     if (rl.IsKeyPressed(rl.KEY_R)) world.* = scene.Scene.init();
 
-    const move_speed: f32 = 2.2;
+    // Pace movement by the conjugate gap: the reverse-perspective morph
+    // compresses into a small walk window around it, so ease off there.
+    const speed_scale = scene.Scene.speedScaleForGap(world.conjugateGap());
+    const move_speed: f32 = 2.2 * speed_scale;
     const look_speed: f32 = 1.35;
     if (rl.IsKeyDown(rl.KEY_S)) world.walkForward(-move_speed * dt);
     if (rl.IsKeyDown(rl.KEY_W)) world.walkForward(move_speed * dt);
