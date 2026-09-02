@@ -6,14 +6,6 @@ pub const Point = h.Vector;
 pub const Direction = h.Vector;
 pub const Rotor = h.Rotor;
 
-pub const Vec3 = struct { x: f32, y: f32, z: f32 };
-pub const Vec4 = struct {
-    w: f32,
-    x: f32,
-    y: f32,
-    z: f32,
-};
-
 pub const Projection = struct {
     x: f32,
     y: f32,
@@ -32,10 +24,10 @@ pub const Pose = struct {
 
     pub fn north(radius: f32) Pose {
         return .{
-            .position = point(.{ .w = 1, .x = 0, .y = 0, .z = 0 }),
-            .right = point(.{ .w = 0, .x = 1, .y = 0, .z = 0 }),
-            .up = point(.{ .w = 0, .x = 0, .y = 1, .z = 0 }),
-            .forward = point(.{ .w = 0, .x = 0, .y = 0, .z = 1 }),
+            .position = Point.init(.{ 1, 0, 0, 0 }),
+            .right = Direction.init(.{ 0, 1, 0, 0 }),
+            .up = Direction.init(.{ 0, 0, 1, 0 }),
+            .forward = Direction.init(.{ 0, 0, 0, 1 }),
             .radius = radius,
         };
     }
@@ -119,19 +111,6 @@ pub const TangentFrame = struct {
     }
 };
 
-pub fn point(v: Vec4) Point {
-    return Point.init(.{ v.w, v.x, v.y, v.z });
-}
-
-pub fn coords(p: Point) Vec4 {
-    return .{
-        .w = p.coeffNamed("e1"),
-        .x = p.coeffNamed("e2"),
-        .y = p.coeffNamed("e3"),
-        .z = p.coeffNamed("e4"),
-    };
-}
-
 pub fn dot(a: Point, b: Point) f32 {
     return a.scalarProduct(b);
 }
@@ -183,18 +162,17 @@ pub fn classifyHemisphere(camera: Point, world_point: Point, epsilon: f32) Hemis
     return if (c > 0) .front else .back;
 }
 
-fn expectVec4Approx(expected: Vec4, actual: Vec4, tolerance: f32) !void {
-    try std.testing.expectApproxEqAbs(expected.w, actual.w, tolerance);
-    try std.testing.expectApproxEqAbs(expected.x, actual.x, tolerance);
-    try std.testing.expectApproxEqAbs(expected.y, actual.y, tolerance);
-    try std.testing.expectApproxEqAbs(expected.z, actual.z, tolerance);
+fn expectVectorApprox(expected: [4]f32, actual: Point, tolerance: f32) !void {
+    inline for (expected, .{ "e1", "e2", "e3", "e4" }) |value, basis| {
+        try std.testing.expectApproxEqAbs(value, actual.coeffNamed(basis), tolerance);
+    }
 }
 
 test "S3 pose moves by GA rotor on the position-forward plane" {
     const pose = Pose.north(1.0).moveForward(std.math.pi / 2.0);
 
-    try expectVec4Approx(.{ .w = 0, .x = 0, .y = 0, .z = 1 }, coords(pose.position), 1e-5);
-    try expectVec4Approx(.{ .w = -1, .x = 0, .y = 0, .z = 0 }, coords(pose.forward), 1e-5);
+    try expectVectorApprox(.{ 0, 0, 0, 1 }, pose.position, 1e-5);
+    try expectVectorApprox(.{ -1, 0, 0, 0 }, pose.forward, 1e-5);
     try std.testing.expectApproxEqAbs(@as(f32, 0), dot(pose.position, pose.right), 1e-5);
     try std.testing.expectApproxEqAbs(@as(f32, 1), dot(pose.position, pose.position), 1e-5);
 }
