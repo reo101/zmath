@@ -29,9 +29,20 @@ pub const Surface = union(enum) {
 
 pub const Hit = struct {
     surface: Surface,
-    distance: f32,
+    cos_angle: f32,
+    sin_angle: f32,
     point: Point,
     brightness: f32,
+
+    /// Hit angle along the ray in radians. Only for tests/HUD; the pixel
+    /// loop never pays for it.
+    pub fn angle(self: Hit) f32 {
+        return std.math.atan2(self.sin_angle, self.cos_angle);
+    }
+
+    pub fn distance(self: Hit, radius: f32) f32 {
+        return self.angle() * radius;
+    }
 };
 
 pub const Plane = struct {
@@ -225,79 +236,132 @@ pub const Tracer = struct {
     }
 
     pub fn trace(self: Tracer, dir: Direction) Hit {
-        var angles: [6]f32 = undefined;
+        // Per-plane ray components. b_i = dir·n_i; a_i = origin·n_i is
+        // precomputed per frame.
+        var b: [6]f32 = undefined;
         for (self.cube.planes, 0..) |plane, i| {
-            const b = sg.dot(dir, plane.inward_normal);
-            angles[i] = fastAtan2(b, self.plane_a[i]);
+            b[i] = sg.dot(dir, plane.inward_normal);
         }
 
-        // The cube is small, so the six hemisphere-center angles form one
-        // tight cluster on the angle circle; unwrap it around its circular
-        // mean before taking max/min.
-        var sin_sum: f32 = 0.0;
-        var cos_sum: f32 = 0.0;
-        for (angles) |angle| {
-            sin_sum += @sin(angle);
-            cos_sum += @cos(angle);
-        }
-        const mean = fastAtan2(sin_sum, cos_sum);
-        for (&angles) |*angle| {
-            while (angle.* - mean > std.math.pi) angle.* -= 2.0 * std.math.pi;
-            while (angle.* - mean < -std.math.pi) angle.* += 2.0 * std.math.pi;
-        }
-
-        var r_max = -std.math.inf(f32);
-        var r_min = std.math.inf(f32);
-        var winner: usize = 0;
-        var loser: usize = 0;
-        for (angles, 0..) |angle, i| {
-            if (angle > r_max) {
-                r_max = angle;
-                winner = i;
-            }
-            if (angle < r_min) {
-                r_min = angle;
-                loser = i;
+        // Partition by which side of each hemisphere the camera starts on.
+        // Planes with a_i < 0 are entry candidates (their forward crossing
+        // angle sits in (0, pi)); planes with a_i > 0 are exit candidates.
+        // Within each subset the determinant sign
+        //   b_i*a_j - a_i*b_j = h_i h_j sin(r_i - r_j)
+        // orders the crossing angles exactly (angles confined to one
+        // semicircle per subset), so no trig is needed here.
+        var best_entry: ?usize = null;
+        var worst_exit: ?usize = null;
+        for (0..6) |i| {
+            if (self.plane_a[i] < 0.0) {
+                if (best_entry) |j| {
+                    if (b[i] * self.plane_a[j] - self.plane_a[i] * b[j] > 0.0) best_entry = i;
+                } else best_entry = i;
+            } else {
+                if (worst_exit) |j| {
+                    if (b[i] * self.plane_a[j] - self.plane_a[i] * b[j] < 0.0) worst_exit = i;
+                } else worst_exit = i;
             }
         }
 
-        const entry = r_max - std.math.pi / 2.0;
-        const exit = r_min + std.math.pi / 2.0;
-
+        // Ground first-positive root: (cos, sin) = (-b_g, a_g)/h_g, since
+        // a_g = sin(eye_height/R) > 0.
         const b_ground = sg.dot(dir, worldUp());
-        var ground_angle = fastAtan2(b_ground, self.ground_a) + std.math.pi / 2.0;
-        if (ground_angle <= 1e-6) ground_angle += std.math.pi;
-        if (ground_angle > std.math.pi) ground_angle -= std.math.pi;
+        const h_g = @sqrt(b_ground * b_ground + self.ground_a * self.ground_a);
+        const cos_ground = -b_ground / h_g;
+        const sin_ground = self.ground_a / h_g;
 
-        const inside = entry <= 1e-4 and exit > 1e-4;
-        const cube_angle: ?f32 = if (inside)
-            exit
-        else if (entry > 1e-4 and entry < exit)
-            entry
-        else
-            null;
+        var surface: Surface = undefined;
+        var cos_alpha: f32 = undefined;
+        var sin_alpha: f32 = undefined;
+        var inward: Direction = undefined;
 
-        if (cube_angle == null or ground_angle < cube_angle.?) {
-            const alpha = ground_angle;
-            return .{
-                .surface = .ground,
-                .distance = alpha * self.radius,
-                .point = pointAlong(self.origin, dir, alpha),
-                .brightness = groundBrightness(self.origin, dir, alpha),
-            };
+        if (best_entry == null) {
+            // Camera inside every hemisphere: the visible surface is the
+            // forward exit wall.
+            const i = worst_exit.?;
+            const a_x = self.plane_a[i];
+            const h_x = @sqrt(a_x * a_x + b[i] * b[i]);
+            cos_alpha = -b[i] / h_x;
+            sin_alpha = a_x / h_x;
+            surface = .{ .cube = self.cube.planes[i].face };
+            inward = self.cube.planes[i].inward_normal;
+        } else {
+            const i = best_entry.?;
+            const a_e = self.plane_a[i];
+            const h_e = @sqrt(a_e * a_e + b[i] * b[i]);
+            const cos_entry = b[i] / h_e;
+            const sin_entry = -a_e / h_e;
+
+            // Entry beats the exit plane iff entry angle < exit angle, i.e.
+            // sin(entry - exit) < 0  <=>  a_e*b_x - b_e*a_x < 0.
+            var cube_wins = true;
+            if (worst_exit) |x| {
+                const a_x = self.plane_a[x];
+                if (a_e * b[x] - b[i] * a_x > 0.0) cube_wins = false;
+            }
+            // ... and beats the ground iff entry angle < ground angle:
+            // sin(entry - ground) < 0  <=>  a_e*b_g - b_e*a_g < 0.
+            if (a_e * b_ground - b[i] * self.ground_a > 0.0) cube_wins = false;
+
+            if (cube_wins) {
+                cos_alpha = cos_entry;
+                sin_alpha = sin_entry;
+                surface = .{ .cube = self.cube.planes[i].face };
+                inward = self.cube.planes[i].inward_normal;
+            } else {
+                cos_alpha = cos_ground;
+                sin_alpha = sin_ground;
+                surface = .ground;
+                inward = worldUp();
+            }
         }
 
-        const alpha = cube_angle.?;
-        const hit_plane = if (inside) self.cube.planes[loser] else self.cube.planes[winner];
-        const tangent = tangentAlong(self.origin, dir, alpha);
-        var brightness = sg.dot(tangent, hit_plane.inward_normal);
-        if (inside) brightness = -brightness;
+        const point = self.origin.scale(cos_alpha)
+            .add(dir.scale(sin_alpha))
+            .cast(Point);
+        const tangent = dir.scale(cos_alpha)
+            .sub(self.origin.scale(sin_alpha))
+            .cast(Direction);
+        var brightness = sg.dot(tangent, inward);
+        if (best_entry == null) brightness = -brightness;
+        if (surface == .ground) brightness = @abs(brightness);
+
         return .{
-            .surface = .{ .cube = hit_plane.face },
-            .distance = alpha * self.radius,
-            .point = pointAlong(self.origin, dir, alpha),
+            .surface = surface,
+            .cos_angle = cos_alpha,
+            .sin_angle = sin_alpha,
+            .point = point,
             .brightness = std.math.clamp(brightness, 0.0, 1.0),
         };
+    }
+};
+
+pub const FrameCamera = struct {
+    pose: Pose,
+    tan_half_fov: f32,
+
+    /// Stereographic wide-FOV frame direction for screen offsets `u`, `v`
+    /// in [-1, 1]. Conformal (circles map to circles), and - unlike a
+    /// pinhole - keeps the conjugate-region image continuous across the
+    /// frame. The reference engine renders spherical space through the same
+    /// projection family (Hyperbolica devlog #4).
+    ///
+    /// Uses the half-angle identities so the hot path stays free of
+    /// transcendentals: with t = r·tan(fov/2), sin(2·atan t) = 2t/(1+t²)
+    /// and cos(2·atan t) = (1-t²)/(1+t²).
+    pub fn direction(self: FrameCamera, u: f32, v: f32) Direction {
+        const r = @sqrt(u * u + v * v);
+        if (r < 1e-6) return self.pose.forward;
+
+        const t = r * self.tan_half_fov;
+        const denom = 1.0 / (1.0 + t * t);
+        const sin_theta = 2.0 * t * denom;
+        const cos_theta = (1.0 - t * t) * denom;
+        return self.pose.forward.scale(cos_theta)
+            .add(self.pose.right.scale(sin_theta * u / r))
+            .add(self.pose.up.scale(sin_theta * v / r))
+            .cast(Direction);
     }
 };
 
@@ -324,33 +388,26 @@ pub const Scene = struct {
         return Tracer.init(self.camera(), self.cube);
     }
 
-    /// Stereographic wide-FOV frame direction for screen offsets `u`, `v` in
-    /// [-1, 1]. Conformal (circles map to circles), and - unlike a pinhole -
-    /// keeps the conjugate-region image continuous across the frame. The
-    /// reference engine renders spherical space through the same projection
-    /// family (Hyperbolica devlog #4).
-    pub fn frameDirection(self: Scene, u: f32, v: f32) Direction {
-        const camera_pose = self.camera();
-        const r = @sqrt(u * u + v * v);
-        if (r < 1e-6) return camera_pose.forward;
-
-        const theta = 2.0 * std.math.atan(r * @tan(self.half_fov / 2.0));
-        const sin_theta = @sin(theta);
-        return camera_pose.forward.scale(@cos(theta))
-            .add(camera_pose.right.scale(sin_theta * u / r))
-            .add(camera_pose.up.scale(sin_theta * v / r))
-            .cast(Direction);
+    /// Per-frame camera + projection state. Build once, then call
+    /// `direction` per pixel - `camera()` composes GA rotors and must stay
+    /// out of the hot path.
+    pub fn frameCamera(self: Scene) FrameCamera {
+        return .{
+            .pose = self.camera(),
+            .tan_half_fov = @tan(self.half_fov / 2.0),
+        };
     }
 
     pub fn sampleFrame(self: Scene, width: usize, height: usize) ViewStats {
         var stats = ViewStats{};
         const frame_tracer = self.tracer();
+        const cam = self.frameCamera();
         for (0..height) |row| {
             for (0..width) |column| {
                 const u = ((@as(f32, @floatFromInt(column)) + 0.5) / @as(f32, @floatFromInt(width))) * 2.0 - 1.0;
                 const v = 1.0 - ((@as(f32, @floatFromInt(row)) + 0.5) / @as(f32, @floatFromInt(height))) * 2.0;
                 stats.pixels += 1;
-                switch (frame_tracer.trace(self.frameDirection(u, v)).surface) {
+                switch (frame_tracer.trace(cam.direction(u, v)).surface) {
                     .ground => stats.ground += 1,
                     .cube => |face| {
                         stats.cube += 1;
@@ -378,6 +435,16 @@ pub const Scene = struct {
         self.player = self.player.pitch(angle);
     }
 
+    pub fn cubeBearingForwardCosine(self: Scene) f32 {
+        // Cosine of the angle between the camera's forward tangent and the
+        // initial bearing toward the cube center (tangent-projected).
+        const camera_pose = self.camera();
+        const cosine = sg.dot(camera_pose.position, self.cube.center);
+        const bearing = self.cube.center.sub(camera_pose.position.scale(cosine)).cast(Direction);
+        const bearing_unit = sg.normalize(bearing) orelse return 1.0;
+        return sg.dot(camera_pose.forward, bearing_unit);
+    }
+
     pub fn distanceToCube(self: Scene) f32 {
         const cosine = std.math.clamp(sg.dot(self.camera().position, self.cube.center), -1.0, 1.0);
         return std.math.acos(cosine) * self.radius;
@@ -402,23 +469,6 @@ pub fn sampleStats(tracer: Tracer, width: usize, height: usize) ViewStats {
         }
     }
     return stats;
-}
-
-fn pointAlong(origin: Point, dir: Direction, angle: f32) Point {
-    return origin.scale(@cos(angle))
-        .add(dir.scale(@sin(angle)))
-        .cast(Point);
-}
-
-fn tangentAlong(origin: Point, dir: Direction, angle: f32) Direction {
-    return dir.scale(@cos(angle))
-        .sub(origin.scale(@sin(angle)))
-        .cast(Direction);
-}
-
-fn groundBrightness(origin: Point, dir: Direction, angle: f32) f32 {
-    const tangent = tangentAlong(origin, dir, angle);
-    return @abs(sg.dot(tangent, worldUp()));
 }
 
 fn facePlane(center: Point, axis: Direction, sign: f32, half_extent: f32, radius: f32, face: Face) Plane {
@@ -521,8 +571,8 @@ test "center ray hits the cube front face near the expected distance" {
     // The wall is a great sphere, not a flat plane, so the crossing angle
     // along the geodesic is not the linear offset; pin it to a band and
     // verify the hit point lies exactly on the front plane instead.
-    try std.testing.expect(hit.distance > 0.4);
-    try std.testing.expect(hit.distance < default_cube_distance);
+    try std.testing.expect(hit.distance(default_radius) > 0.4);
+    try std.testing.expect(hit.distance(default_radius) < default_cube_distance);
     try std.testing.expectApproxEqAbs(
         @as(f32, 0.0),
         sg.dot(hit.point, scene.cube.planes[@intFromEnum(Face.front)].inward_normal),
@@ -530,15 +580,16 @@ test "center ray hits the cube front face near the expected distance" {
     );
 }
 
-test "straight up is ground, not sky" {
-    const scene = Scene.init();
+test "straight up far from the cube is wrapped ground, not sky" {
+    var scene = Scene.init();
+    scene.walkForward(10.0);
     const tracer = scene.tracer();
     const hit = tracer.trace(tracer.up);
 
     try std.testing.expectEqual(Surface.ground, hit.surface);
     try std.testing.expectApproxEqAbs(
         std.math.pi * default_radius - default_eye_height,
-        hit.distance,
+        hit.distance(default_radius),
         0.01,
     );
 }
@@ -629,8 +680,36 @@ test "cube coverage dips mid-range then explodes near the antipode" {
     try std.testing.expect(far > mid);
 }
 
+test "back face emerges as a far-side slice well before the conjugate" {
+    // The back face's ground-level edge becomes entry-eligible the moment
+    // the viewer passes the contact point's antipode (walk ~16.05), so the
+    // moon slice is visible in the plain walking view and expands toward
+    // the conjugate.
+    var scene = Scene.init();
+    scene.walkForward(17.0);
+    const early = sampleStats(scene.tracer(), 64, 36).faceHits(.back);
+
+    scene = Scene.init();
+    scene.walkForward(21.0);
+    const late = sampleStats(scene.tracer(), 64, 36).faceHits(.back);
+
+    try std.testing.expect(early > 0);
+    try std.testing.expect(late > 0);
+
+    // And it is on screen once the player turns to face the cube — past
+    // the contact-point antipode the cube lives in the backward sky.
+    scene = Scene.init();
+    scene.walkForward(17.5);
+    scene.yaw(std.math.pi);
+    const frame_stats = scene.sampleFrame(64, 36);
+    try std.testing.expect(frame_stats.faceHits(.back) > 0);
+}
+
 test "bottom face is never the first hit along the walk" {
-    for ([_]f32{ 0.0, 5.0, 10.0, 14.0, 16.5, 18.0, 20.0, 21.2 }) |walk| {
+    // The camera always stays inside the bottom plane's hemisphere (it
+    // walks on the ground the bottom face is tangent to), so the bottom
+    // face is structurally an exit candidate, never an entry face.
+    for ([_]f32{ 0.0, 5.0, 10.0, 14.0, 16.5, 18.0, 20.0, 21.2, 22.5 }) |walk| {
         var scene = Scene.init();
         scene.walkForward(walk);
         const stats = sampleStats(scene.tracer(), 64, 36);

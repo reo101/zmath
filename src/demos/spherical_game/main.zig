@@ -47,7 +47,17 @@ pub fn main() void {
     defer rl.UnloadTexture(texture);
     const pixels: [*]u8 = @ptrCast(image.data.?);
 
-    while (!rl.WindowShouldClose()) {
+    // Optional frame cap for headless perf measurement.
+    const frame_cap: ?u32 = if (rl.getenv("ZMATH_DEMO_FRAMES")) |value|
+        std.fmt.parseInt(u32, std.mem.span(value), 10) catch null
+    else
+        null;
+    var frames: u32 = 0;
+
+    while (!rl.WindowShouldClose()) : (frames += 1) {
+        if (frame_cap) |cap| {
+            if (frames >= cap) break;
+        }
         if (!capture) {
             const dt = @min(rl.GetFrameTime(), 0.05);
             update(&world, dt);
@@ -84,28 +94,76 @@ fn update(world: *scene.Scene, dt: f32) void {
     if (rl.IsKeyDown(rl.KEY_DOWN)) world.pitch(look_speed * dt);
 }
 
-fn renderFrame(world: *scene.Scene, pixels: [*]u8) void {
-    const tracer = world.tracer();
-    const circumference = std.math.pi * world.radius;
+const RenderJob = struct {
+    tracer: scene.Tracer,
+    cam: scene.FrameCamera,
+    pixels: [*]u8,
+    row_start: usize,
+    row_end: usize,
+};
 
-    for (0..render_height) |row| {
+fn renderBand(job: RenderJob) void {
+    for (job.row_start..job.row_end) |row| {
         for (0..render_width) |column| {
             const u = ((@as(f32, @floatFromInt(column)) + 0.5) / render_width) * 2.0 - 1.0;
             const v = 1.0 - ((@as(f32, @floatFromInt(row)) + 0.5) / render_height) * 2.0;
-            const hit = tracer.trace(world.frameDirection(u, v));
-            const rgb = shadeHit(hit, circumference);
+            const hit = job.tracer.trace(job.cam.direction(u, v));
+            const rgb = shadeHit(hit);
 
             const offset = (row * render_width + column) * 4;
-            pixels[offset] = rgb.r;
-            pixels[offset + 1] = rgb.g;
-            pixels[offset + 2] = rgb.b;
-            pixels[offset + 3] = 255;
+            job.pixels[offset] = rgb.r;
+            job.pixels[offset + 1] = rgb.g;
+            job.pixels[offset + 2] = rgb.b;
+            job.pixels[offset + 3] = 255;
         }
     }
 }
 
-fn shadeHit(hit: scene.Hit, circumference: f32) rl.Color {
-    const dim = 1.0 - 0.25 * std.math.clamp(hit.distance / circumference, 0.0, 1.0);
+fn renderFrame(world: *scene.Scene, pixels: [*]u8) void {
+    const job_base = RenderJob{
+        .tracer = world.tracer(),
+        .cam = world.frameCamera(),
+        .pixels = pixels,
+        .row_start = 0,
+        .row_end = 0,
+    };
+
+    const thread_count: usize = @min(std.Thread.getCpuCount() catch 1, 8);
+    const band = (render_height + thread_count - 1) / thread_count;
+    var threads: [8]?std.Thread = @splat(null);
+    defer {
+        for (threads) |thread| {
+            if (thread) |t| t.join();
+        }
+    }
+
+    // First band on the spawning thread, the rest on workers.
+    var start: usize = 0;
+    var end = @min(start + band, render_height);
+    var job = job_base;
+    job.row_start = start;
+    job.row_end = end;
+    renderBand(job);
+    start = end;
+
+    var spawned: usize = 0;
+    while (start < render_height) : (spawned += 1) {
+        end = @min(start + band, render_height);
+        job = job_base;
+        job.row_start = start;
+        job.row_end = end;
+        threads[spawned] = std.Thread.spawn(.{}, renderBand, .{job}) catch blk: {
+            renderBand(job);
+            break :blk null;
+        };
+        start = end;
+    }
+}
+
+fn shadeHit(hit: scene.Hit) rl.Color {
+    // Monotone angle proxy (1 - cos a)/2 in [0, 1] - keeps the hot path
+    // free of transcendentals while dimming identically in character.
+    const dim = 1.0 - 0.25 * (1.0 - hit.cos_angle) / 2.0;
     return switch (hit.surface) {
         .cube => |face| scale(
             faceColor(face),
@@ -155,18 +213,25 @@ fn drawHud(world: *scene.Scene) void {
     rl.DrawText("S3 spherical-game demo (stereographic ray trace)", 30, 27, 22, color(246, 247, 241, 255));
     rl.DrawText("W/S move, A/D strafe, arrows look, R reset. Walk S past the far side, then look up: the roof centers and the walls wrap the sky.", 30, 57, 16, color(190, 204, 220, 235));
 
-    var buffer: [160]u8 = undefined;
-    const status = std.fmt.bufPrintZ(
-        &buffer,
-        "cube distance {d:.2} / {d:.2}   faces {d}/5   frame cube {d:.0}%   {d} fps",
-        .{
-            world.distanceToCube(),
-            std.math.pi * world.radius,
-            stats.visibleFaceCount(),
-            stats.cubeFraction() * 100.0,
-            rl.GetFPS(),
-        },
-    ) catch return;
+    var buffer: [192]u8 = undefined;
+    const status = if (world.cubeBearingForwardCosine() < 0.0)
+        std.fmt.bufPrintZ(
+            &buffer,
+            "the cube is behind you - turn around   faces {d}/5   frame cube {d:.0}%   {d} fps",
+            .{ stats.visibleFaceCount(), stats.cubeFraction() * 100.0, rl.GetFPS() },
+        ) catch return
+    else
+        std.fmt.bufPrintZ(
+            &buffer,
+            "cube distance {d:.2} / {d:.2}   faces {d}/5   frame cube {d:.0}%   {d} fps",
+            .{
+                world.distanceToCube(),
+                std.math.pi * world.radius,
+                stats.visibleFaceCount(),
+                stats.cubeFraction() * 100.0,
+                rl.GetFPS(),
+            },
+        ) catch return;
     rl.DrawText(status, 30, 82, 16, color(150, 174, 201, 230));
 }
 

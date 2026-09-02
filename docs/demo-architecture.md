@@ -67,7 +67,8 @@ reference direction. Harvest its ideas, not its code.
   color with headlight lambert and mild distance dimming.
 - Capture mode: `ZMATH_DEMO_CAPTURE=path.png` renders one hidden-window
   frame and exits. `ZMATH_DEMO_WALK` is the absolute walk distance
-  (default = the showcase frame), `ZMATH_DEMO_PITCH` the pitch in radians.
+  (default = the showcase frame), `ZMATH_DEMO_PITCH` the pitch in radians,
+  `ZMATH_DEMO_FRAMES` caps the frame count for headless perf timing.
 
 ### The reverse-perspective frame
 
