@@ -10,6 +10,7 @@ const render_width = 960;
 const render_height = 540;
 
 const default_capture_walk: f32 = scene.default_cube_distance + std.math.pi * scene.default_radius - 0.15;
+const default_capture_pitch: f32 = -1.4;
 
 pub fn main() void {
     const capture_path = rl.getenv("ZMATH_DEMO_CAPTURE");
@@ -33,9 +34,9 @@ pub fn main() void {
         else
             default_capture_walk;
         const pitch = if (rl.getenv("ZMATH_DEMO_PITCH")) |value|
-            std.fmt.parseFloat(f32, std.mem.span(value)) catch 0.0
+            std.fmt.parseFloat(f32, std.mem.span(value)) catch default_capture_pitch
         else
-            0.0;
+            default_capture_pitch;
         world.walkForward(walk);
         if (pitch != 0.0) world.pitch(pitch);
     }
@@ -91,10 +92,8 @@ fn renderFrame(world: *scene.Scene, pixels: [*]u8) void {
         for (0..render_width) |column| {
             const u = ((@as(f32, @floatFromInt(column)) + 0.5) / render_width) * 2.0 - 1.0;
             const v = 1.0 - ((@as(f32, @floatFromInt(row)) + 0.5) / render_height) * 2.0;
-            const rgb = if (tracer.direction(u, v)) |dir|
-                shadeHit(tracer.trace(dir), circumference)
-            else
-                color(4, 6, 10, 255);
+            const hit = tracer.trace(world.frameDirection(u, v));
+            const rgb = shadeHit(hit, circumference);
 
             const offset = (row * render_width + column) * 4;
             pixels[offset] = rgb.r;
@@ -117,14 +116,13 @@ fn shadeHit(hit: scene.Hit, circumference: f32) rl.Color {
 }
 
 fn groundColor(point: scene.Point) rl.Color {
-    // Checker in ground arc coordinates: latitude/longitude on the
-    // equatorial ground sphere, one-unit cells.
-    const up_component = sg_dot(point, worldUpPoint());
-    const latitude = std.math.asin(std.math.clamp(up_component, -1.0, 1.0)) * scene.default_radius;
-    const longitude = scene.fastAtan2(sg_dot(point, axisY()), sg_dot(point, axisX())) * scene.default_radius;
+    // Checker in ground arc coordinates. The walk axis is the e4 direction
+    // and the strafe axis sweeps the e1-e2 plane (see GroundPose.north).
+    const walk = std.math.asin(std.math.clamp(sg_dot(point, axisWalk()), -1.0, 1.0)) * scene.default_radius;
+    const strafe = scene.fastAtan2(sg_dot(point, axisStrafeB()), sg_dot(point, axisStrafeA())) * scene.default_radius;
     const cell: f32 = 1.0;
-    const checker = (@as(i32, @intFromFloat(@floor(latitude / cell))) +
-        @as(i32, @intFromFloat(@floor(longitude / cell)))) & 1 == 0;
+    const checker = (@as(i32, @intFromFloat(@floor(walk / cell))) +
+        @as(i32, @intFromFloat(@floor(strafe / cell)))) & 1 == 0;
     return if (checker) color(92, 104, 96, 255) else color(46, 54, 50, 255);
 }
 
@@ -150,17 +148,17 @@ fn drawScaled(texture: rl.Texture2D) void {
 }
 
 fn drawHud(world: *scene.Scene) void {
-    const stats = scene.sampleStats(world.tracer(), 64, 36);
+    const stats = scene.Scene.sampleFrame(world.*, 64, 36);
 
-    rl.DrawRectangle(16, 16, 620, 92, color(4, 7, 12, 205));
-    rl.DrawRectangleLines(16, 16, 620, 92, color(130, 155, 180, 110));
-    rl.DrawText("S3 spherical-game demo (full-sky ray trace)", 30, 27, 22, color(246, 247, 241, 255));
-    rl.DrawText("W/S move, A/D strafe, arrows look, R reset. Walk S until the cube unfolds around you.", 30, 57, 17, color(190, 204, 220, 235));
+    rl.DrawRectangle(16, 16, 660, 92, color(4, 7, 12, 205));
+    rl.DrawRectangleLines(16, 16, 660, 92, color(130, 155, 180, 110));
+    rl.DrawText("S3 spherical-game demo (stereographic ray trace)", 30, 27, 22, color(246, 247, 241, 255));
+    rl.DrawText("W/S move, A/D strafe, arrows look, R reset. Walk S past the far side, then look up: the roof centers and the walls wrap the sky.", 30, 57, 16, color(190, 204, 220, 235));
 
     var buffer: [160]u8 = undefined;
     const status = std.fmt.bufPrintZ(
         &buffer,
-        "cube distance {d:.2} / {d:.2}   faces {d}/5   sky cube {d:.0}%   {d} fps",
+        "cube distance {d:.2} / {d:.2}   faces {d}/5   frame cube {d:.0}%   {d} fps",
         .{
             world.distanceToCube(),
             std.math.pi * world.radius,
@@ -198,14 +196,14 @@ fn color(r: u8, g: u8, b: u8, a: u8) rl.Color {
 
 const sg_dot = scene.dot;
 
-fn worldUpPoint() scene.Point {
-    return scene.Point.init(.{ 0, 0, 1, 0 });
-}
-
-fn axisX() scene.Point {
-    return scene.Point.init(.{ 0, 1, 0, 0 });
-}
-
-fn axisY() scene.Point {
+fn axisWalk() scene.Point {
     return scene.Point.init(.{ 0, 0, 0, 1 });
+}
+
+fn axisStrafeA() scene.Point {
+    return scene.Point.init(.{ 1, 0, 0, 0 });
+}
+
+fn axisStrafeB() scene.Point {
+    return scene.Point.init(.{ 0, 1, 0, 0 });
 }

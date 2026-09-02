@@ -41,7 +41,8 @@ reference direction. Harvest its ideas, not its code.
   giving an orthonormal GA frame `(position, right, up, forward)`.
 - `Cube`: the exact spherical cube — intersection of six hemispheres whose
   boundary great spheres sit `half_extent` from the center. No mesh, no
-  tessellation.
+  tessellation. The demo cube is 4.4 units on an R=6 world, so its
+  conjugate-region image can dominate the sky.
 - `Tracer`: per-frame first-hit ray tracer over the full view sphere.
   Along a geodesic `p(a) = cos(a)·origin + sin(a)·dir`, plane i is crossed
   at `r_i ± pi/2` with `r_i = atan2(dir·n_i, origin·n_i)`; the cube interior
@@ -49,9 +50,11 @@ reference direction. Harvest its ideas, not its code.
   `(max r_i - pi/2, min r_i + pi/2)`, so the entry/exit faces and angles are
   exact with zero iteration. Ground = first crossing of the equatorial
   great sphere. Occlusion is exact by construction.
-- `Tracer.direction(u, v)`: full-sky azimuthal-equidistant fisheye — the
-  entire direction sphere maps onto the unit disc (rim = antipodal
-  direction). No pinhole, no branch split, no screen-space tears.
+- `Scene.frameDirection`: stereographic wide-FOV frame (150° by default).
+  Conformal, maps circles to circles, and keeps the conjugate-region image
+  continuous across the frame — the same projection family the reference
+  engine uses for spherical space (devlog #4). `Tracer` itself stays a
+  pure per-direction tracer.
 - `fastAtan2`: polynomial approximation (~1e-5 rad, pinned by test); the
   per-pixel cost is a handful of SIMD dots plus ~7 atan2 calls.
 
@@ -68,21 +71,23 @@ reference direction. Harvest its ideas, not its code.
 
 ### The reverse-perspective frame
 
-Walking backward from the cube, measured coverage (96x54 fisheye samples):
+Walking backward from the cube:
 
-1. Near: ordinary perspective, only the front face; coverage ~1-2%.
+1. Near: ordinary wide-angle view, only the front face.
 2. Quarter-turn away: apparent size *dips* (spherical geometry is not
-   Euclidean-monotonic), coverage minimum around walk 12.
-3. Approaching the cube's antipode (walk ~21.5, separation pi - 0.15/R):
-   the wrapped image explodes; **all five exposed faces are visible at
-   once**, spread around the horizon band — walls around, roof above,
-   ground below. Peak measured coverage ~27%; the ground horizon owns the
-   rest of the sky, which matches the reference ("all rays eventually hit
-   the ground, there's no sky").
-4. The bottom face is never a first hit from above ground — asserted for
+   Euclidean-monotonic).
+3. Near the cube's antipodal region the wrapped image explodes. The cube's
+   image **owns the entire zenith cap** — every upward ray's great circle
+   passes through the cube — and releases it only at the horizon band
+   ("all rays eventually hit the ground").
+4. The showcase frame: walk to 0.15 before the cube's ground-point
+   antipode and pitch up ~80°. The **roof centers overhead** (its ground
+   point is nearly antipodal, so it sits almost straight up), the four
+   walls splay outward to the frame edges, and ~81% of the frame is cube.
+   Walking either direction from there closes the distance and cycles the
+   faces behind the roof.
+5. The bottom face is never a first hit from above ground — asserted for
    the whole walk.
-
-The locked capture frame is `default_cube_distance + pi*radius - 0.15`.
 
 ## Testing without user input
 
@@ -90,11 +95,13 @@ Layered, cheapest first:
 
 1. **Geometry invariants** (`spherical_game` + `scene.zig` unit tests,
    `zig build test`): orthonormal GA frames after movement; cube plane
-   edges shared exactly; forward ray hits the front face at the expected
-   distance; straight-up rays hit wrapped ground at `pi*R - eye_height`
-   ("no sky"); the showcase frame shows all five exposed faces with zero
-   bottom-face hits; coverage dips mid-walk then explodes near the
-   antipode; `fastAtan2` bounded against `std.math.atan2`.
+   edges shared exactly (arc `atan(sqrt(2)·tan(h/R))`); forward ray hits
+   the front face on-plane; straight-up rays hit wrapped ground at
+   `pi*R - eye_height` ("no sky"); the cube image owns the zenith cap in
+   every azimuth and releases it at the horizon; the pitched showcase
+   frame centers the roof, shows all five faces with zero bottom hits and
+   >80% cube coverage; walking either way from the showcase approaches
+   the cube; `fastAtan2` bounded against `std.math.atan2`.
 2. **Headless smoke step** (`zig build demo-spherical-check`): runs the
    scene tests alone; wired as a fast CI-able gate.
 3. **Rendered smoke capture**: hidden-window Xvfb render + `TakeScreenshot`,
