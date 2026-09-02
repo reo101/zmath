@@ -41,9 +41,14 @@ pub const ProjectedTriangle = struct {
     vertices: [3]ProjectedVertex,
     face: Face,
     distance: f32,
+    reverse_depth: bool,
 
-    pub fn fartherThan(_: void, lhs: ProjectedTriangle, rhs: ProjectedTriangle) bool {
-        return lhs.distance > rhs.distance;
+    pub fn drawBefore(_: void, lhs: ProjectedTriangle, rhs: ProjectedTriangle) bool {
+        if (lhs.reverse_depth != rhs.reverse_depth) return lhs.reverse_depth;
+        return if (lhs.reverse_depth)
+            lhs.distance < rhs.distance
+        else
+            lhs.distance > rhs.distance;
     }
 };
 
@@ -262,7 +267,7 @@ pub const Scene = struct {
         return std.math.acos(cosine) * self.radius;
     }
 
-    fn projectWithCamera(self: Scene, camera_pose: Pose, point: Point, aspect: f32) ?ProjectedVertex {
+    pub fn projectWithCamera(self: Scene, camera_pose: Pose, point: Point, aspect: f32) ?ProjectedVertex {
         const x = sg.dot(point, camera_pose.right);
         const y = sg.dot(point, camera_pose.up);
         const z = sg.dot(point, camera_pose.forward);
@@ -297,10 +302,12 @@ pub const Scene = struct {
         if (a.branch != b.branch or a.branch != c.branch) return count;
         if (!triangleIntersectsView(.{ a, b, c })) return count;
 
+        const distance = (a.distance + b.distance + c.distance) / 3.0;
         output[count] = .{
             .vertices = .{ a, b, c },
             .face = face,
-            .distance = (a.distance + b.distance + c.distance) / 3.0,
+            .distance = distance,
+            .reverse_depth = distance > @as(f32, std.math.pi) * self.radius * 0.5,
         };
         return count + 1;
     }

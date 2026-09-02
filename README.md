@@ -83,12 +83,13 @@ zig build spirv-compare             # compare GA vs raw SPIR-V shader size
 zig build shader-playground-build   # build local Vulkan/GLFW shader playground
 zig build shader-playground         # run playground with raw shaders
 zig build shader-playground-ga      # run playground with GA shaders
-zig build spherical-game-raylib-build # build local raylib S3 GA demo
-zig build spherical-game-raylib       # run local raylib S3 GA demo
+zig build demo-spherical-build   # build the raylib S3 spherical-game demo
+zig build demo-spherical         # run the raylib S3 spherical-game demo
+zig build demo-spherical-check   # headless S3 demo geometry checks
 ```
 
-The shader playground and raylib S3 demo are opt-in; run them from the Nix
-devshell so Vulkan/GLFW/raylib and `spirv-opt` are on the include/library
+The shader playground and spherical-game demo are opt-in; run them from the
+Nix devshell so Vulkan/GLFW/raylib and `spirv-opt` are on the include/library
 paths.
 
 ## License
