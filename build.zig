@@ -264,6 +264,17 @@ fn addTests(
     });
     test_step.dependOn(&b.addRunArtifact(demo_core_tests).step);
 
+    const spherical_game_scene_tests = b.addTest(.{
+        .name = "zmath-demo-spherical-game",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/demos/spherical_game/scene.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "zmath", .module = modules.zmath }},
+        }),
+    });
+    test_step.dependOn(&b.addRunArtifact(spherical_game_scene_tests).step);
+
     const compile_fail_hodge_dual = b.addObject(.{
         .name = "zmath-compile-fail-hodge-dual-degenerate",
         .root_module = b.createModule(.{
