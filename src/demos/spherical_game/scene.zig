@@ -5,15 +5,12 @@ const sg = zmath.geometry.spherical_game;
 pub const Point = sg.Point;
 pub const Direction = sg.Direction;
 pub const Pose = sg.Pose;
+pub const dot = sg.dot;
 
 pub const default_radius: f32 = 6.0;
 pub const default_cube_distance: f32 = 2.8;
 pub const default_cube_half_extent: f32 = 0.9;
 pub const default_eye_height: f32 = 0.35;
-pub const default_vertical_fov: f32 = std.math.degreesToRadians(80.0);
-pub const default_pitch: f32 = -0.2;
-pub const cube_face_steps: usize = 24;
-pub const max_cube_triangles: usize = 5 * cube_face_steps * cube_face_steps * 2;
 
 pub const Face = enum {
     left,
@@ -24,53 +21,44 @@ pub const Face = enum {
     back,
 };
 
-pub const Branch = enum { near, far };
-
-pub const ProjectedVertex = struct {
-    position: [2]f32,
-    distance: f32,
-    branch: Branch,
+pub const Surface = union(enum) {
+    ground,
+    cube: Face,
 };
 
-pub const WorldTriangle = struct {
-    vertices: [3]Point,
+pub const Hit = struct {
+    surface: Surface,
+    distance: f32,
+    point: Point,
+    brightness: f32,
+};
+
+pub const Plane = struct {
+    inward_normal: Direction,
     face: Face,
 };
 
-pub const ProjectedTriangle = struct {
-    vertices: [3]ProjectedVertex,
-    face: Face,
-    distance: f32,
-    reverse_depth: bool,
-
-    pub fn drawBefore(_: void, lhs: ProjectedTriangle, rhs: ProjectedTriangle) bool {
-        if (lhs.reverse_depth != rhs.reverse_depth) return lhs.reverse_depth;
-        return if (lhs.reverse_depth)
-            lhs.distance < rhs.distance
-        else
-            lhs.distance > rhs.distance;
-    }
-};
-
-pub const ProjectionStats = struct {
-    triangles: usize = 0,
-    branches: [2]usize = @splat(0),
+pub const ViewStats = struct {
+    pixels: usize = 0,
+    ground: usize = 0,
+    cube: usize = 0,
     faces: [@typeInfo(Face).@"enum".fields.len]usize = @splat(0),
-    min_x: f32 = std.math.inf(f32),
-    max_x: f32 = -std.math.inf(f32),
-    min_y: f32 = std.math.inf(f32),
-    max_y: f32 = -std.math.inf(f32),
 
-    pub fn faceTriangles(self: ProjectionStats, face: Face) usize {
+    pub fn faceHits(self: ViewStats, face: Face) usize {
         return self.faces[@intFromEnum(face)];
     }
 
-    pub fn width(self: ProjectionStats) f32 {
-        return self.max_x - self.min_x;
+    pub fn cubeFraction(self: ViewStats) f32 {
+        if (self.pixels == 0) return 0.0;
+        return @as(f32, @floatFromInt(self.cube)) / @as(f32, @floatFromInt(self.pixels));
     }
 
-    pub fn height(self: ProjectionStats) f32 {
-        return self.max_y - self.min_y;
+    pub fn visibleFaceCount(self: ViewStats) usize {
+        var count: usize = 0;
+        inline for (.{ Face.left, Face.right, Face.top, Face.front, Face.back }) |face| {
+            if (self.faceHits(face) > 0) count += 1;
+        }
+        return count;
     }
 };
 
@@ -145,30 +133,168 @@ pub const Cube = struct {
     forward: Direction,
     half_extent: f32,
     radius: f32,
+    planes: [6]Plane,
 
     pub fn grounded(frame: GroundPose, half_extent: f32) Cube {
         const lift = sg.rotorBetween(frame.position, worldUp(), half_extent / frame.radius);
+        const center = sg.rotate(frame.position, lift);
+        const right = sg.rotate(frame.right, lift);
+        const up = sg.rotate(worldUp(), lift);
+        const forward = sg.rotate(frame.forward, lift);
+
         return .{
-            .center = sg.rotate(frame.position, lift),
-            .right = sg.rotate(frame.right, lift),
-            .up = sg.rotate(worldUp(), lift),
-            .forward = sg.rotate(frame.forward, lift),
+            .center = center,
+            .right = right,
+            .up = up,
+            .forward = forward,
             .half_extent = half_extent,
             .radius = frame.radius,
+            .planes = .{
+                facePlane(center, right, -1.0, half_extent, frame.radius, .left),
+                facePlane(center, right, 1.0, half_extent, frame.radius, .right),
+                facePlane(center, up, -1.0, half_extent, frame.radius, .bottom),
+                facePlane(center, up, 1.0, half_extent, frame.radius, .top),
+                facePlane(center, forward, -1.0, half_extent, frame.radius, .front),
+                facePlane(center, forward, 1.0, half_extent, frame.radius, .back),
+            },
         };
     }
 
-    pub fn surfacePoint(self: Cube, face: Face, u: f32, v: f32) Point {
-        const h = self.half_extent;
-        const tangent = switch (face) {
-            .left => self.right.scale(-h).add(self.up.scale(v * h)).add(self.forward.scale(u * h)),
-            .right => self.right.scale(h).add(self.up.scale(v * h)).add(self.forward.scale(-u * h)),
-            .bottom => self.right.scale(u * h).add(self.up.scale(-h)).add(self.forward.scale(v * h)),
-            .top => self.right.scale(u * h).add(self.up.scale(h)).add(self.forward.scale(-v * h)),
-            .front => self.right.scale(-u * h).add(self.up.scale(v * h)).add(self.forward.scale(-h)),
-            .back => self.right.scale(u * h).add(self.up.scale(v * h)).add(self.forward.scale(h)),
-        }.cast(Direction);
-        return sg.expMap(self.center, tangent, self.radius);
+    pub fn contains(self: Cube, point: Point, epsilon: f32) bool {
+        for (self.planes) |plane| {
+            if (sg.dot(point, plane.inward_normal) < -epsilon) return false;
+        }
+        return true;
+    }
+};
+
+/// Per-frame first-hit ray tracer over the full view sphere.
+///
+/// The cube is the exact intersection of six hemispheres on S3. Along a
+/// geodesic ray `p(a) = cos(a)·origin + sin(a)·dir`, plane i is crossed where
+/// `a_i cos(a) + b_i sin(a) = 0`, i.e. at `a = r_i ± pi/2` with
+/// `r_i = atan2(b_i, a_i)`. The cube interior along the ray is the
+/// intersection of all six arcs, so the entry angle is
+/// `max(r_i) - pi/2` and the exit angle is `min(r_i) + pi/2`.
+pub const Tracer = struct {
+    origin: Point,
+    right: Direction,
+    up: Direction,
+    forward: Direction,
+    cube: Cube,
+    radius: f32,
+    plane_a: [6]f32,
+    ground_a: f32,
+
+    pub fn init(camera_pose: Pose, cube: Cube) Tracer {
+        var tracer = Tracer{
+            .origin = camera_pose.position,
+            .right = camera_pose.right,
+            .up = camera_pose.up,
+            .forward = camera_pose.forward,
+            .cube = cube,
+            .radius = cube.radius,
+            .plane_a = undefined,
+            .ground_a = sg.dot(camera_pose.position, worldUp()),
+        };
+        for (cube.planes, 0..) |plane, i| {
+            tracer.plane_a[i] = sg.dot(camera_pose.position, plane.inward_normal);
+        }
+        return tracer;
+    }
+
+    /// Full-sky fisheye direction for screen offsets `u`, `v` in [-1, 1].
+    /// The whole direction sphere maps onto the unit disc (azimuthal
+    /// equidistant): radius = angle from the view center, so the rim is the
+    /// antipodal direction. Returns null outside the disc.
+    pub fn direction(self: Tracer, u: f32, v: f32) ?Direction {
+        const r2 = u * u + v * v;
+        if (r2 > 1.0) return null;
+        const r = @sqrt(r2);
+        if (r < 1e-6) return self.forward;
+
+        const theta = r * std.math.pi;
+        const sin_theta = @sin(theta);
+        return self.forward.scale(@cos(theta))
+            .add(self.right.scale(sin_theta * u / r))
+            .add(self.up.scale(sin_theta * v / r))
+            .cast(Direction);
+    }
+
+    pub fn trace(self: Tracer, dir: Direction) Hit {
+        var angles: [6]f32 = undefined;
+        for (self.cube.planes, 0..) |plane, i| {
+            const b = sg.dot(dir, plane.inward_normal);
+            angles[i] = fastAtan2(b, self.plane_a[i]);
+        }
+
+        // The cube is small, so the six hemisphere-center angles form one
+        // tight cluster on the angle circle; unwrap it around its circular
+        // mean before taking max/min.
+        var sin_sum: f32 = 0.0;
+        var cos_sum: f32 = 0.0;
+        for (angles) |angle| {
+            sin_sum += @sin(angle);
+            cos_sum += @cos(angle);
+        }
+        const mean = fastAtan2(sin_sum, cos_sum);
+        for (&angles) |*angle| {
+            while (angle.* - mean > std.math.pi) angle.* -= 2.0 * std.math.pi;
+            while (angle.* - mean < -std.math.pi) angle.* += 2.0 * std.math.pi;
+        }
+
+        var r_max = -std.math.inf(f32);
+        var r_min = std.math.inf(f32);
+        var winner: usize = 0;
+        var loser: usize = 0;
+        for (angles, 0..) |angle, i| {
+            if (angle > r_max) {
+                r_max = angle;
+                winner = i;
+            }
+            if (angle < r_min) {
+                r_min = angle;
+                loser = i;
+            }
+        }
+
+        const entry = r_max - std.math.pi / 2.0;
+        const exit = r_min + std.math.pi / 2.0;
+
+        const b_ground = sg.dot(dir, worldUp());
+        var ground_angle = fastAtan2(b_ground, self.ground_a) + std.math.pi / 2.0;
+        if (ground_angle <= 1e-6) ground_angle += std.math.pi;
+        if (ground_angle > std.math.pi) ground_angle -= std.math.pi;
+
+        const inside = entry <= 1e-4 and exit > 1e-4;
+        const cube_angle: ?f32 = if (inside)
+            exit
+        else if (entry > 1e-4 and entry < exit)
+            entry
+        else
+            null;
+
+        if (cube_angle == null or ground_angle < cube_angle.?) {
+            const alpha = ground_angle;
+            return .{
+                .surface = .ground,
+                .distance = alpha * self.radius,
+                .point = pointAlong(self.origin, dir, alpha),
+                .brightness = groundBrightness(self.origin, dir, alpha),
+            };
+        }
+
+        const alpha = cube_angle.?;
+        const hit_plane = if (inside) self.cube.planes[loser] else self.cube.planes[winner];
+        const tangent = tangentAlong(self.origin, dir, alpha);
+        var brightness = sg.dot(tangent, hit_plane.inward_normal);
+        if (inside) brightness = -brightness;
+        return .{
+            .surface = .{ .cube = hit_plane.face },
+            .distance = alpha * self.radius,
+            .point = pointAlong(self.origin, dir, alpha),
+            .brightness = std.math.clamp(brightness, 0.0, 1.0),
+        };
     }
 };
 
@@ -176,11 +302,9 @@ pub const Scene = struct {
     player: GroundPose,
     cube: Cube,
     radius: f32,
-    vertical_fov: f32 = default_vertical_fov,
 
     pub fn init() Scene {
-        var player = GroundPose.north(default_radius, default_eye_height);
-        player.pitch_angle = default_pitch;
+        const player = GroundPose.north(default_radius, default_eye_height);
         return .{
             .player = player,
             .cube = Cube.grounded(player.moveForward(default_cube_distance), default_cube_half_extent),
@@ -190,6 +314,10 @@ pub const Scene = struct {
 
     pub fn camera(self: Scene) Pose {
         return self.player.camera();
+    }
+
+    pub fn tracer(self: Scene) Tracer {
+        return Tracer.init(self.camera(), self.cube);
     }
 
     pub fn walkForward(self: *Scene, distance: f32) void {
@@ -208,148 +336,81 @@ pub const Scene = struct {
         self.player = self.player.pitch(angle);
     }
 
-    pub fn project(self: Scene, point: Point, aspect: f32) ?ProjectedVertex {
-        return self.projectWithCamera(self.camera(), point, aspect);
-    }
-
-    pub fn cubeMesh(self: Scene, output: []WorldTriangle) usize {
-        var count: usize = 0;
-        inline for (.{ Face.left, Face.right, Face.top, Face.front, Face.back }) |face| {
-            for (0..cube_face_steps) |u_index| {
-                for (0..cube_face_steps) |v_index| {
-                    const ua = gridCoord(u_index);
-                    const va = gridCoord(v_index);
-                    const ub = gridCoord(u_index + 1);
-                    const vb = gridCoord(v_index + 1);
-                    const cell = [_]Point{
-                        self.cube.surfacePoint(face, ua, va),
-                        self.cube.surfacePoint(face, ub, va),
-                        self.cube.surfacePoint(face, ub, vb),
-                        self.cube.surfacePoint(face, ua, vb),
-                    };
-                    if (count + 2 > output.len) return count;
-                    output[count] = .{ .vertices = .{ cell[0], cell[1], cell[2] }, .face = face };
-                    output[count + 1] = .{ .vertices = .{ cell[0], cell[2], cell[3] }, .face = face };
-                    count += 2;
-                }
-            }
-        }
-        return count;
-    }
-
-    pub fn projectCube(self: Scene, mesh: []const WorldTriangle, output: []ProjectedTriangle, aspect: f32) usize {
-        const camera_pose = self.camera();
-        var count: usize = 0;
-        for (mesh) |triangle| {
-            count = self.appendTriangle(camera_pose, output, count, triangle.face, aspect, triangle.vertices);
-        }
-        return count;
-    }
-
-    pub fn projectionStats(triangles: []const ProjectedTriangle) ProjectionStats {
-        var stats = ProjectionStats{};
-        for (triangles) |triangle| {
-            stats.triangles += 1;
-            stats.branches[@intFromEnum(triangle.vertices[0].branch)] += 1;
-            stats.faces[@intFromEnum(triangle.face)] += 1;
-            for (triangle.vertices) |vertex| {
-                stats.min_x = @min(stats.min_x, vertex.position[0]);
-                stats.max_x = @max(stats.max_x, vertex.position[0]);
-                stats.min_y = @min(stats.min_y, vertex.position[1]);
-                stats.max_y = @max(stats.max_y, vertex.position[1]);
-            }
-        }
-        return stats;
-    }
-
     pub fn distanceToCube(self: Scene) f32 {
         const cosine = std.math.clamp(sg.dot(self.camera().position, self.cube.center), -1.0, 1.0);
         return std.math.acos(cosine) * self.radius;
     }
-
-    pub fn projectWithCamera(self: Scene, camera_pose: Pose, point: Point, aspect: f32) ?ProjectedVertex {
-        const x = sg.dot(point, camera_pose.right);
-        const y = sg.dot(point, camera_pose.up);
-        const z = sg.dot(point, camera_pose.forward);
-        if (@abs(z) <= 1e-5) return null;
-
-        const scale = @tan(self.vertical_fov * 0.5);
-        const distance = std.math.acos(std.math.clamp(sg.dot(camera_pose.position, point), -1.0, 1.0)) * self.radius;
-        const projected = ProjectedVertex{
-            .position = .{ x / (z * aspect * scale), y / (z * scale) },
-            .distance = distance,
-            .branch = if (z > 0.0) .near else .far,
-        };
-        if (!std.math.isFinite(projected.position[0]) or
-            !std.math.isFinite(projected.position[1]) or
-            !std.math.isFinite(projected.distance)) return null;
-        return projected;
-    }
-
-    fn appendTriangle(
-        self: Scene,
-        camera_pose: Pose,
-        output: []ProjectedTriangle,
-        count: usize,
-        face: Face,
-        aspect: f32,
-        points: [3]Point,
-    ) usize {
-        if (count >= output.len) return count;
-        const a = self.projectWithCamera(camera_pose, points[0], aspect) orelse return count;
-        const b = self.projectWithCamera(camera_pose, points[1], aspect) orelse return count;
-        const c = self.projectWithCamera(camera_pose, points[2], aspect) orelse return count;
-        if (a.branch != b.branch or a.branch != c.branch) return count;
-        if (!triangleIntersectsView(.{ a, b, c })) return count;
-
-        const distance = (a.distance + b.distance + c.distance) / 3.0;
-        output[count] = .{
-            .vertices = .{ a, b, c },
-            .face = face,
-            .distance = distance,
-            .reverse_depth = distance > @as(f32, std.math.pi) * self.radius * 0.5,
-        };
-        return count + 1;
-    }
 };
 
-pub fn groundPoint(longitude: f32, latitude: f32) Point {
-    const latitude_cos = @cos(latitude);
-    return Point.init(.{
-        latitude_cos * @cos(longitude),
-        latitude_cos * @sin(longitude),
-        0.0,
-        @sin(latitude),
-    });
-}
-
-fn triangleIntersectsView(vertices: [3]ProjectedVertex) bool {
-    var min_x = vertices[0].position[0];
-    var max_x = min_x;
-    var min_y = vertices[0].position[1];
-    var max_y = min_y;
-    for (vertices[1..]) |vertex| {
-        min_x = @min(min_x, vertex.position[0]);
-        max_x = @max(max_x, vertex.position[0]);
-        min_y = @min(min_y, vertex.position[1]);
-        max_y = @max(max_y, vertex.position[1]);
+pub fn sampleStats(tracer: Tracer, width: usize, height: usize) ViewStats {
+    var stats = ViewStats{};
+    for (0..height) |row| {
+        for (0..width) |column| {
+            const u = ((@as(f32, @floatFromInt(column)) + 0.5) / @as(f32, @floatFromInt(width))) * 2.0 - 1.0;
+            const v = 1.0 - ((@as(f32, @floatFromInt(row)) + 0.5) / @as(f32, @floatFromInt(height))) * 2.0;
+            const dir = tracer.direction(u, v) orelse continue;
+            stats.pixels += 1;
+            switch (tracer.trace(dir).surface) {
+                .ground => stats.ground += 1,
+                .cube => |face| {
+                    stats.cube += 1;
+                    stats.faces[@intFromEnum(face)] += 1;
+                },
+            }
+        }
     }
-    if (max_x < -1.05 or min_x > 1.05 or max_y < -1.05 or min_y > 1.05) return false;
-    if (max_x - min_x > 4.0 or max_y - min_y > 4.0) return false;
-
-    const ab_x = vertices[1].position[0] - vertices[0].position[0];
-    const ab_y = vertices[1].position[1] - vertices[0].position[1];
-    const ac_x = vertices[2].position[0] - vertices[0].position[0];
-    const ac_y = vertices[2].position[1] - vertices[0].position[1];
-    return @abs(ab_x * ac_y - ab_y * ac_x) > 1e-8;
+    return stats;
 }
 
-fn gridCoord(index: usize) f32 {
-    return @as(f32, @floatFromInt(index)) / @as(f32, @floatFromInt(cube_face_steps)) * 2.0 - 1.0;
+fn pointAlong(origin: Point, dir: Direction, angle: f32) Point {
+    return origin.scale(@cos(angle))
+        .add(dir.scale(@sin(angle)))
+        .cast(Point);
+}
+
+fn tangentAlong(origin: Point, dir: Direction, angle: f32) Direction {
+    return dir.scale(@cos(angle))
+        .sub(origin.scale(@sin(angle)))
+        .cast(Direction);
+}
+
+fn groundBrightness(origin: Point, dir: Direction, angle: f32) f32 {
+    const tangent = tangentAlong(origin, dir, angle);
+    return @abs(sg.dot(tangent, worldUp()));
+}
+
+fn facePlane(center: Point, axis: Direction, sign: f32, half_extent: f32, radius: f32, face: Face) Plane {
+    const angle = half_extent / radius;
+    return .{
+        .inward_normal = center.scale(@sin(angle))
+            .sub(axis.scale(sign * @cos(angle)))
+            .cast(Direction),
+        .face = face,
+    };
 }
 
 fn worldUp() Direction {
     return Direction.init(.{ 0, 0, 1, 0 });
+}
+
+/// Polynomial atan2 approximation (Robin Green, "Faster Math Functions").
+/// Accurate to ~1e-5 radians, which is far below visual perception; the
+/// accuracy is pinned by a unit test against std.math.atan2.
+pub fn fastAtan2(y: f32, x: f32) f32 {
+    const ax = @abs(x);
+    const ay = @abs(y);
+    const mx = @max(ax, ay);
+    const mn = @min(ax, ay);
+    if (mx == 0.0) return 0.0;
+
+    const t = mn / mx;
+    const s = t * t;
+    const atan_t = t * (0.9998660 + s * (-0.3302995 + s * (0.180141 + s * (-0.085133 + s * 0.0208351))));
+
+    var angle = if (ay > ax) std.math.pi / 2.0 - atan_t else atan_t;
+    if (x < 0.0) angle = std.math.pi - angle;
+    if (y < 0.0) angle = -angle;
+    return angle;
 }
 
 fn expectOrthonormal(pose: Pose) !void {
@@ -360,6 +421,20 @@ fn expectOrthonormal(pose: Pose) !void {
             try std.testing.expectApproxEqAbs(@as(f32, 0.0), sg.dot(axis, other), 1e-4);
         }
     }
+}
+
+test "fastAtan2 matches std within visual tolerance" {
+    var max_error: f32 = 0.0;
+    var y: f32 = -3.0;
+    while (y <= 3.0) : (y += 0.037) {
+        var x: f32 = -3.0;
+        while (x <= 3.0) : (x += 0.041) {
+            const expected = std.math.atan2(y, x);
+            const actual = fastAtan2(y, x);
+            max_error = @max(max_error, @abs(expected - actual));
+        }
+    }
+    try std.testing.expect(max_error < 1e-4);
 }
 
 test "grounded S3 camera remains orthonormal after movement and look" {
@@ -373,54 +448,86 @@ test "grounded S3 camera remains orthonormal after movement and look" {
     try std.testing.expectApproxEqAbs(@sin(default_eye_height / default_radius), sg.dot(player.camera().position, worldUp()), 1e-5);
 }
 
-test "cube surface samples remain on S3 and share face edges" {
+test "cube planes enclose the center and share face edges" {
     const cube = Scene.init().cube;
-    inline for (.{ Face.left, Face.right, Face.top, Face.front, Face.back }) |face| {
-        const sample = cube.surfacePoint(face, 0.37, -0.22);
-        try std.testing.expectApproxEqAbs(@as(f32, 1.0), sg.dot(sample, sample), 1e-5);
-    }
+    try std.testing.expect(cube.contains(cube.center, 1e-5));
 
-    const left_front_top = cube.surfacePoint(.left, -1.0, 1.0);
-    const front_left_top = cube.surfacePoint(.front, 1.0, 1.0);
-    try std.testing.expectApproxEqAbs(@as(f32, 1.0), sg.dot(left_front_top, front_left_top), 1e-5);
-}
+    // Edge shared by the left and front faces: tangent offset -h along both
+    // axes lands on both boundary great circles and stays inside the rest.
+    const h = cube.half_extent;
+    const edge_tangent = cube.right.scale(-h).add(cube.forward.scale(-h)).cast(Direction);
+    const edge = sg.expMap(cube.center, edge_tangent, cube.radius);
 
-test "far-side projection exposes all five non-ground cube faces" {
-    var scene = Scene.init();
-    const before_antipode: f32 = 1.5;
-    scene.walkForward(-(@as(f32, std.math.pi) * scene.radius - default_cube_distance - before_antipode));
-
-    var mesh: [max_cube_triangles]WorldTriangle = undefined;
-    const mesh_count = scene.cubeMesh(&mesh);
-    var triangles: [max_cube_triangles]ProjectedTriangle = undefined;
-    const count = scene.projectCube(mesh[0..mesh_count], &triangles, 16.0 / 9.0);
-    const stats = Scene.projectionStats(triangles[0..count]);
-
-    try std.testing.expect(stats.faceTriangles(.left) > 0);
-    try std.testing.expect(stats.faceTriangles(.right) > 0);
-    try std.testing.expect(stats.faceTriangles(.top) > 0);
-    try std.testing.expect(stats.faceTriangles(.front) > 0);
-    try std.testing.expect(stats.faceTriangles(.back) > 0);
-    try std.testing.expectEqual(@as(usize, 0), stats.faceTriangles(.bottom));
-    try std.testing.expect(stats.width() > 1.75);
-    try std.testing.expect(stats.height() > 1.25);
-}
-
-test "projection remains finite across the near and far branches" {
-    var scene = Scene.init();
-    var mesh: [max_cube_triangles]WorldTriangle = undefined;
-    const mesh_count = scene.cubeMesh(&mesh);
-    var triangles: [max_cube_triangles]ProjectedTriangle = undefined;
-
-    for (0..25) |_| {
-        const count = scene.projectCube(mesh[0..mesh_count], &triangles, 16.0 / 9.0);
-        for (triangles[0..count]) |triangle| {
-            try std.testing.expect(std.math.isFinite(triangle.distance));
-            for (triangle.vertices) |vertex| {
-                try std.testing.expect(std.math.isFinite(vertex.position[0]));
-                try std.testing.expect(std.math.isFinite(vertex.position[1]));
-            }
+    for (cube.planes) |plane| {
+        const side = sg.dot(edge, plane.inward_normal);
+        if (plane.face == .left or plane.face == .front) {
+            // f32 cancellation on near-zero boundary values; 2e-3 is plenty
+            // to distinguish "on the great circle" from "inside the face".
+            try std.testing.expectApproxEqAbs(@as(f32, 0.0), side, 2e-3);
+        } else {
+            try std.testing.expect(side > 0.0);
         }
-        scene.walkForward(-0.7);
+    }
+}
+
+test "center ray hits the cube front face at the expected distance" {
+    const scene = Scene.init();
+    const tracer = scene.tracer();
+    const hit = tracer.trace(tracer.forward);
+
+    try std.testing.expectEqual(Face.front, hit.surface.cube);
+    try std.testing.expectApproxEqAbs(default_cube_distance - default_cube_half_extent, hit.distance, 0.05);
+}
+
+test "straight up is ground, not sky" {
+    const scene = Scene.init();
+    const tracer = scene.tracer();
+    const hit = tracer.trace(tracer.up);
+
+    try std.testing.expectEqual(Surface.ground, hit.surface);
+    try std.testing.expectApproxEqAbs(
+        std.math.pi * default_radius - default_eye_height,
+        hit.distance,
+        0.01,
+    );
+}
+
+test "walking toward the cube antipode unfolds all exposed faces" {
+    var scene = Scene.init();
+    scene.walkForward(default_cube_distance + std.math.pi * default_radius - 0.15);
+    const tracer = scene.tracer();
+    const stats = sampleStats(tracer, 96, 54);
+
+    try std.testing.expect(stats.visibleFaceCount() == 5);
+    try std.testing.expectEqual(@as(usize, 0), stats.faceHits(.bottom));
+    try std.testing.expect(stats.cubeFraction() > 0.25);
+}
+
+test "cube coverage dips mid-range then explodes near the antipode" {
+    // Spherical apparent size is not Euclidean-monotonic: it dips around a
+    // quarter-turn away, then explodes as the camera nears the cube's
+    // antipodal region. Assert both regimes instead of a fake monotone.
+    var scene = Scene.init();
+    scene.walkForward(12.0);
+    const mid = sampleStats(scene.tracer(), 64, 36).cubeFraction();
+
+    scene = Scene.init();
+    scene.walkForward(18.5);
+    const far = sampleStats(scene.tracer(), 64, 36).cubeFraction();
+
+    scene = Scene.init();
+    scene.walkForward(4.0);
+    const near = sampleStats(scene.tracer(), 64, 36).cubeFraction();
+
+    try std.testing.expect(near > mid);
+    try std.testing.expect(far > mid);
+}
+
+test "bottom face is never the first hit along the walk" {
+    for ([_]f32{ 0.0, 5.0, 10.0, 14.0, 16.5, 18.0, 20.0, 21.2 }) |walk| {
+        var scene = Scene.init();
+        scene.walkForward(walk);
+        const stats = sampleStats(scene.tracer(), 64, 36);
+        try std.testing.expectEqual(@as(usize, 0), stats.faceHits(.bottom));
     }
 }

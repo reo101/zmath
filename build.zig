@@ -147,7 +147,8 @@ fn addSphericalGameDemoSteps(
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/demos/spherical_game/main.zig"),
             .target = target,
-            .optimize = optimize,
+            // Per-pixel S3 ray tracing needs optimization; Debug is unusable.
+            .optimize = if (optimize == .Debug) .ReleaseFast else optimize,
             .link_libc = true,
             .imports = &.{.{ .name = "zmath", .module = modules.zmath }},
         }),

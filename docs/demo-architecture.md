@@ -39,77 +39,87 @@ reference direction. Harvest its ideas, not its code.
   machinery); looking is rotor composition plus a clamped pitch angle.
 - `Pose.camera()`: lifts the ground frame to eye height and applies pitch,
   giving an orthonormal GA frame `(position, right, up, forward)`.
-- `Cube`: six faces parameterized intrinsically over a tangent frame lifted
-  half a cube side off the ground; `surfacePoint(face, u, v)` geodesically
-  projects tangent offsets onto S³. Face edges are shared exactly.
-- `Scene.projectWithCamera`: S³ gnomonic-style projection. For a world point
-  `p` and camera frame: `x = p·right`, `y = p·up`, `z = p·forward`,
-  screen = `x/(z·aspect·tan(fov/2))`, `y/(z·tan(fov/2))`. **Both signs of
-  `z` are kept**, split into `near`/`far` branches (devlog #4's two-pass
-  stereographic equivalent, one pass here).
-- `reverse_depth`: triangles whose geodesic distance exceeds `πR/2` need
-  inverted depth ordering — the far hemisphere is seen "inside out".
+- `Cube`: the exact spherical cube — intersection of six hemispheres whose
+  boundary great spheres sit `half_extent` from the center. No mesh, no
+  tessellation.
+- `Tracer`: per-frame first-hit ray tracer over the full view sphere.
+  Along a geodesic `p(a) = cos(a)·origin + sin(a)·dir`, plane i is crossed
+  at `r_i ± pi/2` with `r_i = atan2(dir·n_i, origin·n_i)`; the cube interior
+  along the ray is the arc intersection
+  `(max r_i - pi/2, min r_i + pi/2)`, so the entry/exit faces and angles are
+  exact with zero iteration. Ground = first crossing of the equatorial
+  great sphere. Occlusion is exact by construction.
+- `Tracer.direction(u, v)`: full-sky azimuthal-equidistant fisheye — the
+  entire direction sphere maps onto the unit disc (rim = antipodal
+  direction). No pinhole, no branch split, no screen-space tears.
+- `fastAtan2`: polynomial approximation (~1e-5 rad, pinned by test); the
+  per-pixel cost is a handful of SIMD dots plus ~7 atan2 calls.
 
 ### Frontend (`main.zig`), raylib-only
 
 - C raylib via `@cImport`; no raylib-zig dependency.
-- Static cube mesh built once, projected per frame, painter-sorted with
-  `drawBefore` (far branch last, ascending distance within it).
-- Ground = two families of geodesic grid lines on the equator S².
+- CPU ray-traced 960x540 RGBA buffer uploaded to a texture each frame and
+  drawn letterboxed. The demo executable is forced to ReleaseFast.
+- Ground shading = checker in ground arc coordinates; cube faces = flat
+  color with headlight lambert and mild distance dimming.
 - Capture mode: `ZMATH_DEMO_CAPTURE=path.png` renders one hidden-window
-  frame at the showcase checkpoint and exits. Optional `ZMATH_DEMO_WALK`
-  (units before the antipode) and `ZMATH_DEMO_PITCH` (radians) overrides
-  for sweeps.
+  frame and exits. `ZMATH_DEMO_WALK` is the absolute walk distance
+  (default = the showcase frame), `ZMATH_DEMO_PITCH` the pitch in radians.
 
 ### The reverse-perspective frame
 
-Walking backward from the cube, the view evolves:
+Walking backward from the cube, measured coverage (96x54 fisheye samples):
 
-1. Near: ordinary perspective, only the front face.
-2. Approaching the conjugate/antipode side: all five exposed faces grow;
-   near the exact antipode the front face swaps branch and the cube reads
-   "inside out" (roof above, walls around, far wall enormous).
-3. Non-monotonic truth: closer is not always "more visible". The roof can
-   expand past the viewport, and the far wall can occlude it. The locked
-   showcase frame (1.0 before the antipode, pitch −0.4) keeps all five
-   face colors visible simultaneously — verified by palette measurement,
-   not vibes.
+1. Near: ordinary perspective, only the front face; coverage ~1-2%.
+2. Quarter-turn away: apparent size *dips* (spherical geometry is not
+   Euclidean-monotonic), coverage minimum around walk 12.
+3. Approaching the cube's antipode (walk ~21.5, separation pi - 0.15/R):
+   the wrapped image explodes; **all five exposed faces are visible at
+   once**, spread around the horizon band — walls around, roof above,
+   ground below. Peak measured coverage ~27%; the ground horizon owns the
+   rest of the sky, which matches the reference ("all rays eventually hit
+   the ground, there's no sky").
+4. The bottom face is never a first hit from above ground — asserted for
+   the whole walk.
+
+The locked capture frame is `default_cube_distance + pi*radius - 0.15`.
 
 ## Testing without user input
 
 Layered, cheapest first:
 
 1. **Geometry invariants** (`spherical_game` + `scene.zig` unit tests,
-   `zig build test`): orthonormal GA frames after movement; cube samples on
-   the sphere; shared face edges; five-face far-side projection with no
-   ground face; finite output across a full walk through both branches.
+   `zig build test`): orthonormal GA frames after movement; cube plane
+   edges shared exactly; forward ray hits the front face at the expected
+   distance; straight-up rays hit wrapped ground at `pi*R - eye_height`
+   ("no sky"); the showcase frame shows all five exposed faces with zero
+   bottom-face hits; coverage dips mid-walk then explodes near the
+   antipode; `fastAtan2` bounded against `std.math.atan2`.
 2. **Headless smoke step** (`zig build demo-spherical-check`): runs the
    scene tests alone; wired as a fast CI-able gate.
 3. **Rendered smoke capture**: hidden-window Xvfb render + `TakeScreenshot`,
    then an ImageMagick histogram check that all five face colors survive
-   final painter occlusion. This is the check that caught the original
-   near-first painter ordering burying the far face — projection tests
-   alone were green while the image was wrong.
-4. **Parameter sweeps**: env-driven walk/pitch capture grid used once to
-   locate the showcase frame; rerun when the scene or renderer changes.
+   in the final composited frame.
+4. **Parameter sweeps**: env-driven walk/pitch capture grid used to locate
+   the showcase frame; rerun when the scene or renderer changes.
 
-Known painter limitation: triangle-level distance sorting is correct
-per-ray at triangle granularity but cannot resolve intersections inside a
-triangle. The reference engine fixes this with a real two-pass depth
-buffer (near pass `0–0.5`, far pass `0.5–1.0` reversed). That is the next
-structural upgrade, needed before dense scenes.
+The first-hit tracer eliminated the entire artifact class of the previous
+painter-sorted two-branch projection (branch tears + far/near overlap
+"self-intersection") by construction.
 
 ## Next steps
 
-1. **Two-pass depth renderer**: near pass then far pass with reversed depth
-   (z-buffer instead of painter sort). Unblocks non-convex scenes.
-2. **GPU path**: the CPU projection math maps 1:1 to a vertex shader
-   (two draws, uniform branch flag); reuse `build_spirv.zig` plumbing.
-3. **Gameplay physics**: constrain to the S² ground for walking (matching
+1. **GPU port**: the tracer maps 1:1 to a fragment shader (fullscreen quad,
+   same per-pixel math, uniforms for the camera frame and cube planes);
+   reuse `build_spirv.zig` plumbing. The CPU path becomes the reference
+   oracle for shader output.
+2. **Gameplay physics**: constrain to the S² ground for walking (matching
    the reference's product-space compromise) while keeping full-S³
    rendering; add jump/gravity on the S².
-4. **Golden images**: commit the showcase capture; diff in CI with a small
+3. **Golden images**: commit the showcase capture; diff in CI with a small
    tolerance instead of palette-only checks.
+4. **Scene content**: more objects (the tracer costs ~O(planes) per
+   pixel — a BVH over object planes/spheres keeps headroom).
 5. **Terminal demo**: revive/trim `src/demos/core.zig` modes once the
    raylib path stabilizes; its walk/reversibility tests are already the
    model for curved-camera testing.
