@@ -26,12 +26,12 @@ pub fn main() void {
     } else {
         flags |= rl.FLAG_VSYNC_HINT;
     }
+    var world = space.Mode.init(initialKind());
     rl.SetConfigFlags(flags);
     rl.SetTraceLogLevel(rl.LOG_WARNING);
-    rl.InitWindow(1280, 720, "zmath demo: worlds");
+    rl.InitWindow(1280, 720, titleFor(std.meta.activeTag(world)));
     defer rl.CloseWindow();
 
-    var world = space.Mode.init(initialKind());
     if (capture) {
         const defaults = space.Mode.captureDefaults(std.meta.activeTag(world));
         const walk = if (rl.getenv("ZMATH_DEMO_WALK")) |value|
@@ -107,14 +107,35 @@ fn initialKind() space.Kind {
     return .euclidean;
 }
 
+fn titleFor(kind: space.Kind) [*:0]const u8 {
+    return switch (kind) {
+        .euclidean => "zmath demo: worlds [1] euclidean",
+        .isometric => "zmath demo: worlds [2] isometric",
+        .spherical => "zmath demo: worlds [3] spherical",
+        .hyperbolic => "zmath demo: worlds [4] hyperbolic",
+    };
+}
+
 fn update(world: *space.Mode, dt: f32) void {
-    inline for (0..4) |index| {
-        if (rl.IsKeyPressed(@intCast(rl.KEY_ONE + index))) {
-            world.* = space.Mode.init(@enumFromInt(index));
+    // Drain the key queue with GetKeyPressed - one reliable path for all
+    // switch keys (IsKeyPressed edge-polls proved flaky per key).
+    while (true) {
+        const pending = rl.GetKeyPressed();
+        if (pending == 0) break;
+        const kind: ?space.Kind = switch (pending) {
+            rl.KEY_ONE => .euclidean,
+            rl.KEY_TWO => .isometric,
+            rl.KEY_THREE => .spherical,
+            rl.KEY_FOUR => .hyperbolic,
+            else => null,
+        };
+        if (kind) |k| {
+            world.* = space.Mode.init(k);
+            rl.SetWindowTitle(titleFor(k));
+        } else if (pending == rl.KEY_R) {
+            world.* = space.Mode.init(std.meta.activeTag(world.*));
         }
     }
-    if (rl.IsKeyPressed(rl.KEY_R)) world.* = space.Mode.init(std.meta.activeTag(world.*));
-
     switch (world.*) {
         .euclidean => |*view| {
             const move: f32 = 4.0 * dt;
