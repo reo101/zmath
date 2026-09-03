@@ -115,6 +115,43 @@ The first-hit tracer eliminated the entire artifact class of the previous
 painter-sorted two-branch projection (branch tears + far/near overlap
 "self-intersection") by construction.
 
+## The worlds demo (`src/demos/worlds/`)
+
+One executable, four spaces, live switching with keys 1-4. Each mode
+implements the same contract — per-frame `Renderer` with `render(u, v) ->
+Hit` — so the shell (window, input, threaded row bands, capture, HUD) is
+shared and the pixel loop pays one predictable branch per pixel:
+
+1. **euclidean** — flat ground plane + axis-aligned box (slab-method AABB
+   tracer), pinhole camera, per-pixel origins for the sky. Zero
+   transcendentals; ~135 fps.
+2. **isometric** — the same flat world through an orthographic camera:
+   per-pixel ray *origins* on the iso view plane, constant direction
+   (true isometric elevation 35.264°). WASD pans, Q/E rotates, wheel zooms.
+3. **spherical** — wraps the canonical `spherical_game` scene module
+   unchanged (shared via the `spherical_scene` build module).
+4. **hyperbolic** — H3 through the Beltrami-Klein model, the reference
+   engine's own hyperbolic projection: geodesics are straight chords and
+   totally-geodesic planes are Euclidean planes cutting the Klein ball, so
+   the per-pixel tracer is flat linear algebra. Hyperbolicity lives in the
+   metric: the player state is a hyperboloid point + boosted tangent frame
+   (`ga.Algebra(.{ .p = 3, .q = 1 })` carriers, e4² = −1 — the HPGA
+   convention), moved by Lorentz boosts with parallel transport
+   (`u' = u_perp + <u,d>·(cosh(t)·d + sinh(t)·p)`); the depth proxy is
+   `cosh(d/r) = λ_eye·λ_hit·(1 − k·u)` (rational, no transcendentals);
+   the ground checker uses hyperbolic Fermi coordinates
+   `r·asinh(<P, e_i>)`. The box is a cell of six Klein planes standing on
+   the ground plane; its bottom face is structurally never a first hit
+   from above (same invariant as the spherical demo). The eye's hyperbolic
+   height above the ground is preserved under walking by construction.
+
+Curvature is a runtime value here: the mode union tag selects the metric
+and projection. Structural invariants pinned by tests (`demo-worlds-check`):
+flat AABB entry/exit faces, isometric ortho framing, hyperbolic frame
+orthonormality under boosts, front-face hits, bottom-face exclusion,
+exponential cube recession (`cosh(d/r)` grows 2.7x over 4 walk units),
+and ground checker coordinates shifting by the walked distance.
+
 ## Next steps
 
 1. **GPU port**: the tracer maps 1:1 to a fragment shader (fullscreen quad,

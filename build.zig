@@ -9,6 +9,7 @@ const Modules = struct {
     geometry: *std.Build.Module,
     render: *std.Build.Module,
     zmath: *std.Build.Module,
+    spherical_scene: *std.Build.Module,
 };
 
 pub fn build(b: *std.Build) void {
@@ -64,6 +65,7 @@ pub fn build(b: *std.Build) void {
     bench_step.dependOn(&b.addRunArtifact(bench).step);
 
     addSphericalGameDemoSteps(b, target, optimize, modules);
+    addWorldsDemoSteps(b, target, optimize, modules);
     addLocalVulkanPlaygroundSteps(b, target, optimize, use_llvm_spirv, compare_spirv);
     addTests(b, target, optimize, modules, example, fuzz_use_llvm);
 }
@@ -125,6 +127,14 @@ fn addModules(b: *std.Build, target: std.Build.ResolvedTarget) Modules {
         },
     });
 
+    // Canonical S3 spherical-game scene, shared by the spherical demo and
+    // the worlds demo.
+    const spherical_scene = b.addModule("spherical_scene", .{
+        .root_source_file = b.path("src/demos/spherical_game/scene.zig"),
+        .target = target,
+        .imports = &.{.{ .name = "zmath", .module = zmath }},
+    });
+
     return .{
         .meta = meta,
         .parse = parse,
@@ -133,6 +143,7 @@ fn addModules(b: *std.Build, target: std.Build.ResolvedTarget) Modules {
         .geometry = geometry,
         .render = render,
         .zmath = zmath,
+        .spherical_scene = spherical_scene,
     };
 }
 
@@ -161,6 +172,37 @@ fn addSphericalGameDemoSteps(
     build_step.dependOn(&exe.step);
 
     const step = b.step("demo-spherical", "Run the raylib S3 spherical-game demo");
+    step.dependOn(&b.addRunArtifact(exe).step);
+}
+
+fn addWorldsDemoSteps(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    modules: Modules,
+) void {
+    const exe = b.addExecutable(.{
+        .name = "zmath-demo-worlds",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/demos/worlds/main.zig"),
+            .target = target,
+            // Per-pixel ray tracing needs optimization; Debug is unusable.
+            .optimize = if (optimize == .Debug) .ReleaseFast else optimize,
+            .link_libc = true,
+            .imports = &.{
+                .{ .name = "zmath", .module = modules.zmath },
+                .{ .name = "spherical_scene", .module = modules.spherical_scene },
+            },
+        }),
+    });
+    addEnvModuleIncludePaths(b, exe.root_module, "C_INCLUDE_PATH");
+    addEnvModuleIncludePaths(b, exe.root_module, "CPATH");
+    exe.root_module.linkSystemLibrary("raylib", .{});
+
+    const build_step = b.step("demo-worlds-build", "Build the raylib worlds demo (euclidean/isometric/spherical/hyperbolic)");
+    build_step.dependOn(&exe.step);
+
+    const step = b.step("demo-worlds", "Run the raylib worlds demo");
     step.dependOn(&b.addRunArtifact(exe).step);
 }
 
@@ -278,6 +320,23 @@ fn addTests(
     test_step.dependOn(&spherical_game_scene_run.step);
     const spherical_game_check_step = b.step("demo-spherical-check", "Run headless S3 spherical-game demo checks");
     spherical_game_check_step.dependOn(&spherical_game_scene_run.step);
+
+    const worlds_space_tests = b.addTest(.{
+        .name = "zmath-demo-worlds",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/demos/worlds/space.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zmath", .module = modules.zmath },
+                .{ .name = "spherical_scene", .module = modules.spherical_scene },
+            },
+        }),
+    });
+    const worlds_space_run = b.addRunArtifact(worlds_space_tests);
+    test_step.dependOn(&worlds_space_run.step);
+    const worlds_check_step = b.step("demo-worlds-check", "Run headless worlds demo checks");
+    worlds_check_step.dependOn(&worlds_space_run.step);
 
     const compile_fail_hodge_dual = b.addObject(.{
         .name = "zmath-compile-fail-hodge-dual-degenerate",

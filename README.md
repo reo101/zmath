@@ -86,9 +86,12 @@ zig build shader-playground-ga      # run playground with GA shaders
 zig build demo-spherical-build   # build the raylib S3 spherical-game demo
 zig build demo-spherical         # run the raylib S3 spherical-game demo
 zig build demo-spherical-check   # headless S3 demo geometry checks
+zig build demo-worlds-build      # build the raylib worlds demo (4 spaces)
+zig build demo-worlds            # run the worlds demo (keys 1-4 switch)
+zig build demo-worlds-check      # headless worlds geometry checks
 ```
 
-The shader playground and spherical-game demo are opt-in; run them from the
+The shader playground and the demos are opt-in; run them from the
 Nix devshell so Vulkan/GLFW/raylib and `spirv-opt` are on the include/library
 paths.
 
