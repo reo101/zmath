@@ -679,10 +679,10 @@ pub const Mode = union(Kind) {
 
     pub fn hint(self: Mode) []const u8 {
         return switch (self) {
-            .euclidean => "W/S/A/D walk, arrows look, R reset. Keys 1-4 switch worlds.",
-            .isometric => "W/A/S/D pan, Q/E rotate, wheel zoom, R reset. Keys 1-4 switch worlds.",
-            .spherical => "W/S/A/D walk, arrows look, R reset. Walk past the far side and look up.",
-            .hyperbolic => "W/S/A/D walk, arrows look, R reset. The cube shrinks exponentially.",
+            .euclidean => "W/S/A/D walk, arrows look, R reset. Tab or 1-4 switch worlds.",
+            .isometric => "W/A/S/D pan, Q/E rotate, wheel zoom, R reset. Tab or 1-4 switch.",
+            .spherical => "W/S/A/D walk, arrows look, R reset. Walk past the far side, look up.",
+            .hyperbolic => "W/S/A/D walk, arrows look, R reset. Tab or 1-4 switch worlds.",
         };
     }
 

@@ -123,13 +123,20 @@ fn update(world: *space.Mode, dt: f32) void {
         const pending = rl.GetKeyPressed();
         if (pending == 0) break;
         const kind: ?space.Kind = switch (pending) {
-            rl.KEY_ONE => .euclidean,
-            rl.KEY_TWO => .isometric,
-            rl.KEY_THREE => .spherical,
-            rl.KEY_FOUR => .hyperbolic,
+            rl.KEY_ONE, rl.KEY_KP_1 => .euclidean,
+            rl.KEY_TWO, rl.KEY_KP_2 => .isometric,
+            rl.KEY_THREE, rl.KEY_KP_3 => .spherical,
+            rl.KEY_FOUR, rl.KEY_KP_4 => .hyperbolic,
             else => null,
         };
         if (kind) |k| {
+            world.* = space.Mode.init(k);
+            rl.SetWindowTitle(titleFor(k));
+        } else if (pending == rl.KEY_TAB) {
+            // Layout-independent cycle: Tab survives keymaps that remap
+            // digits (non-QWERTY layouts, kanata-style remappers, WMs).
+            const current: usize = @intFromEnum(std.meta.activeTag(world.*));
+            const k: space.Kind = @enumFromInt((current + 1) % 4);
             world.* = space.Mode.init(k);
             rl.SetWindowTitle(titleFor(k));
         } else if (pending == rl.KEY_R) {
