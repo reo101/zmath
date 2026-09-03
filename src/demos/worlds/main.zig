@@ -116,6 +116,12 @@ fn titleFor(kind: space.Kind) [*:0]const u8 {
     };
 }
 
+fn switchToWorld(world: *space.Mode, k: space.Kind) void {
+    world.* = space.Mode.init(k);
+    rl.SetWindowTitle(titleFor(k));
+    std.debug.print("worlds: active world -> {s}\n", .{@tagName(k)});
+}
+
 fn update(world: *space.Mode, dt: f32) void {
     // Drain the key queue with GetKeyPressed - one reliable path for all
     // switch keys (IsKeyPressed edge-polls proved flaky per key).
@@ -130,17 +136,16 @@ fn update(world: *space.Mode, dt: f32) void {
             else => null,
         };
         if (kind) |k| {
-            world.* = space.Mode.init(k);
-            rl.SetWindowTitle(titleFor(k));
+            switchToWorld(world, k);
         } else if (pending == rl.KEY_TAB) {
             // Layout-independent cycle: Tab survives keymaps that remap
             // digits (non-QWERTY layouts, kanata-style remappers, WMs).
             const current: usize = @intFromEnum(std.meta.activeTag(world.*));
-            const k: space.Kind = @enumFromInt((current + 1) % 4);
-            world.* = space.Mode.init(k);
-            rl.SetWindowTitle(titleFor(k));
+            switchToWorld(world, @enumFromInt((current + 1) % 4));
         } else if (pending == rl.KEY_R) {
             world.* = space.Mode.init(std.meta.activeTag(world.*));
+        } else if (rl.getenv("ZMATH_DEMO_KEYLOG") != null) {
+            std.debug.print("worlds: key event code {d}\n", .{pending});
         }
     }
     switch (world.*) {
@@ -321,6 +326,44 @@ fn drawHud(world: *space.Mode) void {
         .{ stats.visibleFaceCount(), stats.cubeFraction() * 100.0, rl.GetFPS() },
     ) catch return;
     rl.DrawText(status, 30, 82, 16, color(150, 174, 201, 230));
+
+    drawWorldSwitcher(world);
+}
+
+const WorldButton = struct { kind: space.Kind, label: [*:0]const u8 };
+
+const world_buttons = [_]WorldButton{
+    .{ .kind = .euclidean, .label = "[1] euclidean" },
+    .{ .kind = .isometric, .label = "[2] isometric" },
+    .{ .kind = .spherical, .label = "[3] spherical" },
+    .{ .kind = .hyperbolic, .label = "[4] hyperbolic" },
+};
+
+/// Clickable world selector. Mouse input travels a different pipeline
+/// than keyboard (compositor grabs and keymaps never touch it), so this
+/// is the guaranteed switching path.
+fn drawWorldSwitcher(world: *space.Mode) void {
+    const mouse = rl.GetMousePosition();
+    const active = std.meta.activeTag(world.*);
+    for (world_buttons, 0..) |entry, i| {
+        const rect = rl.Rectangle{
+            .x = @floatFromInt(16 + i * 168),
+            .y = 118,
+            .width = 162,
+            .height = 26,
+        };
+        if (entry.kind == active) {
+            rl.DrawRectangleRec(rect, color(255, 184, 77, 255));
+            rl.DrawText(entry.label, @intFromFloat(rect.x + 10), 124, 15, color(24, 26, 32, 255));
+        } else {
+            rl.DrawRectangleRec(rect, color(24, 30, 40, 230));
+            rl.DrawRectangleLinesEx(rect, 1.0, color(130, 155, 180, 130));
+            rl.DrawText(entry.label, @intFromFloat(rect.x + 10), 124, 15, color(150, 174, 201, 235));
+            if (rl.CheckCollisionPointRec(mouse, rect) and rl.IsMouseButtonPressed(rl.MOUSE_BUTTON_LEFT)) {
+                switchToWorld(world, entry.kind);
+            }
+        }
+    }
 }
 
 fn faceColor(face: space.Face) rl.Color {
