@@ -80,6 +80,28 @@
                 LD_LIBRARY_PATH = nativeGraphicsLibraryPath;
               };
             };
+
+            # CI shell: what the workflow actually executes, minus zls and the
+            # vulkan/spirv tooling (kept out so the runner never builds them
+            # from source). Kept in sync with devShells.default by hand.
+            devShells.ci = pkgs.mkShell {
+              packages = [
+                zig
+                pkgs.pkg-config
+                # golden-image check (tools/golden_check.nu)
+                pkgs.imagemagick
+                pkgs.xorg-server
+                pkgs.nushell
+              ];
+              buildInputs = nativeGraphicsInputs;
+
+              env = {
+                PKG_CONFIG_PATH = nativeGraphicsPkgConfigPath;
+                C_INCLUDE_PATH = nativeGraphicsIncludePath;
+                LIBRARY_PATH = nativeGraphicsLibraryPath;
+                LD_LIBRARY_PATH = nativeGraphicsLibraryPath;
+              };
+            };
           };
       }
     );
