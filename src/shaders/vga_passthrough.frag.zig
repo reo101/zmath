@@ -1,6 +1,5 @@
 const std = @import("std");
 const ga = @import("ga");
-const vga = @import("vga");
 
 fn Vec(n: usize) type {
     return ga.Algebra(.euclidean(n)).Vector(f32);
@@ -22,7 +21,7 @@ export fn main() callconv(.spirv_fragment) void {
     const color: Vec(3) = .initStorage(in_color.*);
     const color_xy = color.swizzleVector("xy");
     const rgb = color.swizzle("xyz");
-    const intensity = @min(vga.norm(color_xy), 1.0);
+    const intensity = @min(ga.rotors.norm(color_xy), 1.0);
 
     out_color.* = .{ rgb[0], rgb[1], rgb[2], intensity };
 }

@@ -21,7 +21,6 @@ const std = @import("std");
 pub const blades = @import("ga/blades.zig");
 pub const blade_parsing = @import("ga/blade_parsing.zig");
 pub const expression = @import("ga/expression.zig");
-pub const family = @import("ga/family.zig");
 pub const multivector = @import("ga/multivector.zig");
 pub const rotors = @import("ga/rotors.zig");
 
@@ -359,7 +358,7 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
 test "ga facade exposes canonical family and rotor surface" {
     _ = expression;
 
-    try std.testing.expectEqual(@as(usize, 5), family.euclidean(5).dimensions);
+    try std.testing.expectEqual(@as(usize, 5), Algebra(.euclidean(5)).dimensions);
 
     const E2 = Algebra(.euclidean(2)).Basis(f64);
     const e1 = E2.e(1);
@@ -379,7 +378,15 @@ test "signature-baked algebra namespace drives metric-dependent products" {
 }
 
 test "instantiated algebra namespace keeps generic constructors and naming bound" {
-    const Projective2 = family.projectiveEuclidean(2).Instantiate(f32);
+    // Projective naming: e0 maps to the degenerate basis vector, e1..e2 stay
+    // spatial. Spans are the comptime way to reach this without a family layer.
+    const Projective2 = AlgebraWithNamingOptions(
+        .{ .p = 2, .q = 0, .r = 1 },
+        blade_parsing.SignedBladeNamingOptions.withBasisSpans(blades.BasisIndexSpans.init(.{
+            .positive = .range(1, 2),
+            .degenerate = .singleton(0),
+        })),
+    ).Instantiate(f32);
     const sparse_masks = comptime blades.BladeMask.initMany(.{ 0b001, 0b100 });
     const Sparse = Projective2.Multivector(sparse_masks[0..]);
     const Vector = Projective2.KVector(1);

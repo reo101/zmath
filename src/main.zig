@@ -52,12 +52,15 @@ pub fn main(init: std.process.Init) !void {
     const e123 = Cl3.signedBlade("e123");
     try stdout.print("Pseudoscalar e123: {any}\n", .{e123.named()});
 
-    // CGA Naming Demo
-    const cga = zmath.flavours.cga;
-    const p = cga.Point.init(1, 2, 3);
-    try stdout.writeAll("\nCGA Naming Demo:\n");
-    try stdout.print("  Point p (struct): {any}\n", .{p.named()});
-    try stdout.print("  Point p (string): {f}\n", .{p});
+    // 5. Rotors
+    // -------------------------------------------------------------------------
+    // A 90 degree rotor in the e1-e2 plane sandwiches e1 into e2. The rotor
+    // is cos(a/2) - sin(a/2) * e12 on the even (scalar, e12, e13, e23) carrier.
+    const Even = Cl3.Even;
+    const s = std.math.sqrt(2.0) / 2.0;
+    const rotor = Even.init(.{ s, -s, 0, 0 });
+    const rotated = ga.rotors.rotated(Cl3.Basis.e(1), rotor);
+    try stdout.print("e1 rotated by 90 deg: {any}\n", .{rotated.named()});
 
     try stdout.flush();
 }
@@ -71,4 +74,12 @@ test "canonical example logic" {
     try std.testing.expectApproxEqAbs(@as(f64, 1.0), reflected.named().e1, 1e-10);
     try std.testing.expectApproxEqAbs(@as(f64, -2.0), reflected.named().e2, 1e-10);
     try std.testing.expectApproxEqAbs(@as(f64, 3.0), reflected.named().e3, 1e-10);
+
+    // The example's 90 deg rotor turns e1 into e2.
+    const Even = Cl3.Even;
+    const s = std.math.sqrt(2.0) / 2.0;
+    const rotor = Even.init(.{ s, -s, 0, 0 });
+    const rotated = ga.rotors.rotated(Cl3.Basis.e(1), rotor);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), rotated.coeffNamed("e1"), 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0), rotated.coeffNamed("e2"), 1e-12);
 }

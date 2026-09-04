@@ -129,21 +129,6 @@ pub fn addSpirvSteps(
 
     spirv_ga.addImport("ga", spirv_ga);
 
-    const spirv_vga = b.addModule("vga-spirv", .{
-        .root_source_file = b.path("src/flavours/vga.zig"),
-        .target = spirv_target,
-        .imports = &.{
-            .{
-                .name = "ga",
-                .module = spirv_ga,
-            },
-            .{
-                .name = "build_options",
-                .module = spirv_build_options_module,
-            },
-        },
-    });
-
     const spirv_step = b.step("spirv-vga", "Build the VGA-based SPIR-V vertex and fragment shaders");
     const spirv_raw_step = b.step("spirv-raw", "Build raw SPIR-V vertex and fragment shaders for driver baselines");
     const spirv_compare_step = b.step("spirv-compare", "Build GA and raw SPIR-V vertex shader variants for size comparison");
@@ -152,10 +137,6 @@ pub fn addSpirvSteps(
         .{
             .name = "ga",
             .module = spirv_ga,
-        },
-        .{
-            .name = "vga",
-            .module = spirv_vga,
         },
         .{
             .name = "build_options",

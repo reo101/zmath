@@ -5,7 +5,6 @@ const Modules = struct {
     meta: *std.Build.Module,
     parse: *std.Build.Module,
     ga: *std.Build.Module,
-    flavours: *std.Build.Module,
     geometry: *std.Build.Module,
     zmath: *std.Build.Module,
     spherical_scene: *std.Build.Module,
@@ -76,12 +75,6 @@ fn addModules(b: *std.Build, target: std.Build.ResolvedTarget) Modules {
     });
     ga.addImport("ga", ga);
 
-    const flavours = b.addModule("flavours", .{
-        .root_source_file = b.path("src/flavours.zig"),
-        .target = target,
-        .imports = &.{.{ .name = "ga", .module = ga }},
-    });
-
     const geometry = b.addModule("geometry", .{
         .root_source_file = b.path("src/geometry.zig"),
         .target = target,
@@ -110,7 +103,6 @@ fn addModules(b: *std.Build, target: std.Build.ResolvedTarget) Modules {
         .meta = meta,
         .parse = parse,
         .ga = ga,
-        .flavours = flavours,
         .geometry = geometry,
         .zmath = zmath,
         .spherical_scene = spherical_scene,
@@ -241,7 +233,6 @@ fn addTests(
     inline for (.{
         .{ "ga-module", modules.ga },
         .{ "parse-module", modules.parse },
-        .{ "flavours-module", modules.flavours },
         .{ "geometry-module", modules.geometry },
         .{ "zmath-module", modules.zmath },
     }) |entry| {

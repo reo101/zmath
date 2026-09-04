@@ -1,7 +1,6 @@
 const std = @import("std");
 const gpu = std.gpu;
 const ga = @import("ga");
-const vga = @import("vga");
 
 fn Vec(n: usize) type {
     return ga.Algebra(.euclidean(n)).Vector(f32);
@@ -24,7 +23,7 @@ export fn main() callconv(.spirv_vertex) void {
     }));
 
     const xy = position.swizzle("xy");
-    const radial = @min(vga.norm(position), 1.0);
+    const radial = @min(ga.rotors.norm(position), 1.0);
 
     gl_position.* = .initStorage(@as(@Vector(4, f32), .{ xy[0], xy[1], 0.0, 1.0 }));
     out_color.* = .initStorage(@as(@Vector(3, f32), .{ radial, 1.0 - radial, 0.25 }));
