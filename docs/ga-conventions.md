@@ -26,6 +26,39 @@ Prefer `complementDual()` or `hodgeDual()` in public examples. Use bare
 - `dot()` is the Hestenes dot product.
 - `leftContraction()` and `rightContraction()` are explicit contractions.
 
+## RGA interior products and projections
+
+`ga.rga` (also forwarded on every instantiated namespace) ships the rigid
+geometric algebra combinators defined at rigidgeometricalgebra.org, phrased
+over generic multivector carriers:
+
+- `bulkDual(u) = reverse(u) ⦑ 𝟙` and `weightDual(u) = reverse(u) ⦗ 1` are the
+  right metric dual and antidual. In a degenerate projective metric both are
+  nilpotent: applying either twice yields zero (the metric determinant
+  vanishes), and the null-axis component contributes nothing.
+- Contractions `a ∨ b★` (`bulkContraction`) / `a ∨ b☆` (`weightContraction`)
+  and expansions `a ∧ b★` (`bulkExpansion`) / `a ∧ b☆` (`weightExpansion`)
+  are the antiwedge/wedge products against the corresponding duals.
+- `project(a, b) = b ∨ (a ∧ b☆)` and `antiproject(a, b) = b ∧ (a ∨ b☆)` are
+  the orthogonal projection and antiprojection.
+
+Signature caveats (all pinned by tests):
+
+- For same-grade vectors in Euclidean metrics, `bulkContraction(a, b)` equals
+  the scalar part of `reverse(b) a` up to the intrinsic double-complement
+  sign `(−1)^(n−1)` (positive in `Cl(3,0)`, negative in `Cl(2,0)` and
+  `Cl(4,0)`). The same-grade expansion equals `(a • b) ∧ 𝟙` in Euclidean
+  metrics.
+- In indefinite metrics the equality breaks beyond a sign: the timelike
+  contributions carry opposite metric signs (in `Cl(3,1)`,
+  `bulkContraction(e4, e4) = +1` while the metric dot is `−1`). That
+  divergence is the bulk/weight distinction itself, not a defect.
+- The projection/antiprojection formulas assume mixed-grade, mixed-content
+  objects (as in the RGA representation). On pure plane-based-PGA blades a
+  point (trivector) projected onto a plane (vector) vanishes, because the
+  weight duals collapse to the metric-free complement in our primitives;
+  the combinators are incidence bookkeeping only in that representation.
+
 ## Expressions
 
 The expression compiler follows the same names:

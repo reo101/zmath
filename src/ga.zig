@@ -22,6 +22,7 @@ pub const blades = @import("ga/blades.zig");
 pub const blade_parsing = @import("ga/blade_parsing.zig");
 pub const expression = @import("ga/expression.zig");
 pub const multivector = @import("ga/multivector.zig");
+pub const rga = @import("ga/rga.zig");
 pub const rotors = @import("ga/rotors.zig");
 
 pub const MetricSignature = blades.MetricSignature;
@@ -311,6 +312,46 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
                     return value.sandwich(versor);
                 }
 
+                /// Bulk dual `u★ = ũ ⦑ 𝟙` (RGA metric dual). See `ga.rga`.
+                pub fn bulkDual(mv: anytype) @TypeOf(rga.bulkDual(mv)) {
+                    return rga.bulkDual(mv);
+                }
+
+                /// Weight dual `u☆ = ũ ⦗ 1` (RGA metric antidual). See `ga.rga`.
+                pub fn weightDual(mv: anytype) @TypeOf(rga.weightDual(mv)) {
+                    return rga.weightDual(mv);
+                }
+
+                /// Bulk contraction `a ∨ b★`. See `ga.rga`.
+                pub fn bulkContraction(a: anytype, b: anytype) @TypeOf(rga.bulkContraction(a, b)) {
+                    return rga.bulkContraction(a, b);
+                }
+
+                /// Weight contraction `a ∨ b☆`. See `ga.rga`.
+                pub fn weightContraction(a: anytype, b: anytype) @TypeOf(rga.weightContraction(a, b)) {
+                    return rga.weightContraction(a, b);
+                }
+
+                /// Bulk expansion `a ∧ b★`. See `ga.rga`.
+                pub fn bulkExpansion(a: anytype, b: anytype) @TypeOf(rga.bulkExpansion(a, b)) {
+                    return rga.bulkExpansion(a, b);
+                }
+
+                /// Weight expansion `a ∧ b☆`. See `ga.rga`.
+                pub fn weightExpansion(a: anytype, b: anytype) @TypeOf(rga.weightExpansion(a, b)) {
+                    return rga.weightExpansion(a, b);
+                }
+
+                /// Orthogonal RGA projection `b ∨ (a ∧ b☆)`. See `ga.rga`.
+                pub fn project(a: anytype, b: anytype) @TypeOf(rga.project(a, b)) {
+                    return rga.project(a, b);
+                }
+
+                /// Orthogonal RGA antiprojection `b ∧ (a ∨ b☆)`. See `ga.rga`.
+                pub fn antiproject(a: anytype, b: anytype) @TypeOf(rga.antiproject(a, b)) {
+                    return rga.antiproject(a, b);
+                }
+
                 /// Alias for `sandwich()` at transform call sites.
                 pub fn transform(value: anytype, versor: anytype) @TypeOf(value.transform(versor)) {
                     return value.transform(versor);
@@ -357,6 +398,7 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
 
 test "ga facade exposes canonical family and rotor surface" {
     _ = expression;
+    _ = rga;
 
     try std.testing.expectEqual(@as(usize, 5), Algebra(.euclidean(5)).dimensions);
 
