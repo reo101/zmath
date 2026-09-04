@@ -98,6 +98,9 @@ def main [
     }
     let exe = (ls .zig-cache/o/*/zmath-demo-spherical | sort-by modified | reverse | first | get name)
 
+    # Fresh CI checkouts have no zig-out; captures are written there.
+    mkdir zig-out
+
     let display = ':97'
     let xvfb = (job spawn { Xvfb $display -screen 0 '1280x720x24' -nolisten tcp })
     sleep 1.5sec
