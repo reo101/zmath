@@ -312,6 +312,21 @@ fn addTests(
 
     const fuzz_step = b.step("fuzz-expr", "Run the expression parser/evaluator fuzz smoke test");
     fuzz_step.dependOn(&b.addRunArtifact(expression_fuzz_tests).step);
+
+    const ga_laws_tests = b.addTest(.{
+        .name = "zmath-ga-laws",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/fuzz/ga_laws.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "zmath", .module = modules.zmath }},
+        }),
+        .use_llvm = fuzz_use_llvm,
+    });
+    test_step.dependOn(&b.addRunArtifact(ga_laws_tests).step);
+
+    const fuzz_ga_step = b.step("fuzz-ga", "Run the GA algebra-law fuzz target");
+    fuzz_ga_step.dependOn(&b.addRunArtifact(ga_laws_tests).step);
 }
 
 fn addEnvIncludePaths(b: *std.Build, translate_c: *std.Build.Step.TranslateC, name: []const u8) void {

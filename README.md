@@ -44,8 +44,8 @@ pub fn main() void {
 ## Main surfaces
 
 - `zmath.ga`: algebra factory, sparse multivectors, products, duals, rotors,
-  comptime expression compiler. `ga.Algebra(sig)` is the entry point; see
-  below.
+  RGA interior products/projections (`ga.rga`), and the comptime expression
+  compiler. `ga.Algebra(sig)` is the entry point; see below.
 - `zmath.geometry`: constant-curvature and spherical-game geometry kernels.
 - `zmath.parse`: comptime expression parser (implementation detail of `ga`).
 
@@ -94,10 +94,11 @@ check (`tools/golden_check.nu`).
 ## Commands
 
 ```sh
-zig build test --summary all       # suite: 127 tests across 8 binaries
+zig build test --summary all       # suite: 135 tests across 9 binaries
 zig build run                      # usage example
 zig build bench-simd               # micro-benchmark (ReleaseFast)
 zig build fuzz-expr                # expression parser/evaluator smoke fuzz
+zig build fuzz-ga                  # GA algebra-law property tests (Smith-driven)
 zig build demo-spherical-build     # build the raylib S3 spherical-game demo
 zig build demo-spherical           # run the spherical-game demo
 zig build demo-spherical-check     # headless S3 demo geometry checks
