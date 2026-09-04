@@ -34,6 +34,7 @@ pub const Face = scene.Face;
 pub const Surface = union(enum) {
     ground,
     sky,
+    fence,
     cube: Face,
 };
 
@@ -321,6 +322,7 @@ pub const SphericalRenderer = struct {
         const sh = self.tracer.trace(self.cam.direction(u, v));
         const surface: Surface = switch (sh.surface) {
             .ground => .ground,
+            .fence => .fence,
             .cube => |face| .{ .cube = face },
         };
         var cell = [2]f32{ 0, 0 };
@@ -753,6 +755,7 @@ pub fn sampleStats(mode: Mode, width: usize, height: usize) ViewStats {
             stats.pixels += 1;
             switch (frame.render(u, v).surface) {
                 .ground => stats.ground += 1,
+                .fence => stats.fence += 1,
                 .sky => {},
                 .cube => |face| {
                     stats.cube += 1;

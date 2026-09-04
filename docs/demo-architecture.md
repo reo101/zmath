@@ -50,6 +50,18 @@ reference direction. Harvest its ideas, not its code.
   `(max r_i - pi/2, min r_i + pi/2)`, so the entry/exit faces and angles are
   exact with zero iteration. Ground = first crossing of the equatorial
   great sphere. Occlusion is exact by construction.
+- `Fence`: a picket fence along the ground great circle whose pole is the
+  cube's ground point - the ring sits a quarter circle (pi*R/2) from the
+  cube in every direction and crosses the walk path exactly halfway
+  between the cube and its antipode. Rays are tested against the vertical
+  "curtain" great sphere over the ring (pole = the same ground point,
+  exactly the ground-plane structure), filtered to a height band and a
+  picket/gap pattern along the arc; gaps fall through to the ground
+  behind. From the cube the ring reads as a circle around the world;
+  standing at the crossing it is a straight picket row receding to the
+  horizon. Crossing-point pickets are never first-hit (the pattern keeps
+  a gate gap there, and pickets near the cube base are occluded by the
+  cube itself).
 - `Scene.frameDirection`: stereographic wide-FOV frame (150° by default).
   Conformal, maps circles to circles, and keeps the conjugate-region image
   continuous across the frame — the same projection family the reference
@@ -68,7 +80,8 @@ reference direction. Harvest its ideas, not its code.
 - Capture mode: `ZMATH_DEMO_CAPTURE=path.png` renders one hidden-window
   frame and exits. `ZMATH_DEMO_WALK` is the absolute walk distance
   (default = the showcase frame), `ZMATH_DEMO_PITCH` the pitch in radians,
-  `ZMATH_DEMO_FRAMES` caps the frame count for headless perf timing.
+  `ZMATH_DEMO_YAW` the yaw in radians, `ZMATH_DEMO_FRAMES` caps the frame
+  count for headless perf timing.
 
 ### The reverse-perspective frame
 

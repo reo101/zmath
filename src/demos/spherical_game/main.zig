@@ -38,6 +38,10 @@ pub fn main() void {
         else
             default_capture_pitch;
         world.walkForward(walk);
+        if (rl.getenv("ZMATH_DEMO_YAW")) |value| {
+            const yaw = std.fmt.parseFloat(f32, std.mem.span(value)) catch 0.0;
+            if (yaw != 0.0) world.yaw(yaw);
+        }
         if (pitch != 0.0) world.pitch(pitch);
     }
 
@@ -172,6 +176,7 @@ fn shadeHit(hit: scene.Hit) rl.Color {
             faceColor(face),
             (0.55 + 0.45 * hit.brightness) * dim,
         ),
+        .fence => scale(color(226, 218, 194, 255), (0.55 + 0.45 * hit.brightness) * dim),
         .ground => scale(groundColor(hit.point), 0.6 + 0.4 * hit.brightness),
     };
 }

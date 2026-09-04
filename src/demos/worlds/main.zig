@@ -272,6 +272,7 @@ fn shadeHit(hit: space.Hit, v: f32) rl.Color {
             faceColor(face),
             (0.55 + 0.45 * hit.brightness) * dim,
         ),
+        .fence => scale(color(226, 218, 194, 255), (0.55 + 0.45 * hit.brightness) * dim),
         .ground => scale(groundColor(hit.cell), (0.6 + 0.4 * hit.brightness) * dim),
         .sky => scale(color(96, 128, 158, 255), 1.0 - 0.3 * @max(v, 0.0)),
     };

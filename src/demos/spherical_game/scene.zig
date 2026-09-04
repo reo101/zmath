@@ -12,6 +12,9 @@ pub const default_cube_distance: f32 = 2.8;
 pub const default_cube_half_extent: f32 = 2.2;
 pub const default_eye_height: f32 = 0.35;
 pub const default_half_fov: f32 = std.math.degreesToRadians(75.0);
+pub const default_fence_height: f32 = 1.2;
+pub const default_fence_spacing: f32 = 0.75;
+pub const default_fence_width: f32 = 0.3;
 
 pub const Face = enum {
     left,
@@ -24,6 +27,7 @@ pub const Face = enum {
 
 pub const Surface = union(enum) {
     ground,
+    fence,
     cube: Face,
 };
 
@@ -50,9 +54,37 @@ pub const Plane = struct {
     face: Face,
 };
 
+/// Picket fence along a ground great circle. The circle's pole is the
+/// cube's ground point, so the ring sits a quarter circle (pi*R/2) away
+/// from the cube in every direction and crosses the walk path exactly
+/// halfway between the cube and its antipode. Standing at the cube the
+/// fence reads as a circle around the world; standing at the crossing it
+/// is a straight picket row receding to the horizon.
+///
+/// Rays are tested against the "curtain" over the circle: the vertical
+/// great 2-sphere with the same pole (a geodesic plane, exactly like the
+/// ground), filtered to a height band and a picket/gap pattern along the
+/// arc. Gaps are see-through: the ray continues to whatever is behind.
+pub const Fence = struct {
+    /// Pole of the fence circle AND of its vertical curtain great sphere:
+    /// the cube's ground point.
+    pole: Point,
+    /// The ring crosses the walk path here (pattern angle 0, kept as a
+    /// gate gap so the walker passes between pickets).
+    anchor: Point,
+    /// Second in-plane axis (the e2 strafe pole) completing the circle's
+    /// plane span{anchor, axis}.
+    axis: Direction,
+    height: f32,
+    spacing: f32,
+    width: f32,
+    radius: f32,
+};
+
 pub const ViewStats = struct {
     pixels: usize = 0,
     ground: usize = 0,
+    fence: usize = 0,
     cube: usize = 0,
     faces: [@typeInfo(Face).@"enum".fields.len]usize = @splat(0),
 
@@ -196,23 +228,37 @@ pub const Tracer = struct {
     up: Direction,
     forward: Direction,
     cube: Cube,
+    fence: Fence,
     radius: f32,
     plane_a: [6]f32,
     ground_a: f32,
+    fence_pole: Direction,
+    fence_a: f32,
 
-    pub fn init(camera_pose: Pose, cube: Cube) Tracer {
+    pub fn init(camera_pose: Pose, cube: Cube, fence: Fence) Tracer {
         var tracer = Tracer{
             .origin = camera_pose.position,
             .right = camera_pose.right,
             .up = camera_pose.up,
             .forward = camera_pose.forward,
             .cube = cube,
+            .fence = fence,
             .radius = cube.radius,
             .plane_a = undefined,
             .ground_a = sg.dot(camera_pose.position, worldUp()),
+            .fence_pole = fence.pole.cast(Direction),
+            .fence_a = sg.dot(camera_pose.position, fence.pole),
         };
         for (cube.planes, 0..) |plane, i| {
             tracer.plane_a[i] = sg.dot(camera_pose.position, plane.inward_normal);
+        }
+        // Orient the curtain plane so its origin component is positive -
+        // the same convention as the ground crossing - so the forward root
+        // is (cos, sin) = (-b, a)/h and determinant comparisons against the
+        // entry planes keep one fixed sign.
+        if (tracer.fence_a < 0.0) {
+            tracer.fence_pole = tracer.fence_pole.negate();
+            tracer.fence_a = -tracer.fence_a;
         }
         return tracer;
     }
@@ -271,6 +317,54 @@ pub const Tracer = struct {
         const cos_ground = -b_ground / h_g;
         const sin_ground = self.ground_a / h_g;
 
+        // Fence candidate: forward crossing of the curtain great sphere
+        // {<p, pole> = 0} (origin component kept positive in init), then
+        // the picket pattern along the circle's arc. Gaps fall through to
+        // whatever is behind the fence.
+        const b_fence = sg.dot(dir, self.fence_pole);
+        const h_fence2 = self.fence_a * self.fence_a + b_fence * b_fence;
+        var fence_hit = false;
+        var cos_fence: f32 = 0.0;
+        var sin_fence: f32 = 0.0;
+        var fence_brightness: f32 = 0.0;
+        if (h_fence2 > 1e-12) {
+            const h_fence = @sqrt(h_fence2);
+            const sin_f = self.fence_a / h_fence;
+            const cos_f = -b_fence / h_fence;
+            if (sin_f > 1e-3) {
+                const curtain_point = self.origin.scale(cos_f)
+                    .add(dir.scale(sin_f))
+                    .cast(Point);
+                const sin_psi = sg.dot(curtain_point, worldUp());
+                const sin_top = std.math.sin(self.fence.height / self.fence.radius);
+                if (sin_psi >= 0.0 and sin_psi <= sin_top) {
+                    const theta = std.math.atan2(
+                        sg.dot(curtain_point, self.fence.axis),
+                        sg.dot(curtain_point, self.fence.anchor),
+                    );
+                    const arc = theta * self.fence.radius;
+                    // Half-spacing offset: the crossing point (arc 0) sits
+                    // in a gate gap so the walker passes between pickets.
+                    if (@mod(arc + self.fence.spacing / 2.0, self.fence.spacing) < self.fence.width) {
+                        // Headlight on the picket's own radial normal (its
+                        // ground shadow point).
+                        const cos_psi = @sqrt(1.0 - sin_psi * sin_psi);
+                        const picket_normal = curtain_point
+                            .sub(worldUp().scale(sin_psi))
+                            .scale(1.0 / cos_psi)
+                            .cast(Direction);
+                        const ray_tangent = dir.scale(cos_f)
+                            .sub(self.origin.scale(sin_f))
+                            .cast(Direction);
+                        fence_hit = true;
+                        cos_fence = cos_f;
+                        sin_fence = sin_f;
+                        fence_brightness = @abs(sg.dot(ray_tangent, picket_normal));
+                    }
+                }
+            }
+        }
+
         var surface: Surface = undefined;
         var cos_alpha: f32 = undefined;
         var sin_alpha: f32 = undefined;
@@ -303,12 +397,20 @@ pub const Tracer = struct {
             // ... and beats the ground iff entry angle < ground angle:
             // sin(entry - ground) < 0  <=>  a_e*b_g - b_e*a_g < 0.
             if (a_e * b_ground - b[i] * self.ground_a > 0.0) cube_wins = false;
+            // ... and beats the fence curtain by the same determinant
+            // (the curtain plane is kept origin-positive like the ground).
+            if (fence_hit and a_e * b_fence - b[i] * self.fence_a > 0.0) cube_wins = false;
 
             if (cube_wins) {
                 cos_alpha = cos_entry;
                 sin_alpha = sin_entry;
                 surface = .{ .cube = self.cube.planes[i].face };
                 inward = self.cube.planes[i].inward_normal;
+            } else if (fence_hit and self.fence_a * b_ground - b_fence * self.ground_a > 0.0) {
+                cos_alpha = cos_fence;
+                sin_alpha = sin_fence;
+                surface = .fence;
+                inward = worldUp();
             } else {
                 cos_alpha = cos_ground;
                 sin_alpha = sin_ground;
@@ -325,7 +427,8 @@ pub const Tracer = struct {
             .cast(Direction);
         var brightness = sg.dot(tangent, inward);
         if (best_entry == null) brightness = -brightness;
-        if (surface == .ground) brightness = @abs(brightness);
+        if (surface == .ground or surface == .fence) brightness = @abs(brightness);
+        if (surface == .fence) brightness = fence_brightness;
 
         return .{
             .surface = surface,
@@ -368,14 +471,29 @@ pub const FrameCamera = struct {
 pub const Scene = struct {
     player: GroundPose,
     cube: Cube,
+    fence: Fence,
     radius: f32,
     half_fov: f32 = default_half_fov,
 
     pub fn init() Scene {
         const player = GroundPose.north(default_radius, default_eye_height);
+        // Fence ring: pole at the cube's ground point, so the ring is a
+        // quarter circle from the cube and crosses the walk path exactly
+        // halfway to the antipode. Pattern anchored at the crossing.
+        const theta_c = default_cube_distance / default_radius;
+        const theta_m = theta_c + std.math.pi / 2.0;
         return .{
             .player = player,
             .cube = Cube.grounded(player.moveForward(default_cube_distance), default_cube_half_extent),
+            .fence = .{
+                .pole = Point.init(.{ @cos(theta_c), 0, 0, @sin(theta_c) }),
+                .anchor = Point.init(.{ @cos(theta_m), 0, 0, @sin(theta_m) }),
+                .axis = Point.init(.{ 0, 1, 0, 0 }),
+                .height = default_fence_height,
+                .spacing = default_fence_spacing,
+                .width = default_fence_width,
+                .radius = default_radius,
+            },
             .radius = default_radius,
         };
     }
@@ -385,7 +503,7 @@ pub const Scene = struct {
     }
 
     pub fn tracer(self: Scene) Tracer {
-        return Tracer.init(self.camera(), self.cube);
+        return Tracer.init(self.camera(), self.cube, self.fence);
     }
 
     /// Per-frame camera + projection state. Build once, then call
@@ -409,6 +527,7 @@ pub const Scene = struct {
                 stats.pixels += 1;
                 switch (frame_tracer.trace(cam.direction(u, v)).surface) {
                     .ground => stats.ground += 1,
+                    .fence => stats.fence += 1,
                     .cube => |face| {
                         stats.cube += 1;
                         stats.faces[@intFromEnum(face)] += 1;
@@ -476,6 +595,7 @@ pub fn sampleStats(tracer: Tracer, width: usize, height: usize) ViewStats {
             stats.pixels += 1;
             switch (tracer.trace(dir).surface) {
                 .ground => stats.ground += 1,
+                .fence => stats.fence += 1,
                 .cube => |face| {
                     stats.cube += 1;
                     stats.faces[@intFromEnum(face)] += 1;
@@ -604,6 +724,53 @@ test "walk speed eases near the conjugate window" {
     try std.testing.expect(scene.conjugateGap() > 5.0);
 }
 
+test "fence ring crosses the walk path halfway to the antipode" {
+    const f = Scene.init().fence;
+
+    // The ring's pole is the cube's ground point: the ring sits a quarter
+    // circle from the cube, and its pattern anchor is exactly halfway
+    // between the cube and the antipode along the walk great circle.
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), sg.dot(f.pole, f.anchor), 1e-5);
+    try std.testing.expectApproxEqAbs(
+        default_cube_distance + std.math.pi * default_radius / 2.0,
+        std.math.acos(std.math.clamp(sg.dot(f.anchor, Point.init(.{ 1, 0, 0, 0 })), -1.0, 1.0)) * default_radius,
+        1e-4,
+    );
+}
+
+test "fence pickets ring the walker past the cube" {
+    var s = Scene.init();
+    // Just past the cube (outside its footprint): the ring is ~7 units
+    // ahead, wrapping the walker.
+    s.walkForward(default_cube_distance + 2.5);
+    const stats = s.sampleFrame(160, 90);
+
+    try std.testing.expect(stats.fence > 0);
+    try std.testing.expect(stats.ground > 0);
+}
+
+test "fence pickets are visible from the start behind the cube" {
+    const stats = Scene.init().sampleFrame(160, 90);
+    try std.testing.expect(stats.fence > 0);
+    try std.testing.expect(stats.cube > 0);
+    // Gaps dominate: pickets are thinner than the spacing.
+    try std.testing.expect(stats.fence < stats.ground);
+}
+
+test "fence reads as a straight picket row when standing close to it" {
+    var scene = Scene.init();
+    // Walk 0.4 past the crossing: off the ring line (the walk direction is
+    // perpendicular to the ring there), then face along the fence.
+    scene.walkForward(default_cube_distance + std.math.pi * default_radius / 2.0 + 0.4);
+    scene.yaw(std.math.pi / 2.0);
+    const stats = scene.sampleFrame(160, 90);
+
+    // Facing along the fence from just off the line: pickets recede
+    // toward the vanishing direction instead of wrapping the view.
+    try std.testing.expect(stats.fence > 0);
+    try std.testing.expect(stats.fence < stats.ground);
+}
+
 test "straight up far from the cube is wrapped ground, not sky" {
     var scene = Scene.init();
     scene.walkForward(10.0);
@@ -644,9 +811,11 @@ test "cube image owns the zenith and releases it at the horizon" {
         const wall_hit = tracer.trace(sg.normalize(dir_at(tracer, std.math.degreesToRadians(60.0), azim)).?);
         try std.testing.expect(wall_hit.surface.cube != .bottom);
 
-        // The horizon band is ground: "all rays eventually hit the ground".
+        // The horizon band is ground or the fence ring (pickets stand on
+        // the horizon from the showcase) - never the cube: "all rays
+        // eventually leave the cube".
         const horizon_hit = tracer.trace(sg.normalize(dir_at(tracer, std.math.degreesToRadians(88.0), azim)).?);
-        try std.testing.expectEqual(Surface.ground, horizon_hit.surface);
+        try std.testing.expect(horizon_hit.surface == .ground or horizon_hit.surface == .fence);
     }
 }
 
