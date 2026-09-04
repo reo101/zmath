@@ -1,10 +1,8 @@
 const std = @import("std");
 const zmath = @import("zmath");
 
-const curved = zmath.geometry.curved;
 const constant_curvature = zmath.geometry.constant_curvature;
 const spherical_game = zmath.geometry.spherical_game;
-const projection = zmath.render.projection;
 
 const StorageKind = enum { array, vector };
 
@@ -49,17 +47,15 @@ fn gaCarrierShape(comptime Carrier: type) CarrierShape {
     };
 }
 
-test "import geometry and render test modules" {
-    _ = curved;
+test "import geometry test modules" {
     _ = constant_curvature;
     _ = spherical_game;
-    _ = projection;
     try std.testing.expect(true);
 }
 
 test "GA vector carriers are extern structs backed by Zig SIMD vectors" {
-    const E2 = zmath.flavours.vga.EuclideanFamily(2).Instantiate(f32);
-    const E4 = zmath.flavours.vga.EuclideanFamily(4).Instantiate(f32);
+    const E2 = zmath.ga.Algebra(.euclidean(2)).Instantiate(f32);
+    const E4 = zmath.ga.Algebra(.euclidean(4)).Instantiate(f32);
 
     try std.testing.expect(std.meta.eql(
         gaCarrierShape(E2.Vector),
@@ -92,7 +88,7 @@ test "GA vector carriers are extern structs backed by Zig SIMD vectors" {
 }
 
 test "GA vector carriers remain wrappers around Zig SIMD vector storage" {
-    const E2 = zmath.flavours.vga.EuclideanFamily(2).Instantiate(f32);
+    const E2 = zmath.ga.Algebra(.euclidean(2)).Instantiate(f32);
     const Simd2 = @Vector(2, f32);
 
     try std.testing.expect(@typeInfo(E2.Vector) == .@"struct");
@@ -123,7 +119,7 @@ test "constant curvature conformal embeddings round-trip through GA helpers" {
     }
 }
 
-test "constant curvature projective embeddings match EPGA and HPGA proper helpers" {
+test "constant curvature projective embeddings match the GA proper point helpers" {
     const sample = constant_curvature.Vec3{ .x = 0.3, .y = -0.4, .z = 0.8 };
     inline for (.{ constant_curvature.Metric.spherical, constant_curvature.Metric.hyperbolic }) |metric| {
         const raw = constant_curvature.embedProjective(metric, 4.0, sample).?;

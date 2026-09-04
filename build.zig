@@ -7,7 +7,6 @@ const Modules = struct {
     ga: *std.Build.Module,
     flavours: *std.Build.Module,
     geometry: *std.Build.Module,
-    render: *std.Build.Module,
     zmath: *std.Build.Module,
     spherical_scene: *std.Build.Module,
 };
@@ -35,21 +34,6 @@ pub fn build(b: *std.Build) void {
     const run_cmd = b.addRunArtifact(example);
     run_step.dependOn(&run_cmd.step);
     if (b.args) |args| run_cmd.addArgs(args);
-
-    const demo = b.addExecutable(.{
-        .name = "zmath-demo",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/demos/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{.{ .name = "zmath", .module = modules.zmath }},
-        }),
-    });
-
-    const demo_step = b.step("demo", "Run the terminal demo");
-    const demo_cmd = b.addRunArtifact(demo);
-    demo_step.dependOn(&demo_cmd.step);
-    if (b.args) |args| demo_cmd.addArgs(args);
 
     const bench = b.addExecutable(.{
         .name = "zmath-bench",
@@ -101,19 +85,8 @@ fn addModules(b: *std.Build, target: std.Build.ResolvedTarget) Modules {
     const geometry = b.addModule("geometry", .{
         .root_source_file = b.path("src/geometry.zig"),
         .target = target,
-        .imports = &.{
-            .{ .name = "ga", .module = ga },
-            .{ .name = "flavours", .module = flavours },
-        },
-    });
-
-    const render = b.addModule("render", .{
-        .root_source_file = b.path("src/render.zig"),
-        .target = target,
         .imports = &.{.{ .name = "ga", .module = ga }},
     });
-    geometry.addImport("render", render);
-    render.addImport("geometry", geometry);
 
     const zmath = b.addModule("zmath", .{
         .root_source_file = b.path("src/root.zig"),
@@ -121,9 +94,7 @@ fn addModules(b: *std.Build, target: std.Build.ResolvedTarget) Modules {
         .imports = &.{
             .{ .name = "ga", .module = ga },
             .{ .name = "parse", .module = parse },
-            .{ .name = "flavours", .module = flavours },
             .{ .name = "geometry", .module = geometry },
-            .{ .name = "render", .module = render },
         },
     });
 
@@ -141,7 +112,6 @@ fn addModules(b: *std.Build, target: std.Build.ResolvedTarget) Modules {
         .ga = ga,
         .flavours = flavours,
         .geometry = geometry,
-        .render = render,
         .zmath = zmath,
         .spherical_scene = spherical_scene,
     };
@@ -273,7 +243,6 @@ fn addTests(
         .{ "parse-module", modules.parse },
         .{ "flavours-module", modules.flavours },
         .{ "geometry-module", modules.geometry },
-        .{ "render-module", modules.render },
         .{ "zmath-module", modules.zmath },
     }) |entry| {
         const tests = b.addTest(.{ .name = entry[0], .root_module = entry[1] });
@@ -295,17 +264,6 @@ fn addTests(
         }),
     });
     test_step.dependOn(&b.addRunArtifact(module_surface_tests).step);
-
-    const demo_core_tests = b.addTest(.{
-        .name = "zmath-demo-core",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/demos/core.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{.{ .name = "zmath", .module = modules.zmath }},
-        }),
-    });
-    test_step.dependOn(&b.addRunArtifact(demo_core_tests).step);
 
     const spherical_game_scene_tests = b.addTest(.{
         .name = "zmath-demo-spherical-game",

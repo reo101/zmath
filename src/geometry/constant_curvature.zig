@@ -1,5 +1,5 @@
 const std = @import("std");
-const flavours = @import("flavours");
+const ga = @import("ga");
 
 pub const Metric = enum {
     spherical,
@@ -59,8 +59,37 @@ pub const ViewSample = struct {
     distance: f32,
 };
 
-const Epga = flavours.epga.InstantiateHelpers(f32);
-const Hpga = flavours.hpga.InstantiateHelpers(f32);
+/// Round ambient algebras for the GA round-trip helpers below. Points are
+/// represented as complement duals of homogeneous vectors (the PGA
+/// convention): the homogeneous axis is the last basis vector, the
+/// spatial axes are e1..e3. In Cl(4,0) that axis is positive (elliptic
+/// projective), in Cl(3,1) it is the negative one (hyperbolic projective).
+const EllipticH = ga.Algebra(.euclidean(4)).Instantiate(f32);
+const HyperbolicH = ga.Algebra(.{ .p = 3, .q = 1 }).Instantiate(f32);
+
+fn pointFromHomogeneous(comptime H: type, w: f32, coords: [3]f32) H.Full {
+    const E = H.Basis;
+    var v = E.e(4).scale(w).cast(H.Vector);
+    inline for (coords, 0..) |coord, i| {
+        v = v.add(E.e(i + 1).scale(coord)).cast(H.Vector);
+    }
+    return v.dual().cast(H.Full);
+}
+
+fn homogeneousPointCoords(comptime H: type, p: anytype) [4]f32 {
+    const dual = p.dual().cast(H.Vector);
+    // Vector blades are ordered e1..e4; e4 carries the homogeneous weight.
+    var v: [4]f32 = undefined;
+    inline for (0..4) |i| {
+        v[i] = dual.coeff(H.Vector.blades[i]);
+    }
+    // Reorder to [w, x, y, z] and normalize the sign on w.
+    var coords = [4]f32{ v[3], v[0], v[1], v[2] };
+    if (coords[0] < 0.0) {
+        for (&coords) |*c| c.* = -c.*;
+    }
+    return coords;
+}
 
 pub fn embedConformal(metric: Metric, radius: f32, chart: Vec3) ?Vec4 {
     if (radius <= 0.0) return null;
@@ -89,20 +118,20 @@ pub fn embedConformal(metric: Metric, radius: f32, chart: Vec3) ?Vec4 {
     };
 }
 
-/// Same embedding as `embedConformal`, but materialized through EPGA/HPGA
-/// homogeneous point helpers. This keeps the public model tied to the
-/// non-degenerate GA flavours while the renderer uses plain Vec4 arithmetic.
+/// Same embedding as `embedConformal`, but materialized through the GA
+/// homogeneous point helpers (dual representation). This keeps the public
+/// model tied to GA carriers while the renderer uses plain Vec4 arithmetic.
 pub fn embedConformalGa(metric: Metric, radius: f32, chart: Vec3) ?Vec4 {
     const ambient = embedConformal(metric, radius, chart) orelse return null;
     return switch (metric) {
-        .spherical => fromArray(Epga.ambientCoords(Epga.Point.initHomogeneousCoords(
-            ambient.w,
-            .{ ambient.x, ambient.y, ambient.z },
-        ))),
-        .hyperbolic => fromArray(Hpga.ambientCoords(Hpga.Point.initHomogeneousCoords(
-            ambient.w,
-            .{ ambient.x, ambient.y, ambient.z },
-        ))),
+        .spherical => fromArray(homogeneousPointCoords(
+            EllipticH,
+            pointFromHomogeneous(EllipticH, ambient.w, .{ ambient.x, ambient.y, ambient.z }),
+        )),
+        .hyperbolic => fromArray(homogeneousPointCoords(
+            HyperbolicH,
+            pointFromHomogeneous(HyperbolicH, ambient.w, .{ ambient.x, ambient.y, ambient.z }),
+        )),
     };
 }
 
@@ -126,9 +155,23 @@ pub fn embedProjective(metric: Metric, radius: f32, chart: Vec3) ?Vec4 {
 pub fn embedProjectiveGa(metric: Metric, radius: f32, chart: Vec3) ?Vec4 {
     if (radius <= 0.0) return null;
     const scaled = chart.scale(1.0 / radius);
+    const r2 = scaled.x * scaled.x + scaled.y * scaled.y + scaled.z * scaled.z;
     return switch (metric) {
-        .spherical => fromArray(Epga.ambientCoords(Epga.Point.proper(scaled.x, scaled.y, scaled.z))),
-        .hyperbolic => fromArray(Hpga.ambientCoords(Hpga.Point.proper(scaled.x, scaled.y, scaled.z) orelse return null)),
+        .spherical => blk: {
+            const inv = 1.0 / @sqrt(1.0 + r2);
+            break :blk fromArray(homogeneousPointCoords(
+                EllipticH,
+                pointFromHomogeneous(EllipticH, inv, .{ scaled.x * inv, scaled.y * inv, scaled.z * inv }),
+            ));
+        },
+        .hyperbolic => blk: {
+            if (r2 >= 1.0) return null;
+            const inv = 1.0 / @sqrt(1.0 - r2);
+            break :blk fromArray(homogeneousPointCoords(
+                HyperbolicH,
+                pointFromHomogeneous(HyperbolicH, inv, .{ scaled.x * inv, scaled.y * inv, scaled.z * inv }),
+            ));
+        },
     };
 }
 
@@ -260,7 +303,7 @@ test "conformal embeddings lie on spherical and hyperbolic models" {
     try std.testing.expectApproxEqAbs(@as(f32, -1.0), dot(.hyperbolic, hyper, hyper), 1e-5);
 }
 
-test "conformal embeddings round-trip through EPGA and HPGA helpers" {
+test "conformal embeddings round-trip through the GA homogeneous point helpers" {
     const samples = [_]Vec3{
         .{ .x = 0.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.4, .y = -0.2, .z = 0.7 },
@@ -273,7 +316,7 @@ test "conformal embeddings round-trip through EPGA and HPGA helpers" {
     }
 }
 
-test "projective embeddings match EPGA and HPGA proper point helpers" {
+test "projective embeddings match the GA proper point helpers" {
     const sample = Vec3{ .x = 0.3, .y = -0.4, .z = 0.8 };
     try expectVec4ApproxEq(embedProjective(.spherical, 4.0, sample).?, embedProjectiveGa(.spherical, 4.0, sample).?, 1e-6);
     try expectVec4ApproxEq(embedProjective(.hyperbolic, 4.0, sample).?, embedProjectiveGa(.hyperbolic, 4.0, sample).?, 1e-6);
