@@ -46,11 +46,23 @@ The expression compiler follows the same names:
 
 ## PGA model
 
-`zmath.flavours.pga` uses `Cl(n, 0, 1)` with named basis vectors
-`e1..en` for Euclidean directions and `e0` for the degenerate projective
-basis vector.
+Projective Euclidean (PGA-style) models use `Cl(n, 0, 1)` with named basis
+vectors `e1..en` for Euclidean directions and `e0` for the degenerate
+projective basis vector. Configure it with naming spans:
 
-Default 3D PGA points are trivectors built as the complement dual of their
+```zig
+const P3 = zmath.ga.AlgebraWithNamingOptions(
+    .{ .p = 3, .q = 0, .r = 1 },
+    zmath.ga.blade_parsing.SignedBladeNamingOptions.withBasisSpans(
+        zmath.ga.blades.BasisIndexSpans.init(.{
+            .positive = .range(1, 3),
+            .degenerate = .singleton(0),
+        }),
+    ),
+).Instantiate(f32);
+```
+
+3D PGA points are trivectors built as the complement dual of their
 homogeneous coordinate vector:
 
 ```text
@@ -63,18 +75,11 @@ Planes are vectors:
 π(a, b, c, d) = a*e1 + b*e2 + c*e3 + d*e0
 ```
 
-So for default PGA, `wedge()`/`meet()` is the direct incidence product and
+So for PGA, `wedge()`/`meet()` is the direct incidence product and
 `join()` is the regressive product built through complement duality.
-
-The PGA facade also exposes basic motor helpers:
-
-- `translatorFromCoords()` / `translator()` builds translation motors.
-- `rotorInPlane()` builds origin-centered rotation motors.
-- `transform()` applies the point/object action used by the facade (`~M P M`).
-- `sandwich()` keeps the core GA sandwich order (`M P ~M`) for raw call sites.
-- `toPointMatrix4x4()` converts the facade point action to a homogeneous matrix.
-- `toMatrix4x4()` is the lower-level basis-vector action matrix.
-- `composeMotors()` composes even motors with the geometric product.
+The same representation (with a positive or negative homogeneous axis)
+is what the constant-curvature kernel uses for its EPGA/HPGA round-trip
+helpers.
 
 ## Runtime blade indices
 

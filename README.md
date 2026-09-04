@@ -43,57 +43,79 @@ pub fn main() void {
 
 ## Main surfaces
 
-- `zmath.ga`: generic algebra factory, multivectors, products, duals, expression compiler.
-- `zmath.flavours`: convenience facades for VGA, PGA, CGA, STA, EPGA, HPGA.
-- `zmath.geometry`: constant-curvature and spherical-game geometry helpers.
-- `zmath.render`: small software-render/projection helpers used by the demos.
+- `zmath.ga`: algebra factory, sparse multivectors, products, duals, rotors,
+  comptime expression compiler. `ga.Algebra(sig)` is the entry point; see
+  below.
+- `zmath.geometry`: constant-curvature and spherical-game geometry kernels.
+- `zmath.parse`: comptime expression parser (implementation detail of `ga`).
 
-## GA flavour comparison
+## Making an algebra
 
-| Flavour | Signature | Main use |
-| --- | --- | --- |
-| VGA | `Cl(n, 0, 0)` | Euclidean vector math |
-| PGA | `Cl(n, 0, 1)` | Euclidean rigid motion |
-| CGA | `Cl(n+1, 1, 0)` | spheres, circles, conformal transforms |
-| STA | `Cl(1, 3, 0)` | relativistic spacetime |
-| EPGA | `Cl(n+1, 0, 0)` | elliptic/projective geometry |
-| HPGA | `Cl(n, 1, 0)` | hyperbolic projective geometry |
+`ga.Algebra(sig)` bakes a `Cl(p, q, r)` signature into a namespace of
+comptime-specialized types:
+
+```zig
+const Cl3 = zmath.ga.Algebra(.euclidean(3)).Instantiate(f32);
+// Cl3.Vector, Cl3.Rotor, Cl3.KVector(2), Cl3.Basis, Cl3.expr, ...
+```
+
+Signatures are plain values: `.euclidean(n)`, or explicit `.{ .p = 3, .q = 1 }`
+for mixed metrics (the library itself uses `Cl(3,1)` for hyperbolic space and
+`Cl(4,0)` for S³). Non-default basis naming (projective `e0` axes, custom
+names) is configured with
+`ga.AlgebraWithNamingOptions(sig, ga.blade_parsing.SignedBladeNamingOptions)`
+— see the naming test in `src/ga.zig` for the pattern.
 
 ## Conventions
 
 - Prefer `complementDual()` for the metric-independent Poincaré dual.
 - `dual()` is only a short alias for `complementDual()`.
 - Use `hodgeDual()` for the metric-aware dual on non-degenerate metrics.
-- PGA/RGA-style bulk and weight duals live under `zmath.flavours.pga`.
 
-See `docs/ga-conventions.md` for the product, duality, expression, and PGA
-representation conventions.
+See `docs/ga-conventions.md` for the product, duality, and expression
+conventions.
+
+## Demos
+
+Two first-hit ray-tracing demos double as the geometry library's test rigs:
+
+- `demo-spherical`: S³ walker - a spherical cube, conjugate-region
+  reverse perspective, and a great-circle picket fence, rendered with a
+  zero-iteration exact tracer.
+- `demo-worlds`: one executable, four spaces (euclidean / isometric /
+  spherical / hyperbolic), live-switched with keys 1-4. The hyperbolic
+  world walks the hyperboloid on GA carriers with Beltrami-Klein
+  projection.
+
+Both demos split scene from backend, so their geometry is pinned by
+headless tests (`demo-*-check` steps) and by the golden-image palette
+check (`tools/golden_check.nu`).
 
 ## Commands
 
 ```sh
-zig build test --summary all   # current suite: 168 tests
-zig build run                  # usage example
-zig build demo                 # terminal demo
-zig build bench-simd           # micro-benchmark
-zig build fuzz-expr            # expression parser/evaluator smoke fuzz
-zig build spirv-vga                 # build VGA-based SPIR-V shaders
-zig build spirv-raw                 # build raw SPIR-V shader baseline
-zig build spirv-compare             # compare GA vs raw SPIR-V shader size
-zig build shader-playground-build   # build local Vulkan/GLFW shader playground
-zig build shader-playground         # run playground with raw shaders
-zig build shader-playground-ga      # run playground with GA shaders
-zig build demo-spherical-build   # build the raylib S3 spherical-game demo
-zig build demo-spherical         # run the raylib S3 spherical-game demo
-zig build demo-spherical-check   # headless S3 demo geometry checks
-zig build demo-worlds-build      # build the raylib worlds demo (4 spaces)
-zig build demo-worlds            # run the worlds demo (keys 1-4 switch)
-zig build demo-worlds-check      # headless worlds geometry checks
+zig build test --summary all       # suite: 127 tests across 8 binaries
+zig build run                      # usage example
+zig build bench-simd               # micro-benchmark (ReleaseFast)
+zig build fuzz-expr                # expression parser/evaluator smoke fuzz
+zig build demo-spherical-build     # build the raylib S3 spherical-game demo
+zig build demo-spherical           # run the spherical-game demo
+zig build demo-spherical-check     # headless S3 demo geometry checks
+zig build demo-worlds-build        # build the raylib worlds demo (4 spaces)
+zig build demo-worlds              # run the worlds demo (keys 1-4 switch)
+zig build demo-worlds-check        # headless worlds geometry checks
+zig build spirv-vga                # build VGA-based SPIR-V shaders
+zig build spirv-raw                # build raw SPIR-V shader baseline
+zig build spirv-compare            # compare GA vs raw SPIR-V shader size
+zig build shader-playground-build  # build local Vulkan/GLFW shader playground
+zig build shader-playground        # run playground with raw shaders
+zig build shader-playground-ga     # run playground with GA shaders
+nix develop -c nu tools/golden_check.nu  # golden-image palette check
 ```
 
-The shader playground and the demos are opt-in; run them from the
-Nix devshell so Vulkan/GLFW/raylib and `spirv-opt` are on the include/library
-paths.
+The shader playground, the golden check, and the demos are opt-in; run them
+from the Nix devshell so Vulkan/GLFW/raylib, Xvfb, ImageMagick and
+`spirv-opt` are on the include/library paths.
 
 ## License
 
