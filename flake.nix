@@ -66,6 +66,10 @@
                 pkgs.pkg-config
                 pkgs.spirv-tools
                 pkgs.vulkan-tools
+                # golden-image check (tools/golden_check.nu)
+                pkgs.imagemagick
+                pkgs.xorg-server
+                pkgs.nushell
               ];
               buildInputs = nativeGraphicsInputs;
 
