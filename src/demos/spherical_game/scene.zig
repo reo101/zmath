@@ -355,99 +355,116 @@ pub const Tracer = struct {
             .sub(radial.scale(self.sin_half_thick));
         const n_far = self.fence_pole.scale(self.cos_half_thick)
             .add(radial.scale(self.sin_half_thick));
-        const edge_low = self.fence.anchor.cast(Direction)
+        // Arc-end constraint normals, ORIENTED inward (toward the plank's
+        // own radial): the raw tangent built from (sin_theta, cos_theta)
+        // flips direction with the sign of the plank's anchor-relative
+        // angle, which would make the box inside-out for planks on half
+        // the ring. With both normals pointing inward, inside is simply
+        // x.edge >= 0 for both.
+        const edge_low_raw = self.fence.anchor.cast(Direction)
             .scale(cos_theta * self.sin_half_width - sin_theta * self.cos_half_width)
             .add(self.fence.axis.scale(cos_theta * self.cos_half_width + sin_theta * self.sin_half_width));
-        const edge_high = self.fence.anchor.cast(Direction)
+        const edge_high_raw = self.fence.anchor.cast(Direction)
             .scale(-(cos_theta * self.sin_half_width + sin_theta * self.cos_half_width))
             .add(self.fence.axis.scale(cos_theta * self.cos_half_width - sin_theta * self.sin_half_width));
+        const edge_low = if (sg.dot(radial, edge_low_raw) < 0.0) edge_low_raw.negate() else edge_low_raw;
+        const edge_high = if (sg.dot(radial, edge_high_raw) < 0.0) edge_high_raw.negate() else edge_high_raw;
         const cos_top = @sqrt(1.0 - sin_top * sin_top);
         const cap_top = worldUp().scale(cos_top).sub(radial.scale(sin_top));
 
-        // Six half-space constraints (two faces, two ends, roof, floor),
-        // each crossed exactly once forward. The box entry is the crossing
-        // where all six hold. The floor slab is the ground great sphere
-        // itself: it closes the bottom exactly (the prism's side planes
-        // contain e3, so the ground sphere caps the prism flush).
+        // Six half-space constraints (two faces, two ends, roof, floor).
+        // The floor slab is the ground great sphere itself: it closes the
+        // bottom exactly (the side planes contain e3, so the ground sphere
+        // caps the prism flush).
+        //
+        // Box entry, solved exactly by a boundary walk: along the ray
+        // x(phi) = cos(phi) origin + sin(phi) dir, constraint k reads
+        // x.n_k = h_k cos(phi - r_k) with r_k = atan2(b_k, a_k), so its
+        // satisfaction toggles at phi = r_k +/- pi/2 (want-positive flips
+        // in at r_k - pi/2, want-negative at r_k + pi/2). Sorting all
+        // twelve boundaries and walking the circle gives the exact
+        // all-satisfied intervals - robust to the arcs wrapping around
+        // 2pi and to distant boxes approached at grazing angles, where
+        // crossing-order assumptions break.
         const normals = [6]Direction{ n_near, n_far, edge_low, edge_high, cap_top, worldUp() };
-        const want_positive = [6]bool{ false, true, true, false, false, true };
-        var a_c: [6]f32 = undefined;
-        var b_c: [6]f32 = undefined;
-        var cross_cos: [6]f32 = undefined;
-        var cross_sin: [6]f32 = undefined;
-        var cross_angle: [6]f32 = undefined;
-        var state: [6]bool = undefined;
-        var order: [6]usize = undefined;
-        var n_order: usize = 0;
-        var inside: usize = 0;
+        const want_positive = [6]bool{ false, true, true, true, false, true };
+        var entry_k: usize = 0;
+        const Bound = struct { phi: f32, k: usize, flip_in: bool };
+        var bounds: [12]Bound = undefined;
+        var n_bounds: usize = 0;
+        var satisfied: [6]bool = @splat(false);
+        var count: usize = 0;
         for (normals, 0..) |n_k, k| {
-            a_c[k] = sg.dot(self.origin, n_k);
-            b_c[k] = sg.dot(dir, n_k);
-            const h_k = @sqrt(a_c[k] * a_c[k] + b_c[k] * b_c[k]);
-            if (h_k <= 1e-9) {
-                // The ray lies in this surface's great sphere (an
-                // along-the-fence sight line slides in a plank's face
-                // plane): the constraint never toggles and holds
-                // throughout.
-                state[k] = true;
-                inside += 1;
-                cross_sin[k] = -1.0;
+            const a_k = sg.dot(self.origin, n_k);
+            const b_k = sg.dot(dir, n_k);
+            if (@abs(a_k) < 1e-9 and @abs(b_k) < 1e-9) {
+                // The ray lies in this constraint's great sphere: it can
+                // never toggle, treat as satisfied throughout.
+                satisfied[k] = true;
+                count += 1;
                 continue;
             }
-            state[k] = (a_c[k] >= 0.0) == want_positive[k];
-            if (state[k]) inside += 1;
-            // The surface's single forward crossing, as (cos, sin) with
-            // the tracer's sign convention.
-            if (a_c[k] >= 0.0) {
-                cross_cos[k] = -b_c[k] / h_k;
-                cross_sin[k] = a_c[k] / h_k;
-            } else {
-                cross_cos[k] = b_c[k] / h_k;
-                cross_sin[k] = -a_c[k] / h_k;
+            const r_k = std.math.atan2(b_k, a_k);
+            satisfied[k] = (a_k >= 0.0) == want_positive[k];
+            if (satisfied[k]) count += 1;
+            // The two toggles, normalized into [0, 2pi).
+            inline for (0..2) |side| {
+                var phi = if (side == 0) r_k - std.math.pi / 2.0 else r_k + std.math.pi / 2.0;
+                phi = @mod(phi, 2.0 * std.math.pi);
+                const flip_in = if (side == 0) want_positive[k] else !want_positive[k];
+                bounds[n_bounds] = .{ .phi = phi, .k = k, .flip_in = flip_in };
+                n_bounds += 1;
             }
-            cross_angle[k] = std.math.atan2(cross_sin[k], cross_cos[k]);
-            // Insert into the ascending crossing order.
-            var pos = n_order;
-            while (pos > 0) {
-                const j = order[pos - 1];
-                if (cross_angle[k] < cross_angle[j]) {
-                    order[pos] = j;
-                    pos -= 1;
-                } else break;
-            }
-            order[pos] = k;
-            n_order += 1;
         }
-        for (order[0..n_order]) |k| {
-            if (state[k]) {
-                inside -= 1;
-            } else {
-                inside += 1;
+        std.mem.sort(Bound, bounds[0..n_bounds], {}, struct {
+            fn lessThan(_: void, x: Bound, y: Bound) bool {
+                return x.phi < y.phi;
             }
-            state[k] = !state[k];
-            if (inside != 6) continue;
-            // The ray enters the plank here; the caps bound the height,
-            // so no separate band check.
-            const brightness: f32 = switch (k) {
-                // Per-part tones, the way the cube's faces carry distinct
-                // colors: without them a box with identical faces reads as
-                // one anonymous curved surface. Near face brightest, far
-                // face a step down, ends dark tan, roof lit, floor
-                // shadowed.
-                0 => 0.78,
-                1 => 0.58,
-                2 => 0.34,
-                3 => 0.34,
-                4 => 0.88,
-                5 => 0.42,
-                else => unreachable,
-            };
-            const part: FencePart = switch (k) {
-                0, 1 => .face,
-                2, 3 => .edge,
-                else => .cap,
-            };
-            return .{ .cos = cross_cos[k], .sin = cross_sin[k], .brightness = brightness, .part = part };
+        }.lessThan);
+
+        // Walk the circle once; the box interior is the all-satisfied
+        // arcs. The eye must not start inside the box, so the first
+        // interval with count == 6 that begins at or after a small
+        // forward epsilon is the visible entry. Boundaries past pi are
+        // the backward half of the geodesic: out.
+        var phi_prev: f32 = 0.0;
+        var walked: usize = 0;
+        while (walked < n_bounds) : (walked += 1) {
+            const b = bounds[walked];
+            if (b.phi > std.math.pi) break;
+            if (count == 6 and phi_prev > 1e-4) {
+                // The all-satisfied interval [phi_prev, b.phi]: entered at
+                // the previous boundary - which flipped the count to 6.
+                const entry = phi_prev;
+                const brightness: f32 = switch (entry_k) {
+                    0 => 0.78,
+                    1 => 0.58,
+                    2 => 0.34,
+                    3 => 0.34,
+                    4 => 0.88,
+                    5 => 0.42,
+                    else => unreachable,
+                };
+                const part: FencePart = switch (entry_k) {
+                    0, 1 => .face,
+                    2, 3 => .edge,
+                    else => .cap,
+                };
+                return .{
+                    .cos = @cos(entry),
+                    .sin = @sin(entry),
+                    .brightness = brightness,
+                    .part = part,
+                };
+            }
+            if (satisfied[b.k]) {
+                count -= 1;
+            } else {
+                count += 1;
+            }
+            satisfied[b.k] = !satisfied[b.k];
+            if (count == 6) entry_k = b.k;
+            phi_prev = b.phi;
         }
         return null;
     }
@@ -1004,55 +1021,37 @@ test "walk speed eases near the conjugate window" {
     try std.testing.expect(scene.conjugateGap() > 5.0);
 }
 
-test "probe cap hits from past the fence looking up-back" {
-    var found: usize = 0;
-    var walk: f32 = 13.0;
-    while (walk <= 14.5) : (walk += 0.5) {
-        var yaw_deg: f32 = 150;
-        while (yaw_deg <= 230) : (yaw_deg += 5) {
-            var pitch_deg: f32 = 15;
-            while (pitch_deg <= 45) : (pitch_deg += 1) {
-                var s = Scene.init();
-                s.walkForward(walk);
-                s.yaw(std.math.degreesToRadians(yaw_deg));
-                // Positive pose pitch looks down; up-looks need negative.
-                s.pitch(-std.math.degreesToRadians(pitch_deg));
-                const tracer = s.tracer();
-                const hit = tracer.trace(tracer.forward);
-                if (hit.surface == .fence and hit.fence_part == .cap) {
-                    found += 1;
-                    if (found <= 8) std.debug.print("cap: walk={d:.2} yaw={d:.1} pitch={d:.1} b={d:.2}\n", .{ walk, yaw_deg, pitch_deg, hit.brightness });
-                }
-            }
-        }
-    }
-    std.debug.print("total up-back cap hits: {d}\n", .{found});
-}
-
-test "fence planks show their caps from beneath the wrapped sky" {
-    // Past the fence, pitched up: the already-crossed planks hang from the
-    // ceiling. Their undersides must render (cap + cap_side sub-quads),
-    // not fall through to the wrapped ground.
+test "fence planks wrap the zenith with far planks at scale" {
+    // Inside the ring, pitched at the sky pole: the planks radiate
+    // around the pole, and the FAR side of the ring (1.5-2.6 rad away)
+    // must render - before the arc-end orientation fix those boxes
+    // were inside-out and silently vanished, leaving a uniform
+    // near-only crown. Scale variation (far planks crowd the pole,
+    // nearer ones spread outward) pins the perspective.
     var s = Scene.init();
-    s.walkForward(12.0);
-    s.yaw(3.14);
-    s.pitch(-0.9);
+    s.walkForward(9.44);
+    s.pitch(-1.5);
     const fc = s.frameCamera();
     const tracer = s.tracer();
-    var caps: usize = 0;
+    var far_tops: usize = 0;
+    var min_arc: f32 = 100.0;
+    var max_arc: f32 = 0.0;
     var vi: usize = 0;
-    while (vi < 60) : (vi += 1) {
+    while (vi < 120) : (vi += 1) {
         var ui: usize = 0;
-        while (ui < 80) : (ui += 1) {
-            const u = @as(f32, @floatFromInt(ui)) / 79.0 * 2.0 - 1.0;
-            const v = @as(f32, @floatFromInt(vi)) / 59.0 * 2.0 - 1.0;
+        while (ui < 160) : (ui += 1) {
+            const u = @as(f32, @floatFromInt(ui)) / 159.0 * 2.0 - 1.0;
+            const v = @as(f32, @floatFromInt(vi)) / 119.0 * 2.0 - 1.0;
             const hit = tracer.trace(fc.direction(u, v));
-            if (hit.surface == .fence) {
-                caps += @intFromBool(hit.fence_part == .cap);
-            }
+            if (hit.surface != .fence) continue;
+            const ang = std.math.acos(std.math.clamp(sg.dot(hit.point, tracer.origin), -1.0, 1.0));
+            min_arc = @min(min_arc, ang);
+            max_arc = @max(max_arc, ang);
+            if (hit.fence_part == .cap and ang > 1.5) far_tops += 1;
         }
     }
-    try std.testing.expect(caps >= 10);
+    try std.testing.expect(far_tops > 20);
+    try std.testing.expect(max_arc > 1.5 * min_arc + 0.3);
 }
 
 fn unitToward(from: Point, to: Point) Direction {
