@@ -16,7 +16,7 @@ pub const default_fence_height: f32 = 1.5;
 pub const default_fence_spacing: f32 = 0.75;
 pub const default_fence_width: f32 = 0.3;
 pub const default_fence_thickness: f32 = 0.14;
-pub const default_fence_base: f32 = 0.6;
+pub const default_fence_base: f32 = 0.0;
 
 pub const Face = enum {
     left,
@@ -614,14 +614,45 @@ pub const Tracer = struct {
             }
         }
 
-        // Candidate C: cap entries, selected at the ray's crossings of the
-        // plank's cap levels. Roof entries (planks seen hanging from the
-        // wrapped sky) happen at the DESCENDING crossing of the top level
-        // e3·x = sin(psi_top); underside entries (a standing eye is below
-        // the floating planks) happen at the ASCENDING crossing of the
-        // base level e3·x = sin(psi_base). Both levels are solved in
-        // closed form from the ray's e3 amplitude; the crossing point
-        // selects the plank; the box test decides.
+        // Candidate B: the plank at the ray's ground-crossing arc. A ray
+        // tilted up from the fence line crosses the ground plane way out
+        // on the far arc - this is what makes the fence wrap the sky:
+        // from the gate the far planks hang overhead, and this candidate
+        // is what builds their boxes. Near the ring's antipode the ring
+        // coordinates degenerate to noise, but the box test then simply
+        // rejects - no plank stands there.
+        const ground_point = self.origin.scale(cos_ground)
+            .add(dir.scale(sin_ground))
+            .cast(Point);
+        const theta_g = fastAtan2(
+            sg.dot(ground_point, self.fence.axis),
+            sg.dot(ground_point, self.fence.anchor),
+        );
+        const arc_g = theta_g * self.fence.radius;
+        if (@mod(arc_g + self.fence.spacing / 2.0, self.fence.spacing) < self.fence.width) {
+            const sin_theta = sg.dot(ground_point, self.fence.axis);
+            const cos_theta = sg.dot(ground_point, self.fence.anchor);
+            if (self.plankEntry(dir, sin_theta, cos_theta, sin_top)) |e| {
+                const e_angle = std.math.atan2(e.sin, e.cos);
+                const cur_angle = std.math.atan2(sin_fence, cos_fence);
+                if (!fence_hit or e_angle < cur_angle) {
+                    fence_hit = true;
+                    cos_fence = e.cos;
+                    sin_fence = e.sin;
+                    fence_brightness = e.brightness;
+                    fence_part = e.part;
+                }
+            }
+        }
+
+        // Candidate C: roof entries, selected at the ray's DESCENDING
+        // crossing of the plank-top level e3·x = sin(psi_top). Rays that
+        // skim along the curtain (standing on the fence line looking
+        // along it, pitched up) or hang in from the far side cross the
+        // top level far from their curtain crossing; the roof entry
+        // happens exactly there, so the top-level crossing point selects
+        // the plank. Rays whose e3 amplitude never reaches the top level
+        // have no roof entry and are gated out cheaply.
         const r3_sq = self.ground_a * self.ground_a + b_ground * b_ground;
         if (r3_sq >= sin_top * sin_top) {
             const r3 = @sqrt(r3_sq);
@@ -634,19 +665,6 @@ pub const Tracer = struct {
                 if (slope >= 0.0) continue;
                 if (phi_c <= 0.0 or phi_c >= std.math.pi) continue;
                 if (self.capCandidate(dir, phi_c, sin_top, &fence_hit, &cos_fence, &sin_fence, &fence_brightness, &fence_part)) break;
-            }
-        }
-        if (r3_sq >= self.sin_base * self.sin_base) {
-            const r3 = @sqrt(r3_sq);
-            const phi3 = std.math.atan2(b_ground, self.ground_a);
-            const half_base = std.math.acos(std.math.clamp(self.sin_base / r3, -1.0, 1.0));
-            const roots = [2]f32{ phi3 - half_base, phi3 + half_base };
-            for (roots) |phi_c| {
-                // Ascending root only (underside entry), forward semicircle.
-                const slope = -self.ground_a * @sin(phi_c) + b_ground * @cos(phi_c);
-                if (slope <= 0.0) continue;
-                if (phi_c <= 0.0 or phi_c >= std.math.pi) continue;
-                if (self.capCandidate(dir, phi_c, self.sin_base, &fence_hit, &cos_fence, &sin_fence, &fence_brightness, &fence_part)) break;
             }
         }
 

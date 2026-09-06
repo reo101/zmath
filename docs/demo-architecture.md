@@ -58,19 +58,21 @@ consumed the old stack. Harvest git history, not a fossil tree.
   over the ring (pole = the same ground point, exactly the ground-plane
   structure) selects plank candidates via a height band and a picket/gap
   pattern along the arc; gaps fall through to the ground behind. Each
-  plank is a little floating parallelepiped on S3 (base lifted off the
-  ground like a real fence's bottom-rail gap, so a standing eye sees the
-  undersides of near planks and of planks hanging overhead): its faces
+  plank is a little parallelepiped on S3 standing on the ground (its
+  floor cap is the ground great sphere itself, so what a viewer past the
+  fence sees hanging overhead are the planks' undersides): its faces
   are the curtain
   rotated by the half thickness around the plank's ring tangent, its arc
   edges are the tangent great spheres at the pattern bounds, and its
   roof/floor are two-plane caps (the rim spheres through the center and
   arc-edge rims, meeting at a shallow ridge) - five visible faces, like
   a real box. Plank candidates are box-tested per ray: the curtain
-  crossing (side entries, band widened upward), the descending top-level
-  crossing e3·x = sin(psi_top) (roof entries from the wrapped sky), and
-  the ascending base-level crossing e3·x = sin(psi_base) (underside
-  entries for an eye below the planks). Circling the fence
+  crossing (side entries, band widened upward), the ray's ground-crossing
+  arc (the far side of the ring: from the gate the far planks hang
+  overhead with their undersides toward the zenith), the descending
+  top-level crossing e3·x = sin(psi_top) (roof entries), and the
+  ascending base-level crossing e3·x = sin(psi_base) (underside
+  entries). Circling the fence
   rotates the sight line through a plank's face plane, so the entry
   switches face -> edge -> far face: planks flip instead of sliding
   around as painted patches. Shading uses the true surface normals
