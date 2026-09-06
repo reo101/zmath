@@ -15,6 +15,7 @@ const default_capture_pitch: f32 = -1.4;
 pub fn main() void {
     const capture_path = rl.getenv("ZMATH_DEMO_CAPTURE");
     const capture = capture_path != null;
+    fence_gradient = rl.getenv("ZMATH_DEMO_FENCE_GRADIENT") != null;
 
     var flags: c_uint = rl.FLAG_WINDOW_RESIZABLE;
     if (capture) {
@@ -167,6 +168,8 @@ fn renderFrame(world: *scene.Scene, pixels: [*]u8) void {
     }
 }
 
+var fence_gradient = false;
+
 fn shadeHit(hit: scene.Hit) rl.Color {
     // Monotone angle proxy (1 - cos a)/2 in [0, 1] - keeps the hot path
     // free of transcendentals while dimming identically in character.
@@ -176,7 +179,18 @@ fn shadeHit(hit: scene.Hit) rl.Color {
             faceColor(face),
             (0.55 + 0.45 * hit.brightness) * dim,
         ),
-        .fence => scale(color(226, 218, 194, 255), (0.25 + 0.75 * hit.brightness) * dim),
+        // Debug gradient (ZMATH_DEMO_FENCE_GRADIENT=1): fence planks paint
+        // red at the base, blue at the top, so the vertical orientation of
+        // near and wrapped planks is readable directly in the frame. The
+        // far planks legitimately hang bases-up from the wrapped ground.
+        .fence => blk: {
+            if (!fence_gradient) break :blk scale(color(226, 218, 194, 255), (0.25 + 0.75 * hit.brightness) * dim);
+            const t = std.math.clamp(hit.height_fraction, 0.0, 1.0);
+            const r: u8 = @intFromFloat(220.0 + (60.0 - 220.0) * t);
+            const g: u8 = @intFromFloat(60.0 + (90.0 - 60.0) * t);
+            const b: u8 = @intFromFloat(50.0 + (220.0 - 50.0) * t);
+            break :blk scale(color(r, g, b, 255), (0.55 + 0.45 * hit.brightness) * dim);
+        },
         .ground => scale(groundColor(hit.point), 0.6 + 0.4 * hit.brightness),
     };
 }

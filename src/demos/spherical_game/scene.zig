@@ -49,6 +49,9 @@ pub const Hit = struct {
     brightness: f32,
     /// Which part of the plank the fence hit landed on.
     fence_part: FencePart = .face,
+    /// Height above the ground at the hit, as a fraction of the fence's
+    /// top (0 = base, 1 = top). Debug aid for orientation; 0 elsewhere.
+    height_fraction: f32 = 0,
     /// Hit angle along the ray in radians. Only for tests/HUD; the pixel
     /// loop never pays for it.
     pub fn angle(self: Hit) f32 {
@@ -708,6 +711,10 @@ pub const Tracer = struct {
             .point = point,
             .brightness = std.math.clamp(brightness, 0.0, 1.0),
             .fence_part = fence_part,
+            .height_fraction = if (surface == .fence)
+                sg.dot(point, worldUp()) / std.math.sin(self.fence.height / self.fence.radius)
+            else
+                0,
         };
     }
 };
