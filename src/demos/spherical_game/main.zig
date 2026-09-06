@@ -15,7 +15,11 @@ const default_capture_pitch: f32 = -1.4;
 pub fn main() void {
     const capture_path = rl.getenv("ZMATH_DEMO_CAPTURE");
     const capture = capture_path != null;
-    fence_gradient = rl.getenv("ZMATH_DEMO_FENCE_GRADIENT") != null;
+    // Debug gradient on by default; ZMATH_DEMO_FENCE_GRADIENT=0 opts out.
+    fence_gradient = if (rl.getenv("ZMATH_DEMO_FENCE_GRADIENT")) |value|
+        !std.mem.eql(u8, std.mem.span(value), "0")
+    else
+        true;
 
     var flags: c_uint = rl.FLAG_WINDOW_RESIZABLE;
     if (capture) {

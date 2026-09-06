@@ -123,6 +123,9 @@ def main [
             WAYLAND_DISPLAY: ''
             XDG_SESSION_TYPE: 'x11'
             ZMATH_DEMO_CAPTURE: $png
+            # The palette classifier keys on the beige picket family; the
+            # debug height gradient repaints them red-blue.
+            ZMATH_DEMO_FENCE_GRADIENT: '0'
         } | merge $extra)
         with-env $pose_env { ^$exe }
         if not ($png | path exists) {
