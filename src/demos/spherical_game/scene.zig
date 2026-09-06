@@ -16,6 +16,7 @@ pub const default_fence_height: f32 = 1.5;
 pub const default_fence_spacing: f32 = 0.75;
 pub const default_fence_width: f32 = 0.3;
 pub const default_fence_thickness: f32 = 0.14;
+pub const default_fence_base: f32 = 0.6;
 
 pub const Face = enum {
     left,
@@ -116,6 +117,7 @@ pub const Fence = struct {
     spacing: f32,
     width: f32,
     thickness: f32,
+    base: f32,
     radius: f32,
 };
 
@@ -276,6 +278,8 @@ pub const Tracer = struct {
     cos_half_width: f32,
     sin_half_thick: f32,
     cos_half_thick: f32,
+    sin_base: f32,
+    cos_base: f32,
 
     pub fn init(camera_pose: Pose, cube: Cube, fence: Fence) Tracer {
         var tracer = Tracer{
@@ -294,6 +298,8 @@ pub const Tracer = struct {
             .cos_half_width = @cos(0.5 * fence.width / fence.radius),
             .sin_half_thick = @sin(0.5 * fence.thickness / fence.radius),
             .cos_half_thick = @cos(0.5 * fence.thickness / fence.radius),
+            .sin_base = @sin(fence.base / fence.radius),
+            .cos_base = @cos(fence.base / fence.radius),
         };
         for (cube.planes, 0..) |plane, i| {
             tracer.plane_a[i] = sg.dot(camera_pose.position, plane.inward_normal);
@@ -368,17 +374,17 @@ pub const Tracer = struct {
         // it, O(delta^2) elsewhere) - the roof splits into a center
         // sub-quad (through the plank's center top rim) and a side
         // sub-quad (through the edge_high top rim), meeting at a shallow
-        // ridge. The floor mirrors at a nominal ground offset.
+        // ridge; the floor mirrors with the SAME polarity structure
+        // (inside the floor half-space is psi >= psi_base: the radial
+        // term carries a minus, like the roof's).
         const tan_c = self.fence.anchor.cast(Direction).scale(-sin_theta)
             .add(self.fence.axis.scale(cos_theta));
         const radial_hi = radial.scale(self.cos_half_width).add(tan_c.scale(self.sin_half_width));
         const radial_lo = radial.scale(self.cos_half_width).sub(tan_c.scale(self.sin_half_width));
         const cap_top = worldUp().scale(cos_top).sub(radial.scale(sin_top));
         const cap_top_rim = worldUp().scale(cos_top).sub(radial_hi.scale(sin_top));
-        const sin_base: f32 = 1e-4;
-        const cos_base: f32 = 1.0;
-        const cap_base = worldUp().scale(cos_base).add(radial.scale(sin_base));
-        const cap_base_rim = worldUp().scale(cos_base).add(radial_lo.scale(sin_base));
+        const cap_base = worldUp().scale(self.cos_base).sub(radial.scale(self.sin_base));
+        const cap_base_rim = worldUp().scale(self.cos_base).sub(radial_lo.scale(self.sin_base));
 
         // Eight half-space constraints (faces, arc edges, cap halves),
         // each crossed exactly once forward. The box entry is the
@@ -475,6 +481,48 @@ pub const Tracer = struct {
         return null;
     }
 
+    /// Tests the cap-entry candidate at ring-point `phi_c` (where the ray
+    /// crosses a cap level). Returns true if a fence entry was kept and
+    /// no further candidates should be tried (it is closer than any
+    /// found so far at the head of the angle order... the caller stops
+    /// when the entry is closer than the current best).
+    fn capCandidate(
+        self: Tracer,
+        dir: Direction,
+        phi_c: f32,
+        sin_top: f32,
+        fence_hit: *bool,
+        cos_fence: *f32,
+        sin_fence: *f32,
+        fence_brightness: *f32,
+        fence_part: *FencePart,
+    ) bool {
+        const cap_point = self.origin.scale(@cos(phi_c))
+            .add(dir.scale(@sin(phi_c)))
+            .cast(Point);
+        const theta_c = fastAtan2(
+            sg.dot(cap_point, self.fence.axis),
+            sg.dot(cap_point, self.fence.anchor),
+        );
+        const arc_c = theta_c * self.fence.radius;
+        if (@mod(arc_c + self.fence.spacing / 2.0, self.fence.spacing) >= self.fence.width) return false;
+        const sin_theta = sg.dot(cap_point, self.fence.axis);
+        const cos_theta = sg.dot(cap_point, self.fence.anchor);
+        if (self.plankEntry(dir, sin_theta, cos_theta, sin_top)) |e| {
+            const e_angle = std.math.atan2(e.sin, e.cos);
+            const cur_angle = std.math.atan2(sin_fence.*, cos_fence.*);
+            if (!fence_hit.* or e_angle < cur_angle) {
+                fence_hit.* = true;
+                cos_fence.* = e.cos;
+                sin_fence.* = e.sin;
+                fence_brightness.* = e.brightness;
+                fence_part.* = e.part;
+                return true;
+            }
+        }
+        return false;
+    }
+
     pub fn trace(self: Tracer, dir: Direction) Hit {
         // Per-plane ray components. b_i = dir·n_i; a_i = origin·n_i is
         // precomputed per frame.
@@ -566,47 +614,39 @@ pub const Tracer = struct {
             }
         }
 
-        // Candidate C: the plank at the ray's descending crossing of the
-        // plank-top level e3·x = sin(psi_top). Rays that skim along the
-        // curtain (standing on the fence line looking along it, pitched
-        // up) or hang in from the far side cross the top level far from
-        // their curtain crossing; the cap entry happens exactly there, so
-        // the top-level crossing point selects the plank. Rays whose e3
-        // amplitude never reaches the top level have no cap entry and are
-        // gated out cheaply.
+        // Candidate C: cap entries, selected at the ray's crossings of the
+        // plank's cap levels. Roof entries (planks seen hanging from the
+        // wrapped sky) happen at the DESCENDING crossing of the top level
+        // e3·x = sin(psi_top); underside entries (a standing eye is below
+        // the floating planks) happen at the ASCENDING crossing of the
+        // base level e3·x = sin(psi_base). Both levels are solved in
+        // closed form from the ray's e3 amplitude; the crossing point
+        // selects the plank; the box test decides.
         const r3_sq = self.ground_a * self.ground_a + b_ground * b_ground;
         if (r3_sq >= sin_top * sin_top) {
             const r3 = @sqrt(r3_sq);
             const phi3 = std.math.atan2(b_ground, self.ground_a);
-            const half = std.math.acos(std.math.clamp(sin_top / r3, -1.0, 1.0));
-            const roots = [2]f32{ phi3 - half, phi3 + half };
+            const half_top = std.math.acos(std.math.clamp(sin_top / r3, -1.0, 1.0));
+            const roots = [2]f32{ phi3 - half_top, phi3 + half_top };
             for (roots) |phi_c| {
                 // Descending root only, and within the forward semicircle.
                 const slope = -self.ground_a * @sin(phi_c) + b_ground * @cos(phi_c);
                 if (slope >= 0.0) continue;
                 if (phi_c <= 0.0 or phi_c >= std.math.pi) continue;
-                const cap_point = self.origin.scale(@cos(phi_c))
-                    .add(dir.scale(@sin(phi_c)))
-                    .cast(Point);
-                const theta_c = fastAtan2(
-                    sg.dot(cap_point, self.fence.axis),
-                    sg.dot(cap_point, self.fence.anchor),
-                );
-                const arc_c = theta_c * self.fence.radius;
-                if (@mod(arc_c + self.fence.spacing / 2.0, self.fence.spacing) >= self.fence.width) continue;
-                const sin_theta = sg.dot(cap_point, self.fence.axis);
-                const cos_theta = sg.dot(cap_point, self.fence.anchor);
-                if (self.plankEntry(dir, sin_theta, cos_theta, sin_top)) |e| {
-                    const e_angle = std.math.atan2(e.sin, e.cos);
-                    const cur_angle = std.math.atan2(sin_fence, cos_fence);
-                    if (!fence_hit or e_angle < cur_angle) {
-                        fence_hit = true;
-                        cos_fence = e.cos;
-                        sin_fence = e.sin;
-                        fence_brightness = e.brightness;
-                        fence_part = e.part;
-                    }
-                }
+                if (self.capCandidate(dir, phi_c, sin_top, &fence_hit, &cos_fence, &sin_fence, &fence_brightness, &fence_part)) break;
+            }
+        }
+        if (r3_sq >= self.sin_base * self.sin_base) {
+            const r3 = @sqrt(r3_sq);
+            const phi3 = std.math.atan2(b_ground, self.ground_a);
+            const half_base = std.math.acos(std.math.clamp(self.sin_base / r3, -1.0, 1.0));
+            const roots = [2]f32{ phi3 - half_base, phi3 + half_base };
+            for (roots) |phi_c| {
+                // Ascending root only (underside entry), forward semicircle.
+                const slope = -self.ground_a * @sin(phi_c) + b_ground * @cos(phi_c);
+                if (slope <= 0.0) continue;
+                if (phi_c <= 0.0 or phi_c >= std.math.pi) continue;
+                if (self.capCandidate(dir, phi_c, self.sin_base, &fence_hit, &cos_fence, &sin_fence, &fence_brightness, &fence_part)) break;
             }
         }
 
@@ -739,6 +779,7 @@ pub const Scene = struct {
                 .spacing = default_fence_spacing,
                 .width = default_fence_width,
                 .thickness = default_fence_thickness,
+                .base = default_fence_base,
                 .radius = default_radius,
             },
             .radius = default_radius,

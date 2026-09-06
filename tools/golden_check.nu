@@ -24,7 +24,7 @@ const reference = {
         top_amber: [8.0, 11.0]
         front_green: [17.0, 20.8]
         back_violet: [10.5, 13.5]
-        picket: [6.3, 7.4]
+        picket: [4.3, 5.4]
     }
     # Past the cube (walk 5.3): the wrapped back face dominates; the near
     # planks behind the walker still catch a few percent.
@@ -34,7 +34,7 @@ const reference = {
         top_amber: [0.0, 0.5]
         front_green: [0.0, 0.5]
         back_violet: [35.0, 40.0]
-        picket: [5.3, 6.4]
+        picket: [3.5, 4.6]
     }
     # At the ring crossing, looking along the fence: the picket row is the
     # frame's second-largest surface.
@@ -44,7 +44,7 @@ const reference = {
         top_amber: [0.0, 0.5]
         front_green: [0.0, 0.5]
         back_violet: [3.5, 6.0]
-        picket: [15.0, 18.0]
+        picket: [8.3, 10.4]
     }
 }
 
