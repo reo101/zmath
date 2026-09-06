@@ -16,7 +16,6 @@ pub const default_fence_height: f32 = 1.5;
 pub const default_fence_spacing: f32 = 0.75;
 pub const default_fence_width: f32 = 0.3;
 pub const default_fence_thickness: f32 = 0.25;
-pub const default_fence_base: f32 = 0.0;
 
 pub const Face = enum {
     left,
@@ -36,14 +35,10 @@ pub const Surface = union(enum) {
 pub const FencePart = enum {
     /// The broad face of the plank (toward or away from the fence pole).
     face,
-    /// The thin arc edge of the plank (seen looking along the fence).
+    /// The thin end face of the plank (seen looking along the fence).
     edge,
-    /// The top cap, center sub-quad (the rim sphere through the plank's
-    /// center top).
+    /// The roof or floor slab of the plank.
     cap,
-    /// The top cap, side sub-quad (the second top plane through the
-    /// plank's arc-edge tops; together with `cap` it roofs the plank).
-    cap_side,
 };
 
 pub const Hit = struct {
@@ -117,7 +112,6 @@ pub const Fence = struct {
     spacing: f32,
     width: f32,
     thickness: f32,
-    base: f32,
     radius: f32,
 };
 
@@ -278,8 +272,6 @@ pub const Tracer = struct {
     cos_half_width: f32,
     sin_half_thick: f32,
     cos_half_thick: f32,
-    sin_base: f32,
-    cos_base: f32,
 
     pub fn init(camera_pose: Pose, cube: Cube, fence: Fence) Tracer {
         var tracer = Tracer{
@@ -298,8 +290,6 @@ pub const Tracer = struct {
             .cos_half_width = @cos(0.5 * fence.width / fence.radius),
             .sin_half_thick = @sin(0.5 * fence.thickness / fence.radius),
             .cos_half_thick = @cos(0.5 * fence.thickness / fence.radius),
-            .sin_base = @sin(fence.base / fence.radius),
-            .cos_base = @cos(fence.base / fence.radius),
         };
         for (cube.planes, 0..) |plane, i| {
             tracer.plane_a[i] = sg.dot(camera_pose.position, plane.inward_normal);
@@ -334,22 +324,21 @@ pub const Tracer = struct {
 
     /// Intersects the ray with the geodesic box of the plank centered at
     /// ring angle `(cos_theta, sin_theta)`. The plank is a little
-    /// parallelepiped on S3: two broad faces (the curtain rotated by the
-    /// half thickness around the plank's ring tangent; outward normals
-    /// toward/away from the fence pole), two thin arc edges (the tangent
-    /// great spheres at the pattern bounds), and a two-plane roof plus a
-    /// two-plane floor - each cap is the intersection of the great sphere
-    /// through the plank's center rim and the one through its arc-edge
-    /// rim, meeting at a shallow ridge (all four side planes contain the
-    /// vertical e3 direction, so the box is a geodesic prism along "up"
-    /// and one plane per cap half is exact on its rim, O(delta^2)
-    /// elsewhere). The ray enters through whichever surface comes first
-    /// with all eight half-space constraints satisfied: circling the
-    /// fence rotates the sight line through a plank's face plane, so the
-    /// entry switches face -> edge -> far face - planks flip instead of
-    /// sliding around as painted patches - and the wrapped sky serves the
-    /// far planks from above, so their roof and floor sub-quads catch the
-    /// ray on the caps.
+    /// parallelepiped on S3, built exactly like the cube: six great-sphere
+    /// slabs, two per axis. The broad faces are the curtain rotated by the
+    /// half thickness around the plank's ring tangent (outward normals
+    /// toward/away from the fence pole); the end faces are the tangent
+    /// great spheres at the pattern bounds; the roof is the great sphere
+    /// through the top rim; the floor is the ground great sphere itself
+    /// (all four side planes contain the vertical e3 direction, so the
+    /// box is a geodesic prism along "up"). No extra wedge planes: the
+    /// caps are single slabs, so the silhouette is a plain box, not a
+    /// gable. The ray enters through whichever face comes first with all
+    /// six half-space constraints satisfied: circling the fence rotates
+    /// the sight line through a plank's face plane, so the entry switches
+    /// face -> edge -> far face - planks flip instead of sliding around
+    /// as painted patches - and the wrapped sky serves the far planks from
+    /// above, so their roof slabs catch the ray on the cap.
     fn plankEntry(
         self: Tracer,
         dir: Direction,
@@ -370,34 +359,22 @@ pub const Tracer = struct {
             .scale(-(cos_theta * self.sin_half_width + sin_theta * self.cos_half_width))
             .add(self.fence.axis.scale(cos_theta * self.cos_half_width - sin_theta * self.sin_half_width));
         const cos_top = @sqrt(1.0 - sin_top * sin_top);
-        // Cap halves: each is the great sphere through one rim (exact on
-        // it, O(delta^2) elsewhere) - the roof splits into a center
-        // sub-quad (through the plank's center top rim) and a side
-        // sub-quad (through the edge_high top rim), meeting at a shallow
-        // ridge; the floor mirrors with the SAME polarity structure
-        // (inside the floor half-space is psi >= psi_base: the radial
-        // term carries a minus, like the roof's).
-        const tan_c = self.fence.anchor.cast(Direction).scale(-sin_theta)
-            .add(self.fence.axis.scale(cos_theta));
-        const radial_hi = radial.scale(self.cos_half_width).add(tan_c.scale(self.sin_half_width));
-        const radial_lo = radial.scale(self.cos_half_width).sub(tan_c.scale(self.sin_half_width));
         const cap_top = worldUp().scale(cos_top).sub(radial.scale(sin_top));
-        const cap_top_rim = worldUp().scale(cos_top).sub(radial_hi.scale(sin_top));
-        const cap_base = worldUp().scale(self.cos_base).sub(radial.scale(self.sin_base));
-        const cap_base_rim = worldUp().scale(self.cos_base).sub(radial_lo.scale(self.sin_base));
 
-        // Eight half-space constraints (faces, arc edges, cap halves),
-        // each crossed exactly once forward. The box entry is the
-        // crossing where all eight hold.
-        const normals = [8]Direction{ n_near, n_far, edge_low, edge_high, cap_top, cap_top_rim, cap_base, cap_base_rim };
-        const want_positive = [8]bool{ false, true, true, false, false, false, true, true };
-        var a_c: [8]f32 = undefined;
-        var b_c: [8]f32 = undefined;
-        var cross_cos: [8]f32 = undefined;
-        var cross_sin: [8]f32 = undefined;
-        var cross_angle: [8]f32 = undefined;
-        var state: [8]bool = undefined;
-        var order: [8]usize = undefined;
+        // Six half-space constraints (two faces, two ends, roof, floor),
+        // each crossed exactly once forward. The box entry is the crossing
+        // where all six hold. The floor slab is the ground great sphere
+        // itself: it closes the bottom exactly (the prism's side planes
+        // contain e3, so the ground sphere caps the prism flush).
+        const normals = [6]Direction{ n_near, n_far, edge_low, edge_high, cap_top, worldUp() };
+        const want_positive = [6]bool{ false, true, true, false, false, true };
+        var a_c: [6]f32 = undefined;
+        var b_c: [6]f32 = undefined;
+        var cross_cos: [6]f32 = undefined;
+        var cross_sin: [6]f32 = undefined;
+        var cross_angle: [6]f32 = undefined;
+        var state: [6]bool = undefined;
+        var order: [6]usize = undefined;
         var n_order: usize = 0;
         var inside: usize = 0;
         for (normals, 0..) |n_k, k| {
@@ -445,30 +422,27 @@ pub const Tracer = struct {
                 inside += 1;
             }
             state[k] = !state[k];
-            if (inside != 8) continue;
+            if (inside != 6) continue;
             // The ray enters the plank here; the caps bound the height,
             // so no separate band check.
             const brightness: f32 = switch (k) {
                 // Per-part tones, the way the cube's faces carry distinct
                 // colors: without them a box with identical faces reads as
                 // one anonymous curved surface. Near face brightest, far
-                // face a step down, edges dark tan, roof lit, floor
+                // face a step down, ends dark tan, roof lit, floor
                 // shadowed.
                 0 => 0.78,
                 1 => 0.58,
                 2 => 0.34,
                 3 => 0.34,
                 4 => 0.88,
-                5 => 0.72,
-                6 => 0.42,
-                7 => 0.34,
+                5 => 0.42,
                 else => unreachable,
             };
             const part: FencePart = switch (k) {
                 0, 1 => .face,
                 2, 3 => .edge,
-                4, 6 => .cap,
-                else => .cap_side,
+                else => .cap,
             };
             return .{ .cos = cross_cos[k], .sin = cross_sin[k], .brightness = brightness, .part = part };
         }
@@ -791,7 +765,6 @@ pub const Scene = struct {
                 .spacing = default_fence_spacing,
                 .width = default_fence_width,
                 .thickness = default_fence_thickness,
-                .base = default_fence_base,
                 .radius = default_radius,
             },
             .radius = default_radius,
@@ -1068,7 +1041,7 @@ test "fence planks show their caps from beneath the wrapped sky" {
             const v = @as(f32, @floatFromInt(vi)) / 59.0 * 2.0 - 1.0;
             const hit = tracer.trace(fc.direction(u, v));
             if (hit.surface == .fence) {
-                caps += @intFromBool(hit.fence_part == .cap or hit.fence_part == .cap_side);
+                caps += @intFromBool(hit.fence_part == .cap);
             }
         }
     }
