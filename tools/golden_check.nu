@@ -15,25 +15,26 @@
 cd ($env.PWD)
 
 const reference = {
-    # Default pose: the canonical showcase. Sky cube owns the zenith, the
-    # fence's far side hides inside the cube's conjugate region.
+    # Default pose: the canonical showcase. Sky cube owns the zenith; the
+    # 3D plank ring wraps the horizon on all sides (near side behind the
+    # walker included, via the fisheye rim).
     showcase: {
         left_cyan: [17.0, 20.8]
         right_coral: [18.5, 22.0]
         top_amber: [8.0, 11.0]
         front_green: [17.0, 20.8]
         back_violet: [10.5, 13.5]
-        picket: [0.0, 0.5]
+        picket: [4.5, 5.6]
     }
-    # Past the cube (walk 5.3): the wrapped back face dominates; pickets are
-    # present but a few pixels tall, so their share must stay negligible.
+    # Past the cube (walk 5.3): the wrapped back face dominates; the near
+    # planks behind the walker still catch a few percent.
     ring: {
         left_cyan: [0.0, 0.5]
         right_coral: [0.0, 0.5]
         top_amber: [0.0, 0.5]
         front_green: [0.0, 0.5]
         back_violet: [35.0, 40.0]
-        picket: [0.0, 0.5]
+        picket: [4.0, 5.0]
     }
     # At the ring crossing, looking along the fence: the picket row is the
     # frame's second-largest surface.

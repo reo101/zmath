@@ -176,7 +176,7 @@ fn shadeHit(hit: scene.Hit) rl.Color {
             faceColor(face),
             (0.55 + 0.45 * hit.brightness) * dim,
         ),
-        .fence => scale(color(226, 218, 194, 255), (0.55 + 0.45 * hit.brightness) * dim),
+        .fence => scale(color(226, 218, 194, 255), (0.25 + 0.75 * hit.brightness) * dim),
         .ground => scale(groundColor(hit.point), 0.6 + 0.4 * hit.brightness),
     };
 }

@@ -54,15 +54,22 @@ consumed the old stack. Harvest git history, not a fossil tree.
 - `Fence`: a picket fence along the ground great circle whose pole is the
   cube's ground point - the ring sits a quarter circle (pi*R/2) from the
   cube in every direction and crosses the walk path exactly halfway
-  between the cube and its antipode. Rays are tested against the vertical
-  "curtain" great sphere over the ring (pole = the same ground point,
-  exactly the ground-plane structure), filtered to a height band and a
-  picket/gap pattern along the arc; gaps fall through to the ground
-  behind. From the cube the ring reads as a circle around the world;
-  standing at the crossing it is a straight picket row receding to the
-  horizon. Crossing-point pickets are never first-hit (the pattern keeps
-  a gate gap there, and pickets near the cube base are occluded by the
-  cube itself).
+  between the cube and its antipode. The vertical "curtain" great sphere
+  over the ring (pole = the same ground point, exactly the ground-plane
+  structure) selects plank candidates via a height band and a picket/gap
+  pattern along the arc; gaps fall through to the ground behind. Each
+  plank is a geodesic box: its faces are the curtain rotated by the half
+  thickness around the plank's ring tangent, its arc edges are the
+  tangent great spheres at the pattern bounds, and the ray enters through
+  whichever surface comes first with all four constraints satisfied - so
+  circling the fence rotates the sight line through a plank's face plane
+  and the entry switches face -> edge -> far face: planks flip instead of
+  sliding around as painted patches. Shading uses the true surface
+  normals (back faces darker, edges catch light). From the cube the ring
+  reads as a circle around the world; standing at the crossing it is a
+  straight picket row receding to the horizon. Crossing-point pickets are
+  never first-hit (the pattern keeps a gate gap there, and pickets near
+  the cube base are occluded by the cube itself).
 - `Scene.frameDirection`: stereographic wide-FOV frame (150° by default).
   Conformal, maps circles to circles, and keeps the conjugate-region image
   continuous across the frame — the same projection family the reference
