@@ -20,7 +20,15 @@ jobs:
       - uses: nix-community/cache-nix-action@v6
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
-          restore-keys: nix-${{ runner.os }}-
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+      # Ubuntu runners lack NixOS's /run/opengl-driver, where the nixpkgs GL
+      # stack (glvnd vendor libs, gbm, DRI drivers) resolves software GL.
+      # Without it Xvfb advertises no GLX and the golden check segfaults.
+      # Verified against the same failure reproduced in a mount namespace.
+      - name: Provide /run/opengl-driver (software GLX for Xvfb)
+        run: |
+          MESA=$(nix build --no-link --print-out-paths nixpkgs#mesa | tail -1)
+          sudo ln -sfn "$MESA" /run/opengl-driver
       - name: Unit and geometry tests
         run: nix develop .#ci -c zig build test --summary all
       - name: Golden-image palette check
