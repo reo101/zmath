@@ -12,10 +12,10 @@ pub const default_cube_distance: f32 = 2.8;
 pub const default_cube_half_extent: f32 = 2.2;
 pub const default_eye_height: f32 = 0.35;
 pub const default_half_fov: f32 = std.math.degreesToRadians(75.0);
-pub const default_fence_height: f32 = 1.2;
+pub const default_fence_height: f32 = 1.5;
 pub const default_fence_spacing: f32 = 0.75;
 pub const default_fence_width: f32 = 0.3;
-pub const default_fence_thickness: f32 = 0.08;
+pub const default_fence_thickness: f32 = 0.14;
 
 pub const Face = enum {
     left,
@@ -37,6 +37,12 @@ pub const FencePart = enum {
     face,
     /// The thin arc edge of the plank (seen looking along the fence).
     edge,
+    /// The top cap, center sub-quad (the rim sphere through the plank's
+    /// center top).
+    cap,
+    /// The top cap, side sub-quad (the second top plane through the
+    /// plank's arc-edge tops; together with `cap` it roofs the plank).
+    cap_side,
 };
 
 pub const Hit = struct {
@@ -47,7 +53,6 @@ pub const Hit = struct {
     brightness: f32,
     /// Which part of the plank the fence hit landed on.
     fence_part: FencePart = .face,
-
     /// Hit angle along the ray in radians. Only for tests/HUD; the pixel
     /// loop never pays for it.
     pub fn angle(self: Hit) f32 {
@@ -57,6 +62,13 @@ pub const Hit = struct {
     pub fn distance(self: Hit, radius: f32) f32 {
         return self.angle() * radius;
     }
+};
+
+const PlankEntry = struct {
+    cos: f32,
+    sin: f32,
+    brightness: f32,
+    part: FencePart,
 };
 
 pub const Plane = struct {
@@ -75,12 +87,16 @@ pub const Plane = struct {
 /// the ground, thickness across the curtain. Its two faces are the
 /// curtain great sphere rotated by the half thickness around the plank's
 /// ring tangent (outward normals toward and away from the fence pole);
-/// its arc edges are the tangent great spheres at the pattern bounds.
-/// A ray enters the box through whichever surface comes first with the
-/// others satisfied, so circling the fence rotates the sight line
-/// through a plank's face plane and the entry switches face -> edge ->
-/// far face: planks turn edge-on and present their far side - they
-/// flip - instead of sliding around as painted patches.
+/// its arc edges are the tangent great spheres at the pattern bounds; and
+/// its caps are the ground great sphere below and the great sphere
+/// through the top rim above (all four side planes contain the vertical
+/// e3 direction, so the box is a geodesic prism along "up" and one extra
+/// plane per cap is exact to O(delta^2)). A ray enters the box through
+/// whichever surface comes first with all six constraints satisfied, so
+/// circling the fence rotates the sight line through a plank's face
+/// plane (face -> edge -> far face: planks flip), and the wrapped sky
+/// serves the far planks from above: their tops hang from the ceiling
+/// and catch the ray on the cap.
 ///
 /// Rays are still selected by the "curtain" over the circle: the vertical
 /// great 2-sphere with the same pole (a geodesic plane, exactly like the
@@ -283,9 +299,8 @@ pub const Tracer = struct {
             tracer.plane_a[i] = sg.dot(camera_pose.position, plane.inward_normal);
         }
         // Orient the curtain plane so its origin component is positive -
-        // the same convention as the ground crossing - so the forward root
-        // is (cos, sin) = (-b, a)/h and determinant comparisons against the
-        // entry planes keep one fixed sign.
+        // the same convention as the ground crossing - so the candidate-A
+        // crossing sits in (0, pi/2].
         if (tracer.fence_a < 0.0) {
             tracer.fence_pole = tracer.fence_pole.negate();
             tracer.fence_a = -tracer.fence_a;
@@ -309,6 +324,155 @@ pub const Tracer = struct {
             .add(self.right.scale(sin_theta * u / r))
             .add(self.up.scale(sin_theta * v / r))
             .cast(Direction);
+    }
+
+    /// Intersects the ray with the geodesic box of the plank centered at
+    /// ring angle `(cos_theta, sin_theta)`. The plank is a little
+    /// parallelepiped on S3: two broad faces (the curtain rotated by the
+    /// half thickness around the plank's ring tangent; outward normals
+    /// toward/away from the fence pole), two thin arc edges (the tangent
+    /// great spheres at the pattern bounds), and a two-plane roof plus a
+    /// two-plane floor - each cap is the intersection of the great sphere
+    /// through the plank's center rim and the one through its arc-edge
+    /// rim, meeting at a shallow ridge (all four side planes contain the
+    /// vertical e3 direction, so the box is a geodesic prism along "up"
+    /// and one plane per cap half is exact on its rim, O(delta^2)
+    /// elsewhere). The ray enters through whichever surface comes first
+    /// with all eight half-space constraints satisfied: circling the
+    /// fence rotates the sight line through a plank's face plane, so the
+    /// entry switches face -> edge -> far face - planks flip instead of
+    /// sliding around as painted patches - and the wrapped sky serves the
+    /// far planks from above, so their roof and floor sub-quads catch the
+    /// ray on the caps.
+    fn plankEntry(
+        self: Tracer,
+        dir: Direction,
+        sin_theta: f32,
+        cos_theta: f32,
+        sin_top: f32,
+    ) ?PlankEntry {
+        const radial = self.fence.anchor.cast(Direction).scale(cos_theta)
+            .add(self.fence.axis.scale(sin_theta));
+        const n_near = self.fence_pole.scale(self.cos_half_thick)
+            .sub(radial.scale(self.sin_half_thick));
+        const n_far = self.fence_pole.scale(self.cos_half_thick)
+            .add(radial.scale(self.sin_half_thick));
+        const edge_low = self.fence.anchor.cast(Direction)
+            .scale(cos_theta * self.sin_half_width - sin_theta * self.cos_half_width)
+            .add(self.fence.axis.scale(cos_theta * self.cos_half_width + sin_theta * self.sin_half_width));
+        const edge_high = self.fence.anchor.cast(Direction)
+            .scale(-(cos_theta * self.sin_half_width + sin_theta * self.cos_half_width))
+            .add(self.fence.axis.scale(cos_theta * self.cos_half_width - sin_theta * self.sin_half_width));
+        const cos_top = @sqrt(1.0 - sin_top * sin_top);
+        // Cap halves: each is the great sphere through one rim (exact on
+        // it, O(delta^2) elsewhere) - the roof splits into a center
+        // sub-quad (through the plank's center top rim) and a side
+        // sub-quad (through the edge_high top rim), meeting at a shallow
+        // ridge. The floor mirrors at a nominal ground offset.
+        const tan_c = self.fence.anchor.cast(Direction).scale(-sin_theta)
+            .add(self.fence.axis.scale(cos_theta));
+        const radial_hi = radial.scale(self.cos_half_width).add(tan_c.scale(self.sin_half_width));
+        const radial_lo = radial.scale(self.cos_half_width).sub(tan_c.scale(self.sin_half_width));
+        const cap_top = worldUp().scale(cos_top).sub(radial.scale(sin_top));
+        const cap_top_rim = worldUp().scale(cos_top).sub(radial_hi.scale(sin_top));
+        const sin_base: f32 = 1e-4;
+        const cos_base: f32 = 1.0;
+        const cap_base = worldUp().scale(cos_base).add(radial.scale(sin_base));
+        const cap_base_rim = worldUp().scale(cos_base).add(radial_lo.scale(sin_base));
+
+        // Eight half-space constraints (faces, arc edges, cap halves),
+        // each crossed exactly once forward. The box entry is the
+        // crossing where all eight hold.
+        const normals = [8]Direction{ n_near, n_far, edge_low, edge_high, cap_top, cap_top_rim, cap_base, cap_base_rim };
+        const want_positive = [8]bool{ false, true, true, false, false, false, true, true };
+        var a_c: [8]f32 = undefined;
+        var b_c: [8]f32 = undefined;
+        var cross_cos: [8]f32 = undefined;
+        var cross_sin: [8]f32 = undefined;
+        var cross_angle: [8]f32 = undefined;
+        var state: [8]bool = undefined;
+        var order: [8]usize = undefined;
+        var n_order: usize = 0;
+        var inside: usize = 0;
+        for (normals, 0..) |n_k, k| {
+            a_c[k] = sg.dot(self.origin, n_k);
+            b_c[k] = sg.dot(dir, n_k);
+            const h_k = @sqrt(a_c[k] * a_c[k] + b_c[k] * b_c[k]);
+            if (h_k <= 1e-9) {
+                // The ray lies in this surface's great sphere (an
+                // along-the-fence sight line slides in a plank's face
+                // plane): the constraint never toggles and holds
+                // throughout.
+                state[k] = true;
+                inside += 1;
+                cross_sin[k] = -1.0;
+                continue;
+            }
+            state[k] = (a_c[k] >= 0.0) == want_positive[k];
+            if (state[k]) inside += 1;
+            // The surface's single forward crossing, as (cos, sin) with
+            // the tracer's sign convention.
+            if (a_c[k] >= 0.0) {
+                cross_cos[k] = -b_c[k] / h_k;
+                cross_sin[k] = a_c[k] / h_k;
+            } else {
+                cross_cos[k] = b_c[k] / h_k;
+                cross_sin[k] = -a_c[k] / h_k;
+            }
+            cross_angle[k] = std.math.atan2(cross_sin[k], cross_cos[k]);
+            // Insert into the ascending crossing order.
+            var pos = n_order;
+            while (pos > 0) {
+                const j = order[pos - 1];
+                if (cross_angle[k] < cross_angle[j]) {
+                    order[pos] = j;
+                    pos -= 1;
+                } else break;
+            }
+            order[pos] = k;
+            n_order += 1;
+        }
+        for (order[0..n_order]) |k| {
+            if (state[k]) {
+                inside -= 1;
+            } else {
+                inside += 1;
+            }
+            state[k] = !state[k];
+            if (inside != 8) continue;
+            // The ray enters the plank here; the caps bound the height,
+            // so no separate band check.
+            const ray_tangent = dir.scale(cross_cos[k])
+                .sub(self.origin.scale(cross_sin[k]))
+                .cast(Direction);
+            const brightness = switch (k) {
+                // Near face: full headlight on the true surface normal.
+                // Far face: the back side, slightly darker so the flip
+                // reads.
+                0 => @abs(sg.dot(ray_tangent, n_near)),
+                1 => 0.85 * @abs(sg.dot(ray_tangent, n_far)),
+                // Arc edges catch light along the fence line.
+                2 => @min(1.0, 0.35 + 0.45 * @abs(sg.dot(ray_tangent, edge_low))),
+                3 => @min(1.0, 0.35 + 0.45 * @abs(sg.dot(ray_tangent, edge_high))),
+                // Roof sub-quads read as lit lids; floor sub-quads are
+                // the planks' undersides - what a ground walker actually
+                // sees of any plank hanging overhead - so they get a
+                // readable mid tone against the wrapped ground.
+                4 => @min(1.0, 0.70 + 0.30 * @abs(sg.dot(ray_tangent, cap_top))),
+                5 => @min(1.0, 0.60 + 0.30 * @abs(sg.dot(ray_tangent, cap_top_rim))),
+                6 => 0.42,
+                7 => 0.36,
+                else => unreachable,
+            };
+            const part: FencePart = switch (k) {
+                0, 1 => .face,
+                2, 3 => .edge,
+                4, 6 => .cap,
+                else => .cap_side,
+            };
+            return .{ .cos = cross_cos[k], .sin = cross_sin[k], .brightness = brightness, .part = part };
+        }
+        return null;
     }
 
     pub fn trace(self: Tracer, dir: Direction) Hit {
@@ -347,17 +511,28 @@ pub const Tracer = struct {
         const cos_ground = -b_ground / h_g;
         const sin_ground = self.ground_a / h_g;
 
-        // Fence candidate: forward crossing of the curtain great sphere
-        // {<p, pole> = 0} (origin component kept positive in init), then
-        // the picket pattern along the circle's arc. Gaps fall through to
-        // whatever is behind the fence.
-        const b_fence = sg.dot(dir, self.fence_pole);
-        const h_fence2 = self.fence_a * self.fence_a + b_fence * b_fence;
+        // Fence candidates. A plank the ray transits always stands on the
+        // ring; which plank, and which surface the ray enters through,
+        // depends on the approach:
+        // - Candidate A: the plank under the ray's curtain crossing
+        //   {<p, pole> = 0} (the vertical great sphere over the ring). This
+        //   catches side entries - the ray crossing the plank's curtain
+        //   slice - including near-cap descents (the band is widened
+        //   upward; the box test is the precise filter).
+        // - Candidate B: the plank at the ray's ground-crossing arc. This
+        //   catches planks seen hanging from the wrapped sky: their tops
+        //   face the ray, which never crosses their curtain slice inside
+        //   the box.
+        // Both candidates are box-tested; the closer entry wins.
         var fence_hit = false;
         var cos_fence: f32 = 0.0;
         var sin_fence: f32 = 0.0;
         var fence_brightness: f32 = 0.0;
         var fence_part: FencePart = .face;
+        const sin_top = std.math.sin(self.fence.height / self.fence.radius);
+
+        const b_fence = sg.dot(dir, self.fence_pole);
+        const h_fence2 = self.fence_a * self.fence_a + b_fence * b_fence;
         if (h_fence2 > 1e-12) {
             const h_fence = @sqrt(h_fence2);
             const sin_f = self.fence_a / h_fence;
@@ -367,9 +542,8 @@ pub const Tracer = struct {
                     .add(dir.scale(sin_f))
                     .cast(Point);
                 const sin_psi = sg.dot(curtain_point, worldUp());
-                const sin_top = std.math.sin(self.fence.height / self.fence.radius);
-                if (sin_psi >= 0.0 and sin_psi <= sin_top) {
-                    const theta = std.math.atan2(
+                if (sin_psi >= 0.0 and sin_psi <= 3.0 * sin_top) {
+                    const theta = fastAtan2(
                         sg.dot(curtain_point, self.fence.axis),
                         sg.dot(curtain_point, self.fence.anchor),
                     );
@@ -377,118 +551,60 @@ pub const Tracer = struct {
                     // Half-spacing offset: the crossing point (arc 0) sits
                     // in a gate gap so the walker passes between pickets.
                     if (@mod(arc + self.fence.spacing / 2.0, self.fence.spacing) < self.fence.width) {
-                        // 3D plank solid. The pattern selected the plank under
-                        // the curtain crossing; the ray now enters the plank's
-                        // geodesic box through its near surface. Faces are the
-                        // curtain rotated by the half thickness around the
-                        // plank's ring tangent; edges are the tangent great
-                        // spheres at the arc bounds. Circling the fence
-                        // rotates the sight line through a plank's face
-                        // plane, so the entry switches face -> edge -> far
-                        // face: planks flip instead of sliding.
                         const cos_psi = @sqrt(1.0 - sin_psi * sin_psi);
                         const sin_theta = sg.dot(curtain_point, self.fence.axis) / cos_psi;
                         const cos_theta = sg.dot(curtain_point, self.fence.anchor) / cos_psi;
-                        const radial = self.fence.anchor.cast(Direction).scale(cos_theta)
-                            .add(self.fence.axis.scale(sin_theta));
-                        const n_near = self.fence_pole.scale(self.cos_half_thick)
-                            .sub(radial.scale(self.sin_half_thick));
-                        const n_far = self.fence_pole.scale(self.cos_half_thick)
-                            .add(radial.scale(self.sin_half_thick));
-                        const edge_low = self.fence.anchor.cast(Direction)
-                            .scale(cos_theta * self.sin_half_width - sin_theta * self.cos_half_width)
-                            .add(self.fence.axis.scale(cos_theta * self.cos_half_width + sin_theta * self.sin_half_width));
-                        const edge_high = self.fence.anchor.cast(Direction)
-                            .scale(-(cos_theta * self.sin_half_width + sin_theta * self.cos_half_width))
-                            .add(self.fence.axis.scale(cos_theta * self.cos_half_width - sin_theta * self.sin_half_width));
-
-                        // Four half-space constraints (face near/far, arc
-                        // edges), each crossed exactly once forward. The box
-                        // entry is the crossing where all four hold.
-                        const normals = [4]Direction{ n_near, n_far, edge_low, edge_high };
-                        const want_positive = [4]bool{ false, true, true, false };
-                        var a_c: [4]f32 = undefined;
-                        var b_c: [4]f32 = undefined;
-                        var cross_cos: [4]f32 = undefined;
-                        var cross_sin: [4]f32 = undefined;
-                        var cross_angle: [4]f32 = undefined;
-                        var state: [4]bool = undefined;
-                        var order: [4]usize = undefined;
-                        var n_order: usize = 0;
-                        var inside: usize = 0;
-                        for (normals, 0..) |n_k, k| {
-                            a_c[k] = sg.dot(self.origin, n_k);
-                            b_c[k] = sg.dot(dir, n_k);
-                            const h_k = @sqrt(a_c[k] * a_c[k] + b_c[k] * b_c[k]);
-                            if (h_k <= 1e-9) {
-                                // The ray lies in this surface's great sphere
-                                // (an along-the-fence sight line slides in a
-                                // plank's face plane): the constraint never
-                                // toggles and holds throughout.
-                                state[k] = true;
-                                inside += 1;
-                                cross_sin[k] = -1.0;
-                                continue;
-                            }
-                            state[k] = (a_c[k] >= 0.0) == want_positive[k];
-                            if (state[k]) inside += 1;
-                            // The surface's single forward crossing, as
-                            // (cos, sin) with the tracer's sign convention.
-                            if (a_c[k] >= 0.0) {
-                                cross_cos[k] = -b_c[k] / h_k;
-                                cross_sin[k] = a_c[k] / h_k;
-                            } else {
-                                cross_cos[k] = b_c[k] / h_k;
-                                cross_sin[k] = -a_c[k] / h_k;
-                            }
-                            cross_angle[k] = std.math.atan2(cross_sin[k], cross_cos[k]);
-                            // Insert into the ascending crossing order.
-                            var pos = n_order;
-                            while (pos > 0) {
-                                const j = order[pos - 1];
-                                if (cross_angle[k] < cross_angle[j]) {
-                                    order[pos] = j;
-                                    pos -= 1;
-                                } else break;
-                            }
-                            order[pos] = k;
-                            n_order += 1;
-                        }
-                        for (order[0..n_order]) |k| {
-                            if (state[k]) {
-                                inside -= 1;
-                            } else {
-                                inside += 1;
-                            }
-                            state[k] = !state[k];
-                            if (inside != 4) continue;
-                            // The ray enters the plank here; keep it only if
-                            // the entry sits within the height band.
-                            const entry = self.origin.scale(cross_cos[k])
-                                .add(dir.scale(cross_sin[k]))
-                                .cast(Point);
-                            const sin_psi_in = sg.dot(entry, worldUp());
-                            if (sin_psi_in < 0.0 or sin_psi_in > sin_top) continue;
+                        if (self.plankEntry(dir, sin_theta, cos_theta, sin_top)) |e| {
                             fence_hit = true;
-                            cos_fence = cross_cos[k];
-                            sin_fence = cross_sin[k];
-                            const ray_tangent = dir.scale(cross_cos[k])
-                                .sub(self.origin.scale(cross_sin[k]))
-                                .cast(Direction);
-                            fence_brightness = switch (k) {
-                                // Near face: full headlight on the true
-                                // surface normal. Far face: the back side,
-                                // slightly darker so the flip reads.
-                                0 => @abs(sg.dot(ray_tangent, n_near)),
-                                1 => 0.85 * @abs(sg.dot(ray_tangent, n_far)),
-                                // Arc edges catch light along the fence line.
-                                2 => @min(1.0, 0.35 + 0.45 * @abs(sg.dot(ray_tangent, edge_low))),
-                                3 => @min(1.0, 0.35 + 0.45 * @abs(sg.dot(ray_tangent, edge_high))),
-                                else => unreachable,
-                            };
-                            fence_part = if (k <= 1) .face else .edge;
-                            break;
+                            cos_fence = e.cos;
+                            sin_fence = e.sin;
+                            fence_brightness = e.brightness;
+                            fence_part = e.part;
                         }
+                    }
+                }
+            }
+        }
+
+        // Candidate C: the plank at the ray's descending crossing of the
+        // plank-top level e3·x = sin(psi_top). Rays that skim along the
+        // curtain (standing on the fence line looking along it, pitched
+        // up) or hang in from the far side cross the top level far from
+        // their curtain crossing; the cap entry happens exactly there, so
+        // the top-level crossing point selects the plank. Rays whose e3
+        // amplitude never reaches the top level have no cap entry and are
+        // gated out cheaply.
+        const r3_sq = self.ground_a * self.ground_a + b_ground * b_ground;
+        if (r3_sq >= sin_top * sin_top) {
+            const r3 = @sqrt(r3_sq);
+            const phi3 = std.math.atan2(b_ground, self.ground_a);
+            const half = std.math.acos(std.math.clamp(sin_top / r3, -1.0, 1.0));
+            const roots = [2]f32{ phi3 - half, phi3 + half };
+            for (roots) |phi_c| {
+                // Descending root only, and within the forward semicircle.
+                const slope = -self.ground_a * @sin(phi_c) + b_ground * @cos(phi_c);
+                if (slope >= 0.0) continue;
+                if (phi_c <= 0.0 or phi_c >= std.math.pi) continue;
+                const cap_point = self.origin.scale(@cos(phi_c))
+                    .add(dir.scale(@sin(phi_c)))
+                    .cast(Point);
+                const theta_c = fastAtan2(
+                    sg.dot(cap_point, self.fence.axis),
+                    sg.dot(cap_point, self.fence.anchor),
+                );
+                const arc_c = theta_c * self.fence.radius;
+                if (@mod(arc_c + self.fence.spacing / 2.0, self.fence.spacing) >= self.fence.width) continue;
+                const sin_theta = sg.dot(cap_point, self.fence.axis);
+                const cos_theta = sg.dot(cap_point, self.fence.anchor);
+                if (self.plankEntry(dir, sin_theta, cos_theta, sin_top)) |e| {
+                    const e_angle = std.math.atan2(e.sin, e.cos);
+                    const cur_angle = std.math.atan2(sin_fence, cos_fence);
+                    if (!fence_hit or e_angle < cur_angle) {
+                        fence_hit = true;
+                        cos_fence = e.cos;
+                        sin_fence = e.sin;
+                        fence_brightness = e.brightness;
+                        fence_part = e.part;
                     }
                 }
             }
@@ -526,16 +642,16 @@ pub const Tracer = struct {
             // ... and beats the ground iff entry angle < ground angle:
             // sin(entry - ground) < 0  <=>  a_e*b_g - b_e*a_g < 0.
             if (a_e * b_ground - b[i] * self.ground_a > 0.0) cube_wins = false;
-            // ... and beats the fence curtain by the same determinant
-            // (the curtain plane is kept origin-positive like the ground).
-            if (fence_hit and a_e * b_fence - b[i] * self.fence_a > 0.0) cube_wins = false;
+            // ... and beats the fence box entry by the same (cos, sin)
+            // comparison: the fence is closer iff sin(phi_f - phi_e) < 0.
+            if (fence_hit and sin_fence * cos_entry - cos_fence * sin_entry < 0.0) cube_wins = false;
 
             if (cube_wins) {
                 cos_alpha = cos_entry;
                 sin_alpha = sin_entry;
                 surface = .{ .cube = self.cube.planes[i].face };
                 inward = self.cube.planes[i].inward_normal;
-            } else if (fence_hit and self.fence_a * b_ground - b_fence * self.ground_a > 0.0) {
+            } else if (fence_hit and sin_fence * cos_ground - cos_fence * sin_ground < 0.0) {
                 cos_alpha = cos_fence;
                 sin_alpha = sin_fence;
                 surface = .fence;
@@ -853,6 +969,57 @@ test "walk speed eases near the conjugate window" {
 
     const scene = Scene.init();
     try std.testing.expect(scene.conjugateGap() > 5.0);
+}
+
+test "probe cap hits from past the fence looking up-back" {
+    var found: usize = 0;
+    var walk: f32 = 13.0;
+    while (walk <= 14.5) : (walk += 0.5) {
+        var yaw_deg: f32 = 150;
+        while (yaw_deg <= 230) : (yaw_deg += 5) {
+            var pitch_deg: f32 = 15;
+            while (pitch_deg <= 45) : (pitch_deg += 1) {
+                var s = Scene.init();
+                s.walkForward(walk);
+                s.yaw(std.math.degreesToRadians(yaw_deg));
+                // Positive pose pitch looks down; up-looks need negative.
+                s.pitch(-std.math.degreesToRadians(pitch_deg));
+                const tracer = s.tracer();
+                const hit = tracer.trace(tracer.forward);
+                if (hit.surface == .fence and hit.fence_part == .cap) {
+                    found += 1;
+                    if (found <= 8) std.debug.print("cap: walk={d:.2} yaw={d:.1} pitch={d:.1} b={d:.2}\n", .{ walk, yaw_deg, pitch_deg, hit.brightness });
+                }
+            }
+        }
+    }
+    std.debug.print("total up-back cap hits: {d}\n", .{found});
+}
+
+test "fence planks show their caps from beneath the wrapped sky" {
+    // Past the fence, pitched up: the already-crossed planks hang from the
+    // ceiling. Their undersides must render (cap + cap_side sub-quads),
+    // not fall through to the wrapped ground.
+    var s = Scene.init();
+    s.walkForward(12.0);
+    s.yaw(3.14);
+    s.pitch(-0.9);
+    const fc = s.frameCamera();
+    const tracer = s.tracer();
+    var caps: usize = 0;
+    var vi: usize = 0;
+    while (vi < 60) : (vi += 1) {
+        var ui: usize = 0;
+        while (ui < 80) : (ui += 1) {
+            const u = @as(f32, @floatFromInt(ui)) / 79.0 * 2.0 - 1.0;
+            const v = @as(f32, @floatFromInt(vi)) / 59.0 * 2.0 - 1.0;
+            const hit = tracer.trace(fc.direction(u, v));
+            if (hit.surface == .fence) {
+                caps += @intFromBool(hit.fence_part == .cap or hit.fence_part == .cap_side);
+            }
+        }
+    }
+    try std.testing.expect(caps >= 10);
 }
 
 fn unitToward(from: Point, to: Point) Direction {

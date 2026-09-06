@@ -58,14 +58,19 @@ consumed the old stack. Harvest git history, not a fossil tree.
   over the ring (pole = the same ground point, exactly the ground-plane
   structure) selects plank candidates via a height band and a picket/gap
   pattern along the arc; gaps fall through to the ground behind. Each
-  plank is a geodesic box: its faces are the curtain rotated by the half
-  thickness around the plank's ring tangent, its arc edges are the
-  tangent great spheres at the pattern bounds, and the ray enters through
-  whichever surface comes first with all four constraints satisfied - so
-  circling the fence rotates the sight line through a plank's face plane
-  and the entry switches face -> edge -> far face: planks flip instead of
-  sliding around as painted patches. Shading uses the true surface
-  normals (back faces darker, edges catch light). From the cube the ring
+  plank is a little parallelepiped on S3: its faces are the curtain
+  rotated by the half thickness around the plank's ring tangent, its arc
+  edges are the tangent great spheres at the pattern bounds, and its
+  roof/floor are two-plane caps (the rim spheres through the center and
+  arc-edge rims, meeting at a shallow ridge) - five visible faces, like
+  a real box. Three plank candidates are box-tested per ray: the curtain
+  crossing (side entries, band widened upward), and both top-level
+  crossings e3·x = sin(psi_top) (cap entries: planks seen hanging from
+  the wrapped sky, tops toward the walker's zenith). Circling the fence
+  rotates the sight line through a plank's face plane, so the entry
+  switches face -> edge -> far face: planks flip instead of sliding
+  around as painted patches. Shading uses the true surface normals
+  (back faces darker, roof/floor two-tone, edges catch light). From the cube the ring
   reads as a circle around the world; standing at the crossing it is a
   straight picket row receding to the horizon. Crossing-point pickets are
   never first-hit (the pattern keeps a gate gap there, and pickets near
