@@ -15,7 +15,7 @@ pub const default_half_fov: f32 = std.math.degreesToRadians(75.0);
 pub const default_fence_height: f32 = 1.5;
 pub const default_fence_spacing: f32 = 0.75;
 pub const default_fence_width: f32 = 0.3;
-pub const default_fence_thickness: f32 = 0.14;
+pub const default_fence_thickness: f32 = 0.25;
 pub const default_fence_base: f32 = 0.0;
 
 pub const Face = enum {
@@ -448,26 +448,20 @@ pub const Tracer = struct {
             if (inside != 8) continue;
             // The ray enters the plank here; the caps bound the height,
             // so no separate band check.
-            const ray_tangent = dir.scale(cross_cos[k])
-                .sub(self.origin.scale(cross_sin[k]))
-                .cast(Direction);
-            const brightness = switch (k) {
-                // Near face: full headlight on the true surface normal.
-                // Far face: the back side, slightly darker so the flip
-                // reads.
-                0 => @abs(sg.dot(ray_tangent, n_near)),
-                1 => 0.85 * @abs(sg.dot(ray_tangent, n_far)),
-                // Arc edges catch light along the fence line.
-                2 => @min(1.0, 0.35 + 0.45 * @abs(sg.dot(ray_tangent, edge_low))),
-                3 => @min(1.0, 0.35 + 0.45 * @abs(sg.dot(ray_tangent, edge_high))),
-                // Roof sub-quads read as lit lids; floor sub-quads are
-                // the planks' undersides - what a ground walker actually
-                // sees of any plank hanging overhead - so they get a
-                // readable mid tone against the wrapped ground.
-                4 => @min(1.0, 0.70 + 0.30 * @abs(sg.dot(ray_tangent, cap_top))),
-                5 => @min(1.0, 0.60 + 0.30 * @abs(sg.dot(ray_tangent, cap_top_rim))),
+            const brightness: f32 = switch (k) {
+                // Per-part tones, the way the cube's faces carry distinct
+                // colors: without them a box with identical faces reads as
+                // one anonymous curved surface. Near face brightest, far
+                // face a step down, edges dark tan, roof lit, floor
+                // shadowed.
+                0 => 0.78,
+                1 => 0.58,
+                2 => 0.34,
+                3 => 0.34,
+                4 => 0.88,
+                5 => 0.72,
                 6 => 0.42,
-                7 => 0.36,
+                7 => 0.34,
                 else => unreachable,
             };
             const part: FencePart = switch (k) {
@@ -1106,7 +1100,7 @@ test "fence planks flip through their edges when circling the ring" {
     const face_hit = face_tracer.trace(unitToward(face_tracer.origin, target));
     try std.testing.expectEqual(Surface.fence, face_hit.surface);
     try std.testing.expectEqual(FencePart.face, face_hit.fence_part);
-    try std.testing.expect(face_hit.brightness > 0.8);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.78), face_hit.brightness, 1e-6);
 
     // Standing just off the ring line (0.01 toward the pole) with the
     // first picket half a radian ahead: the sight line lies nearly in the
@@ -1139,7 +1133,7 @@ test "fence planks flip through their edges when circling the ring" {
     const edge_hit = edge_tracer.trace(unitToward(edge_tracer.origin, edge_target));
     try std.testing.expectEqual(Surface.fence, edge_hit.surface);
     try std.testing.expectEqual(FencePart.edge, edge_hit.fence_part);
-    try std.testing.expect(edge_hit.brightness > 0.5);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.34), edge_hit.brightness, 1e-6);
 }
 
 test "fence ring crosses the walk path halfway to the antipode" {
