@@ -319,7 +319,7 @@ pub const SphericalRenderer = struct {
     }
 
     pub fn render(self: SphericalRenderer, u: f32, v: f32) Hit {
-        const sh = self.tracer.trace(self.cam.direction(u, v));
+        const sh = self.tracer.trace(scene.frameDirection(self.cam.pose, self.cam.tan_half_fov, u, v));
         const surface: Surface = switch (sh.surface) {
             .ground => .ground,
             .fence => .fence,

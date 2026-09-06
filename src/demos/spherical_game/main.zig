@@ -119,7 +119,7 @@ fn renderBand(job: RenderJob) void {
         for (0..render_width) |column| {
             const u = ((@as(f32, @floatFromInt(column)) + 0.5) / render_width) * 2.0 - 1.0;
             const v = 1.0 - ((@as(f32, @floatFromInt(row)) + 0.5) / render_height) * 2.0;
-            const hit = job.tracer.trace(job.cam.direction(u, v));
+            const hit = job.tracer.trace(scene.frameDirection(job.cam.pose, job.cam.tan_half_fov, u, v));
             const rgb = shadeHit(hit);
 
             const offset = (row * render_width + column) * 4;

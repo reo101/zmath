@@ -15,16 +15,16 @@
 cd ($env.PWD)
 
 const reference = {
-    # Default pose: the canonical showcase. Sky cube owns the zenith; the
-    # 3D plank ring wraps the horizon on all sides (near side behind the
-    # walker included, via the fisheye rim).
+    # Default pose: the canonical showcase at eye height. The cube owns
+    # the zenith; the railed plank ring hugs the frame rim; the wrapped
+    # ground fills the lower rim.
     showcase: {
-        left_cyan: [17.0, 20.8]
-        right_coral: [18.5, 22.0]
-        top_amber: [8.0, 11.0]
-        front_green: [17.0, 20.8]
-        back_violet: [10.5, 13.5]
-        picket: [6.8, 7.9]
+        left_cyan: [5.8, 9.2]
+        right_coral: [5.8, 9.2]
+        top_amber: [3.8, 5.8]
+        front_green: [4.8, 7.8]
+        back_violet: [6.5, 9.7]
+        picket: [13.5, 16.2]
     }
     # Past the cube (walk 5.3): the wrapped back face dominates; the near
     # planks behind the walker still catch a few percent.
@@ -33,18 +33,18 @@ const reference = {
         right_coral: [0.0, 0.5]
         top_amber: [0.0, 0.5]
         front_green: [0.0, 0.5]
-        back_violet: [35.0, 40.0]
-        picket: [5.4, 6.5]
+        back_violet: [36.0, 42.0]
+        picket: [7.5, 10.3]
     }
-    # At the ring crossing, looking along the fence: the picket row is the
-    # frame's second-largest surface.
+    # At the ring crossing, looking along the fence: the railed picket row
+    # is the frame's dominant surface.
     along: {
         left_cyan: [0.0, 0.5]
         right_coral: [0.0, 0.5]
         top_amber: [0.0, 0.5]
         front_green: [0.0, 0.5]
-        back_violet: [3.5, 6.0]
-        picket: [15.8, 18.8]
+        back_violet: [1.8, 3.0]
+        picket: [17.5, 20.5]
     }
 }
 
