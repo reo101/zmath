@@ -43,7 +43,7 @@ const reference = {
         right_coral: [0.0, 0.5]
         top_amber: [0.0, 0.5]
         front_green: [0.0, 0.5]
-        back_violet: [2.8, 4.0]
+        back_violet: [2.2, 3.6]
         picket: [17.5, 20.5]
     }
 }

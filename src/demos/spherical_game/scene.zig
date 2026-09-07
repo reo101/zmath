@@ -559,8 +559,11 @@ pub const Tracer = struct {
         const cap_point = self.origin.scale(@cos(phi_c))
             .add(dir.scale(@sin(phi_c)))
             .cast(Point);
-        // Cheap wedge gate before the full box solve (see candidate B).
-        if (@abs(sg.dot(cap_point, self.fence_pole)) > self.sin_half_thick + 1e-3) return false;
+        // Cheap wedge gate before the full box solve: the cap point sits
+        // on the top-level plane; its offset from the curtain tube is the
+        // plank's thickness, widened by the arc-bound bulge of the rim
+        // sphere (O(delta^2) at the bounds) plus margin.
+        if (@abs(sg.dot(cap_point, self.fence_pole)) > self.sin_half_thick + self.sin_half_width + 5e-3) return false;
         const theta_c = fastAtan2(
             sg.dot(cap_point, self.fence.axis),
             sg.dot(cap_point, self.fence.anchor),
@@ -685,10 +688,12 @@ pub const Tracer = struct {
         const ground_point = self.origin.scale(cos_ground)
             .add(dir.scale(sin_ground))
             .cast(Point);
-        // Cheap wedge gate: the plank stands within the thin tube around
-        // the curtain; rays whose ground crossing is far outside it can
-        // never transit the box, so skip the full solve entirely.
-        if (@abs(sg.dot(ground_point, self.fence_pole)) <= self.sin_half_thick + 1e-3) {
+        // Cheap reach gate: the plank stands within (height + width) of
+        // the ring; rays whose ground foot is farther from the ring than
+        // that (measured along the ground from the curtain plane) can
+        // never transit the box. The foot's arc (theta_g) still gates the
+        // pattern below - this only bounds the meridian offset.
+        if (@abs(sg.dot(ground_point, self.fence_pole)) <= 0.4) {
             const theta_g = fastAtan2(
                 sg.dot(ground_point, self.fence.axis),
                 sg.dot(ground_point, self.fence.anchor),
@@ -787,8 +792,9 @@ pub const Tracer = struct {
                         const cap_point = self.origin.scale(@cos(phi_c))
                             .add(dir.scale(@sin(phi_c)))
                             .cast(Point);
-                        // Cheap wedge gate before the full rail solve.
-                        if (@abs(sg.dot(cap_point, self.fence_pole)) > self.sin_rail_thick + 1e-3) continue;
+                        // Cheap reach gate before the full rail solve
+                        // (rail band tops out at 1.45 units).
+                        if (@abs(sg.dot(cap_point, self.fence_pole)) > 0.3) continue;
                         const sin_theta = sg.dot(cap_point, self.fence.axis);
                         const cos_theta = sg.dot(cap_point, self.fence.anchor);
                         if (self.railEntry(dir, sin_theta, cos_theta, rail.lo, rail.clo, rail.hi, rail.chi)) |e| {
