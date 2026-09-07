@@ -19,6 +19,9 @@ pub const default_fence_thickness: f32 = 0.25;
 
 /// Temporary probe switch for the plank candidate chain.
 pub var fence_debug = false;
+
+/// Probe counter for box solves.
+pub var box_solves: usize = 0;
 pub const default_fence_rail_height: f32 = 0.1;
 pub const default_fence_rail_thickness: f32 = 0.18;
 
@@ -89,6 +92,7 @@ const BoxFace = struct {
 /// grazing angles. The entry face is the constraint whose toggle made
 /// the count complete.
 fn boxEntry(origin: Point, dir: Direction, faces: []const BoxFace) ?PlankEntry {
+    box_solves += 1;
     const n = faces.len;
     var entry_k: usize = 0;
     const Bound = struct { phi: f32, k: usize };
@@ -106,7 +110,7 @@ fn boxEntry(origin: Point, dir: Direction, faces: []const BoxFace) ?PlankEntry {
             count += 1;
             continue;
         }
-        const r_k = std.math.atan2(b_k, a_k);
+        const r_k = fastAtan2(b_k, a_k);
         satisfied[k] = (a_k >= 0.0) == face.want_positive;
         if (satisfied[k]) count += 1;
         if (fence_debug) std.debug.print("    face k={d} a={d:.4} b={d:.4} sat={}\n", .{ k, a_k, b_k, satisfied[k] });
@@ -645,7 +649,23 @@ pub const Tracer = struct {
 
         const b_fence = sg.dot(dir, self.fence_pole);
         const h_fence2 = self.fence_a * self.fence_a + b_fence * b_fence;
+        // Midplane reach gate: every fence surface (plank faces within the
+        // thickness, rails within their band) lies within a half-thickness
+        // angle of the tube's midplane great sphere. A ray whose midplane
+        // crossing is beyond the ground crossing by more than that can
+        // never reach the fence first, so skip the whole chain.
+        var fence_reachable = false;
         if (h_fence2 > 1e-12) {
+            const h_fence = @sqrt(h_fence2);
+            const sin_f = self.fence_a / h_fence;
+            const cos_f = -b_fence / h_fence;
+            if (sin_f > 1e-3) {
+                // sin(phi_f - phi_g) with the raw forward phases.
+                const phase_gap = sin_f * cos_ground - cos_f * sin_ground;
+                fence_reachable = phase_gap < 0.05;
+            }
+        }
+        if (fence_reachable) {
             const h_fence = @sqrt(h_fence2);
             const sin_f = self.fence_a / h_fence;
             const cos_f = -b_fence / h_fence;
@@ -728,7 +748,8 @@ pub const Tracer = struct {
         if (r3_sq >= sin_top * sin_top) {
             const r3 = @sqrt(r3_sq);
             const phi3 = std.math.atan2(b_ground, self.ground_a);
-            const half_top = std.math.acos(std.math.clamp(sin_top / r3, -1.0, 1.0));
+            const cos_half_top = sin_top / r3;
+            const half_top = fastAtan2(@sqrt(1.0 - cos_half_top * cos_half_top), cos_half_top);
             const roots = [2]f32{ phi3 - half_top, phi3 + half_top };
             for (roots) |phi_c| {
                 // Descending root only, and within the forward semicircle.
@@ -785,7 +806,8 @@ pub const Tracer = struct {
                 if (r3_sq >= s_lvl * s_lvl) {
                     const r3 = @sqrt(r3_sq);
                     const phi3 = std.math.atan2(b_ground, self.ground_a);
-                    const half_l = std.math.acos(std.math.clamp(s_lvl / r3, -1.0, 1.0));
+                    const cos_half_l = s_lvl / r3;
+                    const half_l = fastAtan2(@sqrt(1.0 - cos_half_l * cos_half_l), cos_half_l);
                     const roots = [2]f32{ phi3 - half_l, phi3 + half_l };
                     for (roots) |phi_c| {
                         if (phi_c <= 0.0 or phi_c >= std.math.pi) continue;
@@ -1307,34 +1329,9 @@ test "fence pickets are visible from the start behind the cube" {
 
 test "probe start-view rays at the ring" {
     var s = Scene.init();
+    box_solves = 0;
     const stats0 = s.sampleFrame(160, 90);
-    std.debug.print("start: fence={d} ground={d} cube={d}\n", .{ stats0.fence, stats0.ground, stats0.cube });
-
-    s = Scene.init();
-    s.walkForward(default_cube_distance + std.math.pi * default_radius - 0.15);
-    s.pitch(-1.4);
-    const tracer = s.tracer();
-    const center = tracer.trace(tracer.forward);
-    std.debug.print("showcase center: {any}\n", .{center.surface});
-    const stats_show = s.sampleFrame(160, 90);
-    std.debug.print("showcase: fence={d} ground={d} cube={d}\n", .{ stats_show.fence, stats_show.ground, stats_show.cube });
-
-    s = Scene.init();
-    s.walkForward(12.0);
-    std.debug.print("mid cube: {d:.3}\n", .{s.sampleFrame(64, 36).cubeFraction()});
-    s = Scene.init();
-    s.walkForward(18.5);
-    std.debug.print("far cube: {d:.3}\n", .{s.sampleFrame(64, 36).cubeFraction()});
-    s = Scene.init();
-    s.walkForward(4.0);
-    std.debug.print("near cube: {d:.3}\n", .{s.sampleFrame(64, 36).cubeFraction()});
-
-    s = Scene.init();
-    s.walkForward(17.0);
-    std.debug.print("back early: {d}\n", .{s.sampleFrame(64, 36).faceHits(.back)});
-    s = Scene.init();
-    s.walkForward(21.0);
-    std.debug.print("back late: {d}\n", .{s.sampleFrame(64, 36).faceHits(.back)});
+    std.debug.print("start: solves_per_frame={d} fence={d}\n", .{ box_solves, stats0.fence });
 }
 
 test "fence reads as a straight picket row when standing close to it" {
