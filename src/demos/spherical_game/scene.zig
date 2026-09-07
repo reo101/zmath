@@ -559,6 +559,8 @@ pub const Tracer = struct {
         const cap_point = self.origin.scale(@cos(phi_c))
             .add(dir.scale(@sin(phi_c)))
             .cast(Point);
+        // Cheap wedge gate before the full box solve (see candidate B).
+        if (@abs(sg.dot(cap_point, self.fence_pole)) > self.sin_half_thick + 1e-3) return false;
         const theta_c = fastAtan2(
             sg.dot(cap_point, self.fence.axis),
             sg.dot(cap_point, self.fence.anchor),
@@ -683,23 +685,28 @@ pub const Tracer = struct {
         const ground_point = self.origin.scale(cos_ground)
             .add(dir.scale(sin_ground))
             .cast(Point);
-        const theta_g = fastAtan2(
-            sg.dot(ground_point, self.fence.axis),
-            sg.dot(ground_point, self.fence.anchor),
-        );
-        const arc_g = theta_g * self.fence.radius;
-        if (@mod(arc_g + self.fence.spacing / 2.0, self.fence.spacing) < self.fence.width) {
-            const sin_theta = sg.dot(ground_point, self.fence.axis);
-            const cos_theta = sg.dot(ground_point, self.fence.anchor);
-            if (self.plankEntry(dir, sin_theta, cos_theta, sin_top)) |e| {
-                const e_angle = std.math.atan2(e.sin, e.cos);
-                const cur_angle = std.math.atan2(sin_fence, cos_fence);
-                if (!fence_hit or e_angle < cur_angle) {
-                    fence_hit = true;
-                    cos_fence = e.cos;
-                    sin_fence = e.sin;
-                    fence_brightness = e.brightness;
-                    fence_part = e.part;
+        // Cheap wedge gate: the plank stands within the thin tube around
+        // the curtain; rays whose ground crossing is far outside it can
+        // never transit the box, so skip the full solve entirely.
+        if (@abs(sg.dot(ground_point, self.fence_pole)) <= self.sin_half_thick + 1e-3) {
+            const theta_g = fastAtan2(
+                sg.dot(ground_point, self.fence.axis),
+                sg.dot(ground_point, self.fence.anchor),
+            );
+            const arc_g = theta_g * self.fence.radius;
+            if (@mod(arc_g + self.fence.spacing / 2.0, self.fence.spacing) < self.fence.width) {
+                const sin_theta = sg.dot(ground_point, self.fence.axis);
+                const cos_theta = sg.dot(ground_point, self.fence.anchor);
+                if (self.plankEntry(dir, sin_theta, cos_theta, sin_top)) |e| {
+                    const e_angle = std.math.atan2(e.sin, e.cos);
+                    const cur_angle = std.math.atan2(sin_fence, cos_fence);
+                    if (!fence_hit or e_angle < cur_angle) {
+                        fence_hit = true;
+                        cos_fence = e.cos;
+                        sin_fence = e.sin;
+                        fence_brightness = e.brightness;
+                        fence_part = e.part;
+                    }
                 }
             }
         }
@@ -780,6 +787,8 @@ pub const Tracer = struct {
                         const cap_point = self.origin.scale(@cos(phi_c))
                             .add(dir.scale(@sin(phi_c)))
                             .cast(Point);
+                        // Cheap wedge gate before the full rail solve.
+                        if (@abs(sg.dot(cap_point, self.fence_pole)) > self.sin_rail_thick + 1e-3) continue;
                         const sin_theta = sg.dot(cap_point, self.fence.axis);
                         const cos_theta = sg.dot(cap_point, self.fence.anchor);
                         if (self.railEntry(dir, sin_theta, cos_theta, rail.lo, rail.clo, rail.hi, rail.chi)) |e| {
