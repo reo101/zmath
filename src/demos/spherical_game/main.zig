@@ -1,9 +1,11 @@
 const std = @import("std");
 const scene = @import("scene.zig");
+const object_scene = @import("object_scene.zig");
 
 const rl = @cImport({
     @cInclude("stdlib.h");
     @cInclude("raylib.h");
+    @cInclude("rlgl.h");
 });
 
 const render_width = 960;
@@ -11,16 +13,145 @@ const render_height = 540;
 
 const default_capture_walk: f32 = scene.default_cube_distance + std.math.pi * scene.default_radius - 0.15;
 const default_capture_pitch: f32 = -1.4;
+const default_object_path: [*:0]const u8 = "assets/spherical/world.s3obj.json";
+const spherical_fragment_source = @import("spherical_shader").fragment;
+
+const max_object_count = 64;
+const max_object_faces = max_object_count * 6;
+const max_object_materials = 16;
+const gl_uniform_buffer: c_uint = 0x8A11;
+const gl_static_draw: c_uint = 0x88E4;
+
+const GlApi = struct {
+    gen_buffers: *const fn (c_int, *c_uint) callconv(.c) void,
+    delete_buffers: *const fn (c_int, *const c_uint) callconv(.c) void,
+    bind_buffer: *const fn (c_uint, c_uint) callconv(.c) void,
+    buffer_data: *const fn (c_uint, isize, ?*const anyopaque, c_uint) callconv(.c) void,
+    bind_buffer_base: *const fn (c_uint, c_uint, c_uint) callconv(.c) void,
+    get_uniform_block_index: *const fn (c_uint, [*:0]const u8) callconv(.c) c_uint,
+    uniform_block_binding: *const fn (c_uint, c_uint, c_uint) callconv(.c) void,
+
+    fn init() ?GlApi {
+        return .{
+            .gen_buffers = @ptrCast(rl.rlGetProcAddress("glGenBuffers") orelse return null),
+            .delete_buffers = @ptrCast(rl.rlGetProcAddress("glDeleteBuffers") orelse return null),
+            .bind_buffer = @ptrCast(rl.rlGetProcAddress("glBindBuffer") orelse return null),
+            .buffer_data = @ptrCast(rl.rlGetProcAddress("glBufferData") orelse return null),
+            .bind_buffer_base = @ptrCast(rl.rlGetProcAddress("glBindBufferBase") orelse return null),
+            .get_uniform_block_index = @ptrCast(rl.rlGetProcAddress("glGetUniformBlockIndex") orelse return null),
+            .uniform_block_binding = @ptrCast(rl.rlGetProcAddress("glUniformBlockBinding") orelse return null),
+        };
+    }
+};
+
+const ObjectGpuBlock = extern struct {
+    normals: [max_object_faces * 4]f32,
+    meta: [max_object_faces * 4]f32,
+    colors: [max_object_materials * 4]f32,
+    bounds: [max_object_count * 4]f32,
+};
+
+const GpuRenderer = struct {
+    shader: rl.Shader,
+    resolution: c_int,
+    tan_half_fov: c_int,
+    origin: c_int,
+    right: c_int,
+    up: c_int,
+    forward: c_int,
+    ground_a: c_int,
+    world_radius: c_int,
+    object_count: c_int,
+    gl: GlApi,
+    object_buffer: c_uint,
+
+    fn init() ?GpuRenderer {
+        const gl = GlApi.init() orelse {
+            std.debug.print("OpenGL buffer API unavailable\n", .{});
+            return null;
+        };
+        const shader = rl.LoadShaderFromMemory(null, spherical_fragment_source.ptr);
+        if (!rl.IsShaderValid(shader)) {
+            std.debug.print("GPU spherical shader failed to compile\n", .{});
+            return null;
+        }
+        var object_buffer: c_uint = 0;
+        gl.gen_buffers(1, &object_buffer);
+        gl.bind_buffer(gl_uniform_buffer, object_buffer);
+        gl.buffer_data(gl_uniform_buffer, @sizeOf(ObjectGpuBlock), null, gl_static_draw);
+        gl.bind_buffer_base(gl_uniform_buffer, 0, object_buffer);
+        const block_index = gl.get_uniform_block_index(shader.id, "ObjectBlock");
+        if (block_index == std.math.maxInt(c_uint)) {
+            std.debug.print("ObjectBlock missing from GPU shader\n", .{});
+            gl.delete_buffers(1, &object_buffer);
+            rl.UnloadShader(shader);
+            return null;
+        }
+        gl.uniform_block_binding(shader.id, block_index, 0);
+
+        return .{
+            .shader = shader,
+            .resolution = rl.GetShaderLocation(shader, "u_resolution"),
+            .tan_half_fov = rl.GetShaderLocation(shader, "u_tan_half_fov"),
+            .origin = rl.GetShaderLocation(shader, "u_origin"),
+            .right = rl.GetShaderLocation(shader, "u_right"),
+            .up = rl.GetShaderLocation(shader, "u_up"),
+            .forward = rl.GetShaderLocation(shader, "u_forward"),
+            .ground_a = rl.GetShaderLocation(shader, "u_ground_a"),
+            .world_radius = rl.GetShaderLocation(shader, "u_world_radius"),
+            .object_count = rl.GetShaderLocation(shader, "u_object_count"),
+            .gl = gl,
+            .object_buffer = object_buffer,
+        };
+    }
+
+    fn uploadObjects(self: *GpuRenderer, file: object_scene.File) !void {
+        try file.validateGpuCapacity(max_object_count, max_object_materials);
+
+        var block: ObjectGpuBlock = undefined;
+        @memset(std.mem.asBytes(&block), 0);
+        const object_count = file.objects.len;
+        for (file.objects[0..object_count], 0..) |object, object_index| {
+            const base = object_index * 24;
+            for (object.faces, 0..) |face, face_index| {
+                const face_base = base + face_index * 4;
+                const normal = object.transformNormal(face.normal);
+                block.normals[face_base + 0] = normal[0];
+                block.normals[face_base + 1] = normal[1];
+                block.normals[face_base + 2] = normal[2];
+                block.normals[face_base + 3] = normal[3];
+                block.meta[face_base + 0] = if (face.positive) 1.0 else 0.0;
+                block.meta[face_base + 1] = file.materials[face.material].tone;
+                block.meta[face_base + 2] = @floatFromInt(face.material);
+            }
+            if (object.bound) |bound| {
+                const bound_base = object_index * 4;
+                const center = object.transformPoint(bound.center);
+                @memcpy(block.bounds[bound_base..][0..4], &center);
+                block.meta[object_index * 24 + 3] = bound.cos_radius;
+            } else {
+                block.meta[object_index * 24 + 3] = -1.0;
+            }
+        }
+        const material_count = file.materials.len;
+        for (file.materials[0..material_count], 0..) |material, i| {
+            @memcpy(block.colors[i * 4 ..][0..4], &material.color);
+        }
+        self.gl.bind_buffer(gl_uniform_buffer, self.object_buffer);
+        self.gl.buffer_data(gl_uniform_buffer, @sizeOf(ObjectGpuBlock), @ptrCast(&block), gl_static_draw);
+        self.gl.bind_buffer_base(gl_uniform_buffer, 0, self.object_buffer);
+        setInt(self.shader, self.object_count, @intCast(object_count));
+    }
+
+    fn deinit(self: *GpuRenderer) void {
+        self.gl.delete_buffers(1, &self.object_buffer);
+        rl.UnloadShader(self.shader);
+    }
+};
 
 pub fn main() void {
     const capture_path = rl.getenv("ZMATH_DEMO_CAPTURE");
     const capture = capture_path != null;
-    // Debug gradient on by default; ZMATH_DEMO_FENCE_GRADIENT=0 opts out.
-    fence_gradient = if (rl.getenv("ZMATH_DEMO_FENCE_GRADIENT")) |value|
-        !std.mem.eql(u8, std.mem.span(value), "0")
-    else
-        true;
-
     var flags: c_uint = rl.FLAG_WINDOW_RESIZABLE;
     if (capture) {
         flags |= rl.FLAG_WINDOW_HIDDEN;
@@ -31,6 +162,20 @@ pub fn main() void {
     rl.SetTraceLogLevel(rl.LOG_WARNING);
     rl.InitWindow(1280, 720, "zmath demo: spherical game");
     defer rl.CloseWindow();
+
+    const object_path: [*:0]const u8 = if (rl.getenv("ZMATH_DEMO_OBJECT")) |path| @ptrCast(path) else default_object_path;
+    const object_text = rl.LoadFileText(object_path);
+    if (object_text == null) {
+        std.debug.print("object scene failed to load: {s}\n", .{object_path});
+        return;
+    }
+    defer rl.UnloadFileText(object_text);
+    const object_source: [*:0]const u8 = @ptrCast(object_text);
+    const object_file = object_scene.parse(std.heap.page_allocator, std.mem.span(object_source)) catch |err| {
+        std.debug.print("object scene failed to parse: {s}\n", .{@errorName(err)});
+        return;
+    };
+    defer object_file.deinit();
 
     var world = scene.Scene.init();
     if (capture) {
@@ -50,11 +195,12 @@ pub fn main() void {
         if (pitch != 0.0) world.pitch(pitch);
     }
 
-    const image = rl.GenImageColor(render_width, render_height, color(0, 0, 0, 255));
-    defer rl.UnloadImage(image);
-    const texture = rl.LoadTextureFromImage(image);
-    defer rl.UnloadTexture(texture);
-    const pixels: [*]u8 = @ptrCast(image.data.?);
+    var gpu = GpuRenderer.init() orelse return;
+    defer gpu.deinit();
+    gpu.uploadObjects(object_file.value) catch |err| {
+        std.debug.print("object scene exceeds GPU capacity: {s}\n", .{@errorName(err)});
+        return;
+    };
 
     // Optional frame cap for headless perf measurement.
     const frame_cap: ?u32 = if (rl.getenv("ZMATH_DEMO_FRAMES")) |value|
@@ -72,12 +218,9 @@ pub fn main() void {
             update(&world, dt);
         }
 
-        renderFrame(&world, pixels);
-        rl.UpdateTexture(texture, pixels);
-
         rl.BeginDrawing();
         rl.ClearBackground(color(4, 6, 10, 255));
-        drawScaled(texture);
+        renderFrame(&world, &gpu);
         drawHud(&world);
         rl.EndDrawing();
 
@@ -106,129 +249,47 @@ fn update(world: *scene.Scene, dt: f32) void {
     if (rl.IsKeyDown(rl.KEY_DOWN)) world.pitch(look_speed * dt);
 }
 
-const RenderJob = struct {
-    tracer: scene.Tracer,
-    cam: scene.FrameCamera,
-    pixels: [*]u8,
-    row_start: usize,
-    row_end: usize,
-};
-
-fn renderBand(job: RenderJob) void {
-    for (job.row_start..job.row_end) |row| {
-        for (0..render_width) |column| {
-            const u = ((@as(f32, @floatFromInt(column)) + 0.5) / render_width) * 2.0 - 1.0;
-            const v = 1.0 - ((@as(f32, @floatFromInt(row)) + 0.5) / render_height) * 2.0;
-            const hit = job.tracer.trace(scene.frameDirection(job.cam.pose, job.cam.tan_half_fov, u, v));
-            const rgb = shadeHit(hit);
-
-            const offset = (row * render_width + column) * 4;
-            job.pixels[offset] = rgb.r;
-            job.pixels[offset + 1] = rgb.g;
-            job.pixels[offset + 2] = rgb.b;
-            job.pixels[offset + 3] = 255;
-        }
-    }
+fn setFloat(shader: rl.Shader, location: c_int, value: f32) void {
+    var v = value;
+    rl.SetShaderValue(shader, location, &v, rl.SHADER_UNIFORM_FLOAT);
 }
 
-fn renderFrame(world: *scene.Scene, pixels: [*]u8) void {
-    const job_base = RenderJob{
-        .tracer = world.tracer(),
-        .cam = world.frameCamera(),
-        .pixels = pixels,
-        .row_start = 0,
-        .row_end = 0,
-    };
-
-    const thread_count: usize = @min(std.Thread.getCpuCount() catch 1, 8);
-    const band = (render_height + thread_count - 1) / thread_count;
-    var threads: [8]?std.Thread = @splat(null);
-    defer {
-        for (threads) |thread| {
-            if (thread) |t| t.join();
-        }
-    }
-
-    // First band on the spawning thread, the rest on workers.
-    var start: usize = 0;
-    var end = @min(start + band, render_height);
-    var job = job_base;
-    job.row_start = start;
-    job.row_end = end;
-    renderBand(job);
-    start = end;
-
-    var spawned: usize = 0;
-    while (start < render_height) : (spawned += 1) {
-        end = @min(start + band, render_height);
-        job = job_base;
-        job.row_start = start;
-        job.row_end = end;
-        threads[spawned] = std.Thread.spawn(.{}, renderBand, .{job}) catch blk: {
-            renderBand(job);
-            break :blk null;
-        };
-        start = end;
-    }
+fn setInt(shader: rl.Shader, location: c_int, value: c_int) void {
+    var v = value;
+    rl.SetShaderValue(shader, location, &v, rl.SHADER_UNIFORM_INT);
 }
 
-var fence_gradient = false;
-
-fn shadeHit(hit: scene.Hit) rl.Color {
-    // Monotone angle proxy (1 - cos a)/2 in [0, 1] - keeps the hot path
-    // free of transcendentals while dimming identically in character.
-    const dim = 1.0 - 0.25 * (1.0 - hit.cos_angle) / 2.0;
-    return switch (hit.surface) {
-        .cube => |face| scale(
-            faceColor(face),
-            (0.55 + 0.45 * hit.brightness) * dim,
-        ),
-        // Debug gradient (ZMATH_DEMO_FENCE_GRADIENT=1): fence planks paint
-        // red at the base, blue at the top, so the vertical orientation of
-        // near and wrapped planks is readable directly in the frame. The
-        // far planks legitimately hang bases-up from the wrapped ground.
-        .fence => blk: {
-            if (!fence_gradient) break :blk scale(color(226, 218, 194, 255), (0.25 + 0.75 * hit.brightness) * dim);
-            const t = std.math.clamp(hit.height_fraction, 0.0, 1.0);
-            const r: u8 = @intFromFloat(220.0 + (60.0 - 220.0) * t);
-            const g: u8 = @intFromFloat(60.0 + (90.0 - 60.0) * t);
-            const b: u8 = @intFromFloat(50.0 + (220.0 - 50.0) * t);
-            break :blk scale(color(r, g, b, 255), (0.55 + 0.45 * hit.brightness) * dim);
-        },
-        .ground => scale(groundColor(hit.point), 0.6 + 0.4 * hit.brightness),
-    };
+fn setVec2(shader: rl.Shader, location: c_int, value: [2]f32) void {
+    var v = value;
+    rl.SetShaderValue(shader, location, &v, rl.SHADER_UNIFORM_VEC2);
 }
 
-fn groundColor(point: scene.Point) rl.Color {
-    // Checker in ground arc coordinates. The walk axis is the e4 direction
-    // and the strafe axis sweeps the e1-e2 plane (see GroundPose.north).
-    const walk = std.math.asin(std.math.clamp(sg_dot(point, axisWalk()), -1.0, 1.0)) * scene.default_radius;
-    const strafe = scene.fastAtan2(sg_dot(point, axisStrafeB()), sg_dot(point, axisStrafeA())) * scene.default_radius;
-    const cell: f32 = 1.0;
-    const checker = (@as(i32, @intFromFloat(@floor(walk / cell))) +
-        @as(i32, @intFromFloat(@floor(strafe / cell)))) & 1 == 0;
-    return if (checker) color(92, 104, 96, 255) else color(46, 54, 50, 255);
+fn setVec4(shader: rl.Shader, location: c_int, value: [4]f32) void {
+    var v = value;
+    rl.SetShaderValue(shader, location, &v, rl.SHADER_UNIFORM_VEC4);
 }
 
-fn drawScaled(texture: rl.Texture2D) void {
-    const screen_width: f32 = @floatFromInt(rl.GetScreenWidth());
-    const screen_height: f32 = @floatFromInt(rl.GetScreenHeight());
-    const fit = @min(screen_width / render_width, screen_height / render_height);
-    const dest_width = render_width * fit;
-    const dest_height = render_height * fit;
-    rl.DrawTexturePro(
-        texture,
-        .{ .x = 0, .y = 0, .width = render_width, .height = render_height },
-        .{
-            .x = (screen_width - dest_width) / 2.0,
-            .y = (screen_height - dest_height) / 2.0,
-            .width = dest_width,
-            .height = dest_height,
-        },
-        .{ .x = 0, .y = 0 },
-        0.0,
-        color(255, 255, 255, 255),
-    );
+fn setPoint(shader: rl.Shader, location: c_int, value: anytype) void {
+    setVec4(shader, location, value.coeffsArray());
+}
+
+fn renderFrame(world: *scene.Scene, gpu: *GpuRenderer) void {
+    const tracer = world.tracer();
+    const camera = world.frameCamera();
+
+    setVec2(gpu.shader, gpu.resolution, .{ @floatFromInt(rl.GetScreenWidth()), @floatFromInt(rl.GetScreenHeight()) });
+    setFloat(gpu.shader, gpu.tan_half_fov, camera.tan_half_fov);
+    setPoint(gpu.shader, gpu.origin, tracer.origin);
+    setPoint(gpu.shader, gpu.right, tracer.right);
+    setPoint(gpu.shader, gpu.up, tracer.up);
+    setPoint(gpu.shader, gpu.forward, tracer.forward);
+
+    setFloat(gpu.shader, gpu.ground_a, tracer.ground_a);
+    setFloat(gpu.shader, gpu.world_radius, tracer.radius);
+
+    rl.BeginShaderMode(gpu.shader);
+    rl.DrawRectangle(0, 0, rl.GetScreenWidth(), rl.GetScreenHeight(), color(255, 255, 255, 255));
+    rl.EndShaderMode();
 }
 
 fn drawHud(world: *scene.Scene) void {
@@ -261,40 +322,6 @@ fn drawHud(world: *scene.Scene) void {
     rl.DrawText(status, 30, 82, 16, color(150, 174, 201, 230));
 }
 
-fn faceColor(face: scene.Face) rl.Color {
-    return switch (face) {
-        .left => color(82, 190, 224, 255),
-        .right => color(245, 96, 83, 255),
-        .top => color(255, 184, 77, 255),
-        .front => color(92, 173, 126, 255),
-        .back => color(143, 124, 230, 255),
-        .bottom => color(30, 34, 44, 255),
-    };
-}
-
-fn scale(base: rl.Color, factor: f32) rl.Color {
-    return color(
-        @intFromFloat(std.math.clamp(@as(f32, @floatFromInt(base.r)) * factor, 0.0, 255.0)),
-        @intFromFloat(std.math.clamp(@as(f32, @floatFromInt(base.g)) * factor, 0.0, 255.0)),
-        @intFromFloat(std.math.clamp(@as(f32, @floatFromInt(base.b)) * factor, 0.0, 255.0)),
-        255,
-    );
-}
-
 fn color(r: u8, g: u8, b: u8, a: u8) rl.Color {
     return .{ .r = r, .g = g, .b = b, .a = a };
-}
-
-const sg_dot = scene.dot;
-
-fn axisWalk() scene.Point {
-    return scene.Point.init(.{ 0, 0, 0, 1 });
-}
-
-fn axisStrafeA() scene.Point {
-    return scene.Point.init(.{ 1, 0, 0, 0 });
-}
-
-fn axisStrafeB() scene.Point {
-    return scene.Point.init(.{ 0, 1, 0, 0 });
 }

@@ -115,6 +115,10 @@ fn addSphericalGameDemoSteps(
     optimize: std.builtin.OptimizeMode,
     modules: Modules,
 ) void {
+    const spherical_shader = b.addModule("spherical_shader", .{
+        .root_source_file = b.path("src/shaders/spherical_source.zig"),
+        .target = target,
+    });
     const exe = b.addExecutable(.{
         .name = "zmath-demo-spherical",
         .root_module = b.createModule(.{
@@ -123,7 +127,10 @@ fn addSphericalGameDemoSteps(
             // Per-pixel S3 ray tracing needs optimization; Debug is unusable.
             .optimize = if (optimize == .Debug) .ReleaseFast else optimize,
             .link_libc = true,
-            .imports = &.{.{ .name = "zmath", .module = modules.zmath }},
+            .imports = &.{
+                .{ .name = "zmath", .module = modules.zmath },
+                .{ .name = "spherical_shader", .module = spherical_shader },
+            },
         }),
     });
     addEnvModuleIncludePaths(b, exe.root_module, "C_INCLUDE_PATH");
@@ -135,6 +142,18 @@ fn addSphericalGameDemoSteps(
 
     const step = b.step("demo-spherical", "Run the raylib S3 spherical-game demo");
     step.dependOn(&b.addRunArtifact(exe).step);
+
+    const generator = b.addExecutable(.{
+        .name = "generate-spherical-world-v2",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/generate_spherical_world.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{.{ .name = "spherical_scene", .module = modules.spherical_scene }},
+        }),
+    });
+    const generate_step = b.step("generate-spherical-world", "Generate data-defined S3 world objects");
+    generate_step.dependOn(&b.addRunArtifact(generator).step);
 }
 
 fn addWorldsDemoSteps(
@@ -267,6 +286,18 @@ fn addTests(
     });
     const spherical_game_scene_run = b.addRunArtifact(spherical_game_scene_tests);
     test_step.dependOn(&spherical_game_scene_run.step);
+
+    const spherical_object_scene_tests = b.addTest(.{
+        .name = "zmath-spherical-object-scene",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/demos/spherical_game/object_scene.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "zmath", .module = modules.zmath }},
+        }),
+    });
+    test_step.dependOn(&b.addRunArtifact(spherical_object_scene_tests).step);
+
     const spherical_game_check_step = b.step("demo-spherical-check", "Run headless S3 spherical-game demo checks");
     spherical_game_check_step.dependOn(&spherical_game_scene_run.step);
 

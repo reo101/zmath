@@ -24,7 +24,7 @@ const reference = {
         top_amber: [3.8, 5.8]
         front_green: [4.8, 7.8]
         back_violet: [6.5, 9.7]
-        picket: [13.5, 16.2]
+        picket: [9.5, 10.5]
     }
     # Past the cube (walk 5.3): the wrapped back face dominates; the near
     # planks behind the walker still catch a few percent.
@@ -33,7 +33,7 @@ const reference = {
         right_coral: [0.0, 0.5]
         top_amber: [0.0, 0.5]
         front_green: [0.0, 0.5]
-        back_violet: [36.0, 42.0]
+        back_violet: [30.5, 32.0]
         picket: [7.5, 10.3]
     }
     # At the ring crossing, looking along the fence: the railed picket row
@@ -41,10 +41,10 @@ const reference = {
     along: {
         left_cyan: [0.0, 0.5]
         right_coral: [0.0, 0.5]
-        top_amber: [0.0, 0.5]
+        top_amber: [0.3, 0.9]
         front_green: [0.0, 0.5]
         back_violet: [2.2, 3.6]
-        picket: [17.5, 20.5]
+        picket: [22.0, 24.0]
     }
 }
 
@@ -123,9 +123,7 @@ def main [
             WAYLAND_DISPLAY: ''
             XDG_SESSION_TYPE: 'x11'
             ZMATH_DEMO_CAPTURE: $png
-            # The palette classifier keys on the beige picket family; the
-            # debug height gradient repaints them red-blue.
-            ZMATH_DEMO_FENCE_GRADIENT: '0'
+            # The palette classifier keys on the beige fence family.
         } | merge $extra)
         with-env $pose_env { ^$exe }
         if not ($png | path exists) {

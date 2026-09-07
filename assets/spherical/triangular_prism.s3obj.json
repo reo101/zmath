@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "space": "spherical",
+  "radius": 6.0,
+  "materials": [
+    {
+      "name": "stone",
+      "color": [0.4, 0.4, 0.45, 1.0],
+      "tone": 0.8
+    }
+  ],
+  "objects": [
+    {
+      "name": "triangular_prism",
+      "kind": "halfspaces",
+      "transform": [0.70710677, 0.0, 0.0, 0.0, -0.70710677, 0.0, 0.0, 0.0],
+      "faces": [
+        { "normal": [1.0, 0.0, 0.0, 0.0], "material": 0 },
+        { "normal": [-0.5, 0.8660254, 0.0, 0.0], "material": 0 },
+        { "normal": [-0.5, -0.8660254, 0.0, 0.0], "material": 0 },
+        { "normal": [0.0, 0.0, 1.0, 0.0], "positive": true, "material": 0 },
+        { "normal": [0.0, 0.0, -1.0, 0.0], "positive": true, "material": 0 }
+      ]
+    }
+  ]
+}

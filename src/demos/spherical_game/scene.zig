@@ -17,11 +17,6 @@ pub const default_fence_spacing: f32 = 0.75;
 pub const default_fence_width: f32 = 0.3;
 pub const default_fence_thickness: f32 = 0.25;
 
-/// Temporary probe switch for the plank candidate chain.
-pub var fence_debug = false;
-
-/// Probe counter for box solves.
-pub var box_solves: usize = 0;
 pub const default_fence_rail_height: f32 = 0.1;
 pub const default_fence_rail_thickness: f32 = 0.18;
 
@@ -92,7 +87,6 @@ const BoxFace = struct {
 /// grazing angles. The entry face is the constraint whose toggle made
 /// the count complete.
 fn boxEntry(origin: Point, dir: Direction, faces: []const BoxFace) ?PlankEntry {
-    box_solves += 1;
     const n = faces.len;
     var entry_k: usize = 0;
     const Bound = struct { phi: f32, k: usize };
@@ -113,7 +107,6 @@ fn boxEntry(origin: Point, dir: Direction, faces: []const BoxFace) ?PlankEntry {
         const r_k = fastAtan2(b_k, a_k);
         satisfied[k] = (a_k >= 0.0) == face.want_positive;
         if (satisfied[k]) count += 1;
-        if (fence_debug) std.debug.print("    face k={d} a={d:.4} b={d:.4} sat={}\n", .{ k, a_k, b_k, satisfied[k] });
         inline for (0..2) |side| {
             var phi = if (side == 0) r_k - std.math.pi / 2.0 else r_k + std.math.pi / 2.0;
             phi = @mod(phi, 2.0 * std.math.pi);
@@ -137,7 +130,6 @@ fn boxEntry(origin: Point, dir: Direction, faces: []const BoxFace) ?PlankEntry {
     while (walked < n_bounds) : (walked += 1) {
         const b = bounds[walked];
         if (b.phi > std.math.pi) break;
-        if (fence_debug) std.debug.print("    walk phi={d:.3} k={d} count={d}\n", .{ b.phi, b.k, count });
         if (count == n and phi_prev > 1e-4) {
             const entry = phi_prev;
             const face = faces[entry_k];
@@ -1320,18 +1312,10 @@ test "fence pickets ring the walker past the cube" {
 
 test "fence pickets are visible from the start behind the cube" {
     const stats = Scene.init().sampleFrame(160, 90);
-    std.debug.print("\nstart frame: fence={d} ground={d} cube={d}\n", .{ stats.fence, stats.ground, stats.cube });
     try std.testing.expect(stats.fence > 0);
     try std.testing.expect(stats.cube > 0);
     // Gaps dominate: pickets are thinner than the spacing.
     try std.testing.expect(stats.fence < stats.ground);
-}
-
-test "probe start-view rays at the ring" {
-    var s = Scene.init();
-    box_solves = 0;
-    const stats0 = s.sampleFrame(160, 90);
-    std.debug.print("start: solves_per_frame={d} fence={d}\n", .{ box_solves, stats0.fence });
 }
 
 test "fence reads as a straight picket row when standing close to it" {
@@ -1436,7 +1420,6 @@ test "cube coverage dips mid-range then explodes near the antipode" {
     var scene = Scene.init();
     scene.walkForward(12.0);
     const mid = sampleStats(scene, 64, 36).cubeFraction();
-    std.debug.print("\nmid cube fraction: {d:.3}\n", .{mid});
 
     scene = Scene.init();
     scene.walkForward(18.5);
