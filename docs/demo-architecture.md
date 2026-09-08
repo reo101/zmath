@@ -94,6 +94,11 @@ consumed the old stack. Harvest git history, not a fossil tree.
 - C raylib via `@cImport`; no raylib-zig dependency.
 - GPU fullscreen fragment tracing at the current window resolution. The
   demo executable is forced to ReleaseFast.
+- Analytic and raster passes write RGB plus normalized S³ cosine depth into
+  RGBA render targets; a final compositor selects the nearer surface.
+- `ZMATH_DEMO_MESH` optionally loads an OBJ/glTF model through raylib. Its
+  custom vertex shader maps tangent-space vertices through the S³
+  exponential map before stereographic projection.
 - Runtime `.s3obj.json` data is validated, transformed through GA rotors,
   and uploaded through a std140 `ObjectBlock` UBO.
 - The shader traces generic bounded half-space objects. It does not know
@@ -121,9 +126,10 @@ consumed the old stack. Harvest git history, not a fossil tree.
 - `triangular_prism.s3obj.json` is a small standalone parser/runtime
   fixture.
 
-This path is deliberately separate from arbitrary Blender/glTF meshes.
-Those will need curvature-aware rasterization rather than per-pixel
-half-space intersection.
+The mesh path is deliberately separate from analytic half-space
+intersection, but shares the executable and compositor. Ordinary
+Blender/glTF meshes use curvature-aware rasterization rather than being
+forced through per-pixel half-space intersection.
 
 ## The reverse-perspective frame
 
@@ -165,7 +171,8 @@ Layered, cheapest first:
    capacity validation run as part of `zig build test`.
 4. **Rendered smoke capture**: hidden-window Xvfb render + `TakeScreenshot`,
    then an ImageMagick histogram check that all five face colors survive
-   in the final composited frame.
+   in the final composited frame. Set `ZMATH_DEMO_MESH` to exercise the
+   curvature-aware raster pass and compositor.
 5. **Golden-image palette check** (`tools/golden_check.nu`): captures
    three canonical poses headlessly and compares each palette share
    against committed tolerance bands. Deterministic rendering makes any

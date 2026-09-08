@@ -230,7 +230,7 @@ void main() {
     uv.x /= 1280.0 / 720.0;
     Hit hit;
     if (length(uv) > 1.0) {
-        gl_FragColor = vec4(4.0, 6.0, 10.0, 255.0) / 255.0;
+        gl_FragColor = vec4(4.0, 6.0, 10.0, 0.0) / 255.0;
         return;
     }
     vec4 dir = frameDirection(uv);
@@ -242,5 +242,5 @@ void main() {
     } else {
         rgb = groundColor(hit.point) * (0.6 + 0.4 * hit.brightness);
     }
-    gl_FragColor = vec4(rgb, 1.0);
+    gl_FragColor = vec4(rgb, (hit.c + 1.0) * 0.5);
 }

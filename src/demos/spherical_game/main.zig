@@ -14,7 +14,8 @@ const render_height = 540;
 const default_capture_walk: f32 = scene.default_cube_distance + std.math.pi * scene.default_radius - 0.15;
 const default_capture_pitch: f32 = -1.4;
 const default_object_path: [*:0]const u8 = "assets/spherical/world.s3obj.json";
-const spherical_fragment_source = @import("spherical_shader").fragment;
+const spherical_shader = @import("spherical_shader");
+const spherical_fragment_source = spherical_shader.fragment;
 
 const max_object_count = 64;
 const max_object_faces = max_object_count * 6;
@@ -51,8 +52,100 @@ const ObjectGpuBlock = extern struct {
     bounds: [max_object_count * 4]f32,
 };
 
+const MeshRenderer = struct {
+    model: rl.Model,
+    shader: rl.Shader,
+    resolution: c_int,
+    tan_half_fov: c_int,
+    world_radius: c_int,
+    origin: c_int,
+    right: c_int,
+    up: c_int,
+    forward: c_int,
+    mesh_center: c_int,
+    mesh_basis_x: c_int,
+    mesh_basis_y: c_int,
+    mesh_basis_z: c_int,
+    center: [4]f32 = .{ 1, 0, 0, 0 },
+    basis_x: [4]f32 = .{ 0, 1, 0, 0 },
+    basis_y: [4]f32 = .{ 0, 0, 1, 0 },
+    basis_z: [4]f32 = .{ 0, 0, 0, 1 },
+
+    fn init(path: [*:0]const u8) ?MeshRenderer {
+        const model = rl.LoadModel(path);
+        if (model.meshCount == 0) {
+            std.debug.print("mesh scene failed to load: {s}\n", .{path});
+            return null;
+        }
+        const shader = rl.LoadShaderFromMemory(spherical_shader.mesh_vertex.ptr, spherical_shader.mesh_fragment.ptr);
+        if (!rl.IsShaderValid(shader)) {
+            std.debug.print("GPU spherical mesh shader failed to compile\n", .{});
+            rl.UnloadModel(model);
+            return null;
+        }
+        shader.locs[rl.SHADER_LOC_MATRIX_MODEL] = rl.GetShaderLocation(shader, "matModel");
+        shader.locs[rl.SHADER_LOC_MAP_ALBEDO] = rl.GetShaderLocation(shader, "texture0");
+        shader.locs[rl.SHADER_LOC_COLOR_DIFFUSE] = rl.GetShaderLocation(shader, "colDiffuse");
+        const materials = model.materials[0..@intCast(model.materialCount)];
+        for (materials) |*material| material.shader = shader;
+
+        return .{
+            .model = model,
+            .shader = shader,
+            .resolution = rl.GetShaderLocation(shader, "u_resolution"),
+            .tan_half_fov = rl.GetShaderLocation(shader, "u_tan_half_fov"),
+            .world_radius = rl.GetShaderLocation(shader, "u_world_radius"),
+            .origin = rl.GetShaderLocation(shader, "u_origin"),
+            .right = rl.GetShaderLocation(shader, "u_right"),
+            .up = rl.GetShaderLocation(shader, "u_up"),
+            .forward = rl.GetShaderLocation(shader, "u_forward"),
+            .mesh_center = rl.GetShaderLocation(shader, "u_mesh_center"),
+            .mesh_basis_x = rl.GetShaderLocation(shader, "u_mesh_basis_x"),
+            .mesh_basis_y = rl.GetShaderLocation(shader, "u_mesh_basis_y"),
+            .mesh_basis_z = rl.GetShaderLocation(shader, "u_mesh_basis_z"),
+        };
+    }
+
+    fn render(self: *MeshRenderer, world: *scene.Scene) void {
+        const tracer = world.tracer();
+        const camera = world.frameCamera();
+        setVec2(self.shader, self.resolution, .{ @floatFromInt(rl.GetScreenWidth()), @floatFromInt(rl.GetScreenHeight()) });
+        setFloat(self.shader, self.tan_half_fov, camera.tan_half_fov);
+        setFloat(self.shader, self.world_radius, tracer.radius);
+        setPoint(self.shader, self.origin, tracer.origin);
+        setPoint(self.shader, self.right, tracer.right);
+        setPoint(self.shader, self.up, tracer.up);
+        setPoint(self.shader, self.forward, tracer.forward);
+        setVec4(self.shader, self.mesh_center, self.center);
+        setVec4(self.shader, self.mesh_basis_x, self.basis_x);
+        setVec4(self.shader, self.mesh_basis_y, self.basis_y);
+        setVec4(self.shader, self.mesh_basis_z, self.basis_z);
+
+        const camera3d = rl.Camera3D{
+            .position = .{ .x = 0, .y = 0, .z = 1 },
+            .target = .{ .x = 0, .y = 0, .z = 0 },
+            .up = .{ .x = 0, .y = 1, .z = 0 },
+            .fovy = 90,
+            .projection = rl.CAMERA_PERSPECTIVE,
+        };
+        rl.BeginMode3D(camera3d);
+        rl.DrawModel(self.model, .{ .x = 0, .y = 0, .z = 0 }, 1.0, color(255, 255, 255, 255));
+        rl.EndMode3D();
+    }
+
+    fn deinit(self: *MeshRenderer) void {
+        rl.UnloadModel(self.model);
+        rl.UnloadShader(self.shader);
+    }
+};
+
 const GpuRenderer = struct {
     shader: rl.Shader,
+    composite_shader: rl.Shader,
+    composite_mesh_texture: c_int,
+    composite_mesh_enabled: c_int,
+    analytic_target: rl.RenderTexture2D,
+    mesh_target: rl.RenderTexture2D,
     resolution: c_int,
     tan_half_fov: c_int,
     origin: c_int,
@@ -65,7 +158,7 @@ const GpuRenderer = struct {
     gl: GlApi,
     object_buffer: c_uint,
 
-    fn init() ?GpuRenderer {
+    fn init(width: c_int, height: c_int) ?GpuRenderer {
         const gl = GlApi.init() orelse {
             std.debug.print("OpenGL buffer API unavailable\n", .{});
             return null;
@@ -89,8 +182,23 @@ const GpuRenderer = struct {
         }
         gl.uniform_block_binding(shader.id, block_index, 0);
 
+        const composite_shader = rl.LoadShaderFromMemory(null, spherical_shader.composite_fragment.ptr);
+        if (!rl.IsShaderValid(composite_shader)) {
+            std.debug.print("GPU spherical compositor failed to compile\n", .{});
+            gl.delete_buffers(1, &object_buffer);
+            rl.UnloadShader(shader);
+            return null;
+        }
+        const analytic_target = rl.LoadRenderTexture(width, height);
+        const mesh_target = rl.LoadRenderTexture(width, height);
+
         return .{
             .shader = shader,
+            .composite_shader = composite_shader,
+            .composite_mesh_texture = rl.GetShaderLocation(composite_shader, "u_mesh_texture"),
+            .composite_mesh_enabled = rl.GetShaderLocation(composite_shader, "u_mesh_enabled"),
+            .analytic_target = analytic_target,
+            .mesh_target = mesh_target,
             .resolution = rl.GetShaderLocation(shader, "u_resolution"),
             .tan_half_fov = rl.GetShaderLocation(shader, "u_tan_half_fov"),
             .origin = rl.GetShaderLocation(shader, "u_origin"),
@@ -143,8 +251,24 @@ const GpuRenderer = struct {
         setInt(self.shader, self.object_count, @intCast(object_count));
     }
 
+    fn present(self: *GpuRenderer, mesh_enabled: bool) void {
+        setFloat(self.composite_shader, self.composite_mesh_enabled, if (mesh_enabled) 1.0 else 0.0);
+        rl.SetShaderValueTexture(self.composite_shader, self.composite_mesh_texture, self.mesh_target.texture);
+        rl.BeginShaderMode(self.composite_shader);
+        rl.DrawTextureRec(
+            self.analytic_target.texture,
+            .{ .x = 0, .y = 0, .width = @floatFromInt(self.analytic_target.texture.width), .height = -@as(f32, @floatFromInt(self.analytic_target.texture.height)) },
+            .{ .x = 0, .y = 0 },
+            color(255, 255, 255, 255),
+        );
+        rl.EndShaderMode();
+    }
+
     fn deinit(self: *GpuRenderer) void {
         self.gl.delete_buffers(1, &self.object_buffer);
+        rl.UnloadRenderTexture(self.analytic_target);
+        rl.UnloadRenderTexture(self.mesh_target);
+        rl.UnloadShader(self.composite_shader);
         rl.UnloadShader(self.shader);
     }
 };
@@ -195,12 +319,18 @@ pub fn main() void {
         if (pitch != 0.0) world.pitch(pitch);
     }
 
-    var gpu = GpuRenderer.init() orelse return;
+    var gpu = GpuRenderer.init(rl.GetScreenWidth(), rl.GetScreenHeight()) orelse return;
     defer gpu.deinit();
     gpu.uploadObjects(object_file.value) catch |err| {
         std.debug.print("object scene exceeds GPU capacity: {s}\n", .{@errorName(err)});
         return;
     };
+
+    var mesh_renderer: ?MeshRenderer = null;
+    if (rl.getenv("ZMATH_DEMO_MESH")) |path| {
+        mesh_renderer = MeshRenderer.init(@ptrCast(path)) orelse return;
+    }
+    defer if (mesh_renderer) |*mesh| mesh.deinit();
 
     // Optional frame cap for headless perf measurement.
     const frame_cap: ?u32 = if (rl.getenv("ZMATH_DEMO_FRAMES")) |value|
@@ -219,8 +349,15 @@ pub fn main() void {
         }
 
         rl.BeginDrawing();
-        rl.ClearBackground(color(4, 6, 10, 255));
         renderFrame(&world, &gpu);
+        rl.BeginTextureMode(gpu.mesh_target);
+        rl.ClearBackground(color(0, 0, 0, 0));
+        rl.rlDisableColorBlend();
+        if (mesh_renderer) |*mesh| mesh.render(&world);
+        rl.rlEnableColorBlend();
+        rl.EndTextureMode();
+        rl.ClearBackground(color(4, 6, 10, 255));
+        gpu.present(mesh_renderer != null);
         drawHud(&world);
         rl.EndDrawing();
 
@@ -274,6 +411,10 @@ fn setPoint(shader: rl.Shader, location: c_int, value: anytype) void {
 }
 
 fn renderFrame(world: *scene.Scene, gpu: *GpuRenderer) void {
+    rl.BeginTextureMode(gpu.analytic_target);
+    rl.ClearBackground(color(4, 6, 10, 0));
+    rl.rlDisableColorBlend();
+
     const tracer = world.tracer();
     const camera = world.frameCamera();
 
@@ -290,6 +431,8 @@ fn renderFrame(world: *scene.Scene, gpu: *GpuRenderer) void {
     rl.BeginShaderMode(gpu.shader);
     rl.DrawRectangle(0, 0, rl.GetScreenWidth(), rl.GetScreenHeight(), color(255, 255, 255, 255));
     rl.EndShaderMode();
+    rl.rlEnableColorBlend();
+    rl.EndTextureMode();
 }
 
 fn drawHud(world: *scene.Scene) void {
