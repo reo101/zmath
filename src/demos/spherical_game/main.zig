@@ -116,10 +116,10 @@ const MeshRenderer = struct {
         };
     }
 
-    fn render(self: *MeshRenderer, world: *scene.Scene) void {
+    fn render(self: *MeshRenderer, world: *scene.Scene, width: c_int, height: c_int) void {
         const tracer = world.tracer();
         const camera = world.frameCamera();
-        setVec2(self.shader, self.resolution, .{ @floatFromInt(rl.GetScreenWidth()), @floatFromInt(rl.GetScreenHeight()) });
+        setVec2(self.shader, self.resolution, .{ @floatFromInt(width), @floatFromInt(height) });
         setFloat(self.shader, self.tan_half_fov, camera.tan_half_fov);
         setFloat(self.shader, self.world_radius, tracer.radius);
         setPoint(self.shader, self.origin, tracer.origin);
@@ -290,6 +290,16 @@ const GpuRenderer = struct {
         rl.EndShaderMode();
     }
 
+    fn resize(self: *GpuRenderer, width: c_int, height: c_int) void {
+        if (self.analytic_target.texture.width == width and self.analytic_target.texture.height == height) return;
+        const analytic_target = rl.LoadRenderTexture(width, height);
+        const mesh_target = rl.LoadRenderTexture(width, height);
+        rl.UnloadRenderTexture(self.analytic_target);
+        rl.UnloadRenderTexture(self.mesh_target);
+        self.analytic_target = analytic_target;
+        self.mesh_target = mesh_target;
+    }
+
     fn deinit(self: *GpuRenderer) void {
         self.gl.delete_buffers(1, &self.object_buffer);
         rl.UnloadRenderTexture(self.analytic_target);
@@ -345,7 +355,7 @@ pub fn main() void {
         if (pitch != 0.0) world.pitch(pitch);
     }
 
-    var gpu = GpuRenderer.init(rl.GetScreenWidth(), rl.GetScreenHeight()) orelse return;
+    var gpu = GpuRenderer.init(rl.GetRenderWidth(), rl.GetRenderHeight()) orelse return;
     defer gpu.deinit();
     gpu.uploadObjects(object_file.value) catch |err| {
         std.debug.print("object scene exceeds GPU capacity: {s}\n", .{@errorName(err)});
@@ -374,13 +384,14 @@ pub fn main() void {
             update(&world, dt);
         }
 
+        gpu.resize(rl.GetRenderWidth(), rl.GetRenderHeight());
         rl.BeginDrawing();
         renderFrame(&world, &gpu);
         rl.BeginTextureMode(gpu.mesh_target);
         rl.rlClearColor(0, 0, 0, 0);
         rl.rlClearScreenBuffers();
         rl.rlDisableColorBlend();
-        if (mesh_renderer) |*mesh| mesh.render(&world);
+        if (mesh_renderer) |*mesh| mesh.render(&world, gpu.mesh_target.texture.width, gpu.mesh_target.texture.height);
         rl.rlEnableColorBlend();
         rl.EndTextureMode();
         rl.ClearBackground(color(4, 6, 10, 255));
@@ -445,7 +456,9 @@ fn renderFrame(world: *scene.Scene, gpu: *GpuRenderer) void {
     const tracer = world.tracer();
     const camera = world.frameCamera();
 
-    setVec2(gpu.shader, gpu.resolution, .{ @floatFromInt(rl.GetScreenWidth()), @floatFromInt(rl.GetScreenHeight()) });
+    const target_width = gpu.analytic_target.texture.width;
+    const target_height = gpu.analytic_target.texture.height;
+    setVec2(gpu.shader, gpu.resolution, .{ @floatFromInt(target_width), @floatFromInt(target_height) });
     setFloat(gpu.shader, gpu.tan_half_fov, camera.tan_half_fov);
     setPoint(gpu.shader, gpu.origin, tracer.origin);
     setPoint(gpu.shader, gpu.right, tracer.right);
@@ -456,7 +469,7 @@ fn renderFrame(world: *scene.Scene, gpu: *GpuRenderer) void {
     setFloat(gpu.shader, gpu.world_radius, tracer.radius);
 
     rl.BeginShaderMode(gpu.shader);
-    rl.DrawRectangle(0, 0, rl.GetScreenWidth(), rl.GetScreenHeight(), color(255, 255, 255, 255));
+    rl.DrawRectangle(0, 0, target_width, target_height, color(255, 255, 255, 255));
     rl.EndShaderMode();
     rl.rlEnableColorBlend();
     rl.EndTextureMode();
