@@ -94,7 +94,7 @@ check (`tools/golden_check.nu`).
 ## Commands
 
 ```sh
-zig build test --summary all       # suite: 135 tests across 9 binaries
+zig build test --summary all       # suite: 140 tests across 10 binaries
 zig build run                      # usage example
 zig build bench-simd               # micro-benchmark (ReleaseFast)
 zig build fuzz-expr                # expression parser/evaluator smoke fuzz
