@@ -76,6 +76,8 @@ const MeshRenderer = struct {
     mesh_basis_z: c_int,
     center: [4]f32 = .{ 1, 0, 0, 0 },
     basis_x: [4]f32 = .{ 0, 1, 0, 0 },
+    // raylib's glTF loader exposes the glTF Y-up frame: X lateral, Y up,
+    // Z forward in the local tangent frame.
     basis_y: [4]f32 = .{ 0, 0, 1, 0 },
     basis_z: [4]f32 = .{ 0, 0, 0, 1 },
 
@@ -137,7 +139,18 @@ const MeshRenderer = struct {
             .projection = rl.CAMERA_PERSPECTIVE,
         };
         rl.BeginMode3D(camera3d);
-        rl.DrawModel(self.model, .{ .x = 0, .y = 0, .z = 0 }, 1.0, color(255, 255, 255, 255));
+        // The projected S³ chart can reverse winding across the view, so
+        // culling and the Euclidean depth buffer cannot decide visibility.
+        rl.rlDisableDepthTest();
+        rl.rlDisableBackfaceCulling();
+        for (0..@intCast(self.model.meshCount)) |mesh_index| {
+            const material_index: usize = @intCast(self.model.meshMaterial[mesh_index]);
+            var material = self.model.materials[material_index];
+            material.shader = self.shader;
+            rl.DrawMesh(self.model.meshes[mesh_index], material, self.model.transform);
+        }
+        rl.rlEnableBackfaceCulling();
+        rl.rlEnableDepthTest();
         rl.EndMode3D();
     }
 
@@ -362,13 +375,10 @@ pub fn main() void {
         rl.BeginDrawing();
         renderFrame(&world, &gpu);
         rl.BeginTextureMode(gpu.mesh_target);
-        rl.ClearBackground(color(0, 0, 0, 0));
+        rl.rlClearColor(0, 0, 0, 0);
+        rl.rlClearScreenBuffers();
         rl.rlDisableColorBlend();
-        rl.rlDisableDepthTest();
-        rl.rlDisableBackfaceCulling();
         if (mesh_renderer) |*mesh| mesh.render(&world);
-        rl.rlEnableBackfaceCulling();
-        rl.rlEnableDepthTest();
         rl.rlEnableColorBlend();
         rl.EndTextureMode();
         rl.ClearBackground(color(4, 6, 10, 255));
