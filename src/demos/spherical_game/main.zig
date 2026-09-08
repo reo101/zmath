@@ -279,10 +279,12 @@ const GpuRenderer = struct {
         self.gl.bind_texture(gl_texture_2d, self.mesh_target.texture.id);
         self.gl.uniform_1i(self.composite_mesh_texture, 1);
         self.gl.active_texture(gl_texture0);
-        rl.DrawTextureRec(
+        rl.DrawTexturePro(
             self.analytic_target.texture,
             .{ .x = 0, .y = 0, .width = @floatFromInt(self.analytic_target.texture.width), .height = -@as(f32, @floatFromInt(self.analytic_target.texture.height)) },
+            .{ .x = 0, .y = 0, .width = @floatFromInt(rl.GetScreenWidth()), .height = @floatFromInt(rl.GetScreenHeight()) },
             .{ .x = 0, .y = 0 },
+            0,
             color(255, 255, 255, 255),
         );
         rl.EndShaderMode();
