@@ -10,6 +10,6 @@ in float fragDepth;
 out vec4 finalColor;
 
 void main() {
-    vec4 albedo = texture(texture0, fragTexCoord) * colDiffuse * fragColor;
+    vec4 albedo = texture(texture0, fragTexCoord) * colDiffuse;
     finalColor = vec4(albedo.rgb, fragDepth);
 }

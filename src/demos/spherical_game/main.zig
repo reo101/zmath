@@ -22,6 +22,8 @@ const max_object_faces = max_object_count * 6;
 const max_object_materials = 16;
 const gl_uniform_buffer: c_uint = 0x8A11;
 const gl_static_draw: c_uint = 0x88E4;
+const gl_texture0: c_uint = 0x84C0;
+const gl_texture_2d: c_uint = 0x0DE1;
 
 const GlApi = struct {
     gen_buffers: *const fn (c_int, *c_uint) callconv(.c) void,
@@ -31,6 +33,9 @@ const GlApi = struct {
     bind_buffer_base: *const fn (c_uint, c_uint, c_uint) callconv(.c) void,
     get_uniform_block_index: *const fn (c_uint, [*:0]const u8) callconv(.c) c_uint,
     uniform_block_binding: *const fn (c_uint, c_uint, c_uint) callconv(.c) void,
+    active_texture: *const fn (c_uint) callconv(.c) void,
+    bind_texture: *const fn (c_uint, c_uint) callconv(.c) void,
+    uniform_1i: *const fn (c_int, c_int) callconv(.c) void,
 
     fn init() ?GlApi {
         return .{
@@ -41,6 +46,9 @@ const GlApi = struct {
             .bind_buffer_base = @ptrCast(rl.rlGetProcAddress("glBindBufferBase") orelse return null),
             .get_uniform_block_index = @ptrCast(rl.rlGetProcAddress("glGetUniformBlockIndex") orelse return null),
             .uniform_block_binding = @ptrCast(rl.rlGetProcAddress("glUniformBlockBinding") orelse return null),
+            .active_texture = @ptrCast(rl.rlGetProcAddress("glActiveTexture") orelse return null),
+            .bind_texture = @ptrCast(rl.rlGetProcAddress("glBindTexture") orelse return null),
+            .uniform_1i = @ptrCast(rl.rlGetProcAddress("glUniform1i") orelse return null),
         };
     }
 };
@@ -252,9 +260,12 @@ const GpuRenderer = struct {
     }
 
     fn present(self: *GpuRenderer, mesh_enabled: bool) void {
-        setFloat(self.composite_shader, self.composite_mesh_enabled, if (mesh_enabled) 1.0 else 0.0);
-        rl.SetShaderValueTexture(self.composite_shader, self.composite_mesh_texture, self.mesh_target.texture);
         rl.BeginShaderMode(self.composite_shader);
+        setFloat(self.composite_shader, self.composite_mesh_enabled, if (mesh_enabled) 1.0 else 0.0);
+        self.gl.active_texture(gl_texture0 + 1);
+        self.gl.bind_texture(gl_texture_2d, self.mesh_target.texture.id);
+        self.gl.uniform_1i(self.composite_mesh_texture, 1);
+        self.gl.active_texture(gl_texture0);
         rl.DrawTextureRec(
             self.analytic_target.texture,
             .{ .x = 0, .y = 0, .width = @floatFromInt(self.analytic_target.texture.width), .height = -@as(f32, @floatFromInt(self.analytic_target.texture.height)) },
@@ -353,7 +364,11 @@ pub fn main() void {
         rl.BeginTextureMode(gpu.mesh_target);
         rl.ClearBackground(color(0, 0, 0, 0));
         rl.rlDisableColorBlend();
+        rl.rlDisableDepthTest();
+        rl.rlDisableBackfaceCulling();
         if (mesh_renderer) |*mesh| mesh.render(&world);
+        rl.rlEnableBackfaceCulling();
+        rl.rlEnableDepthTest();
         rl.rlEnableColorBlend();
         rl.EndTextureMode();
         rl.ClearBackground(color(4, 6, 10, 255));
