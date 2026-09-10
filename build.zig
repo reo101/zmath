@@ -8,6 +8,7 @@ const Modules = struct {
     geometry: *std.Build.Module,
     zmath: *std.Build.Module,
     spherical_scene: *std.Build.Module,
+    object_scene: *std.Build.Module,
 };
 
 pub fn build(b: *std.Build) void {
@@ -49,7 +50,7 @@ pub fn build(b: *std.Build) void {
 
     addSphericalGameDemoSteps(b, target, optimize, modules);
     addWorldsDemoSteps(b, target, optimize, modules);
-    addLocalVulkanPlaygroundSteps(b, target, optimize, use_llvm_spirv, compare_spirv);
+    addLocalVulkanPlaygroundSteps(b, target, optimize, use_llvm_spirv, compare_spirv, modules);
     addTests(b, target, optimize, modules, example, fuzz_use_llvm);
 }
 
@@ -99,6 +100,12 @@ fn addModules(b: *std.Build, target: std.Build.ResolvedTarget) Modules {
         .imports = &.{.{ .name = "zmath", .module = zmath }},
     });
 
+    const object_scene = b.addModule("object_scene", .{
+        .root_source_file = b.path("src/demos/spherical_game/object_scene.zig"),
+        .target = target,
+        .imports = &.{.{ .name = "zmath", .module = zmath }},
+    });
+
     return .{
         .meta = meta,
         .parse = parse,
@@ -106,6 +113,7 @@ fn addModules(b: *std.Build, target: std.Build.ResolvedTarget) Modules {
         .geometry = geometry,
         .zmath = zmath,
         .spherical_scene = spherical_scene,
+        .object_scene = object_scene,
     };
 }
 
@@ -193,6 +201,7 @@ fn addLocalVulkanPlaygroundSteps(
     optimize: std.builtin.OptimizeMode,
     use_llvm_spirv: bool,
     compare_spirv: bool,
+    modules: Modules,
 ) void {
     const spirv_steps = build_spirv.addSpirvSteps(b, optimize, use_llvm_spirv, compare_spirv);
 
@@ -211,10 +220,16 @@ fn addLocalVulkanPlaygroundSteps(
             .target = target,
             .optimize = optimize,
             .link_libc = true,
-            .imports = &.{.{
+            .imports = &.{ .{
                 .name = "vulkan_glfw",
                 .module = vulkan_glfw_translate.createModule(),
-            }},
+            }, .{
+                .name = "object_scene",
+                .module = modules.object_scene,
+            }, .{
+                .name = "spherical_scene",
+                .module = modules.spherical_scene,
+            } },
         }),
     });
     shader_playground_exe.root_module.linkSystemLibrary("glfw", .{});
@@ -234,8 +249,11 @@ fn addLocalVulkanPlaygroundSteps(
     run_spherical.addArgs(&.{
         "zig-out/shaders/spherical_ground.vert.spv",
         "zig-out/shaders/spherical_ground.frag.spv",
+        "zig-out/shaders/spherical_mesh.vert.spv",
+        "zig-out/shaders/spherical_mesh.frag.spv",
     });
-    const spherical_step = b.step("shader-playground-spherical", "Run the Zig-authored S3 ground shader in Vulkan");
+    if (b.args) |args| run_spherical.addArgs(args);
+    const spherical_step = b.step("shader-playground-spherical", "Run the Zig-authored S3 rasterized spherical scene in Vulkan");
     spherical_step.dependOn(&run_spherical.step);
 
     const run_ga = b.addRunArtifact(shader_playground_exe);

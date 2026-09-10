@@ -118,7 +118,10 @@ nix develop -c nu tools/golden_check.nu  # golden-image palette check
 
 The shader playground, the golden check, and the demos are opt-in; run them
 from the Nix devshell so Vulkan/GLFW/raylib, Xvfb, ImageMagick and
-`spirv-opt` are on the include/library paths.
+`spirv-opt` are on the include/library paths. The spherical playground uses
+W/S to walk, A/D to strafe, the arrow keys to look, R to reset, and Esc to
+quit. It redraws only after input, resize, or shader reload because the
+analytic pass is intentionally expensive.
 
 ## License
 

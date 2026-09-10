@@ -311,7 +311,8 @@ const GpuRenderer = struct {
 
 pub fn main() void {
     const capture_path = rl.getenv("ZMATH_DEMO_CAPTURE");
-    const capture = capture_path != null;
+    const analytic_capture_path = rl.getenv("ZMATH_DEMO_CAPTURE_ANALYTIC");
+    const capture = capture_path != null or analytic_capture_path != null;
     var flags: c_uint = rl.FLAG_WINDOW_RESIZABLE;
     if (capture) {
         flags |= rl.FLAG_WINDOW_HIDDEN;
@@ -320,7 +321,15 @@ pub fn main() void {
     }
     rl.SetConfigFlags(flags);
     rl.SetTraceLogLevel(rl.LOG_WARNING);
-    rl.InitWindow(1280, 720, "zmath demo: spherical game");
+    const width = if (rl.getenv("ZMATH_DEMO_WIDTH")) |value|
+        std.fmt.parseInt(c_int, std.mem.span(value), 10) catch 1280
+    else
+        1280;
+    const height = if (rl.getenv("ZMATH_DEMO_HEIGHT")) |value|
+        std.fmt.parseInt(c_int, std.mem.span(value), 10) catch 720
+    else
+        720;
+    rl.InitWindow(width, height, "zmath demo: spherical game");
     defer rl.CloseWindow();
 
     const object_path: [*:0]const u8 = if (rl.getenv("ZMATH_DEMO_OBJECT")) |path| @ptrCast(path) else default_object_path;
@@ -387,6 +396,13 @@ pub fn main() void {
         gpu.resize(rl.GetRenderWidth(), rl.GetRenderHeight());
         rl.BeginDrawing();
         renderFrame(&world, &gpu);
+        if (analytic_capture_path) |path| {
+            rl.ClearBackground(color(4, 6, 10, 255));
+            gpu.present(false);
+            rl.EndDrawing();
+            rl.TakeScreenshot(path);
+            break;
+        }
         rl.BeginTextureMode(gpu.mesh_target);
         rl.rlClearColor(0, 0, 0, 0);
         rl.rlClearScreenBuffers();

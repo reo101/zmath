@@ -55,6 +55,22 @@ pub const SpirvShaderPair = struct {
 };
 
 fn optimizeSpirv(b: *std.Build, input: std.Build.LazyPath, basename: []const u8) std.Build.LazyPath {
+    const disassemble = b.addSystemCommand(&.{"spirv-dis"});
+    disassemble.addFileArg(input);
+    disassemble.addArg("-o");
+    const assembly = disassemble.addOutputFileArg(b.fmt("{s}.spvasm", .{basename}));
+
+    const patch = b.addSystemCommand(&.{"python3"});
+    patch.addFileArg(b.path("tools/patch_spirv_storage_blocks.py"));
+    patch.addFileArg(assembly);
+    patch.addArg("-o");
+    const patched_assembly = patch.addOutputFileArg(b.fmt("{s}.patched.spvasm", .{basename}));
+
+    const assemble = b.addSystemCommand(&.{ "spirv-as", "--target-env", "vulkan1.2" });
+    assemble.addFileArg(patched_assembly);
+    assemble.addArg("-o");
+    const patched = assemble.addOutputFileArg(b.fmt("{s}.patched.spv", .{basename}));
+
     const optimize_cmd = b.addSystemCommand(&.{
         "spirv-opt",
         "--skip-validation",
@@ -63,7 +79,7 @@ fn optimizeSpirv(b: *std.Build, input: std.Build.LazyPath, basename: []const u8)
         "--eliminate-local-single-block",
         "--eliminate-local-single-store",
     });
-    optimize_cmd.addFileArg(input);
+    optimize_cmd.addFileArg(patched);
     optimize_cmd.addArg("-o");
     return optimize_cmd.addOutputFileArg(basename);
 }
@@ -215,6 +231,14 @@ pub fn addSpirvSteps(
 
     const spherical_shaders = SpirvShaderPair.init("spherical_ground");
     spherical_shaders.build(b, .{
+        .target = spirv_target,
+        .optimize = optimize,
+        .use_llvm = use_llvm_spirv,
+        .imports = &.{},
+        .pair_step = spirv_spherical_step,
+    });
+    const spherical_mesh_shaders = SpirvShaderPair.init("spherical_mesh");
+    spherical_mesh_shaders.build(b, .{
         .target = spirv_target,
         .optimize = optimize,
         .use_llvm = use_llvm_spirv,

@@ -65,6 +65,7 @@
                 inputs'.zls.packages.default
                 pkgs.pkg-config
                 pkgs.spirv-tools
+                pkgs.python3
                 pkgs.vulkan-tools
                 # golden-image check (tools/golden_check.nu)
                 pkgs.imagemagick
