@@ -108,9 +108,11 @@ zig build demo-worlds-check        # headless worlds geometry checks
 zig build spirv-vga                # build VGA-based SPIR-V shaders
 zig build spirv-raw                # build raw SPIR-V shader baseline
 zig build spirv-compare            # compare GA vs raw SPIR-V shader size
+zig build spirv-spherical           # build Zig-authored S3 ground shaders
 zig build shader-playground-build  # build local Vulkan/GLFW shader playground
 zig build shader-playground        # run playground with raw shaders
 zig build shader-playground-ga     # run playground with GA shaders
+zig build shader-playground-spherical # run Zig-authored S3 ground shader
 nix develop -c nu tools/golden_check.nu  # golden-image palette check
 ```
 

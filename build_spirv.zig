@@ -72,6 +72,7 @@ pub const SpirvSteps = struct {
     vga: *std.Build.Step,
     raw: *std.Build.Step,
     compare: *std.Build.Step,
+    spherical: *std.Build.Step,
 };
 
 pub fn addSpirvSteps(
@@ -132,6 +133,7 @@ pub fn addSpirvSteps(
     const spirv_step = b.step("spirv-vga", "Build the VGA-based SPIR-V vertex and fragment shaders");
     const spirv_raw_step = b.step("spirv-raw", "Build raw SPIR-V vertex and fragment shaders for driver baselines");
     const spirv_compare_step = b.step("spirv-compare", "Build GA and raw SPIR-V vertex shader variants for size comparison");
+    const spirv_spherical_step = b.step("spirv-spherical", "Build the Zig-authored S3 ground SPIR-V shaders");
 
     const spirv_shader_imports = [_]std.Build.Module.Import{
         .{
@@ -211,6 +213,15 @@ pub fn addSpirvSteps(
     spirv_compare_step.dependOn(&ga_vert.step);
     spirv_compare_step.dependOn(&install_ga_vert.step);
 
+    const spherical_shaders = SpirvShaderPair.init("spherical_ground");
+    spherical_shaders.build(b, .{
+        .target = spirv_target,
+        .optimize = optimize,
+        .use_llvm = use_llvm_spirv,
+        .imports = &.{},
+        .pair_step = spirv_spherical_step,
+    });
+
     if (compare_spirv) {
         const compare_sizes_cmd = b.addSystemCommand(&.{ "sh", "-c", "wc -c zig-out/shaders/vga_passthrough_ga.vert.spv zig-out/shaders/vga_passthrough_raw.vert.spv" });
         compare_sizes_cmd.step.dependOn(&install_ga_vert.step);
@@ -222,5 +233,6 @@ pub fn addSpirvSteps(
         .vga = spirv_step,
         .raw = spirv_raw_step,
         .compare = spirv_compare_step,
+        .spherical = spirv_spherical_step,
     };
 }

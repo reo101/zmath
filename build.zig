@@ -229,6 +229,15 @@ fn addLocalVulkanPlaygroundSteps(
     raw_step.dependOn(&run_raw.step);
     if (b.args) |args| run_raw.addArgs(args);
 
+    const run_spherical = b.addRunArtifact(shader_playground_exe);
+    run_spherical.step.dependOn(spirv_steps.spherical);
+    run_spherical.addArgs(&.{
+        "zig-out/shaders/spherical_ground.vert.spv",
+        "zig-out/shaders/spherical_ground.frag.spv",
+    });
+    const spherical_step = b.step("shader-playground-spherical", "Run the Zig-authored S3 ground shader in Vulkan");
+    spherical_step.dependOn(&run_spherical.step);
+
     const run_ga = b.addRunArtifact(shader_playground_exe);
     run_ga.step.dependOn(spirv_steps.vga);
     run_ga.addArgs(&.{
