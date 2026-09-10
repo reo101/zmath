@@ -5,11 +5,15 @@ pub const out_color = @extern(*addrspace(.output) @Vector(4, f32), .{
     .decoration = .{ .location = 0 },
 });
 
-const radius: f32 = 6.0;
-const eye_height: f32 = 1.1;
-const half_fov: f32 = 89.0 * std.math.pi / 180.0;
-const origin_angle: f32 = eye_height / radius;
-const tan_half_fov: f32 = @tan(half_fov / 2.0);
+const Frame = extern struct {
+    width: f32,
+    height: f32,
+    radius: f32,
+    eye_height: f32,
+    tan_half_fov: f32,
+};
+
+const frame = @extern(*addrspace(.push_constant) const Frame, .{ .name = "Frame" });
 
 fn fastAtan2(y: f32, x: f32) f32 {
     const ax = @abs(x);
@@ -27,14 +31,14 @@ fn fastAtan2(y: f32, x: f32) f32 {
 }
 
 export fn main() callconv(.spirv_fragment) void {
-    const resolution = @Vector(2, f32){ 960.0, 640.0 };
+    const resolution = @Vector(2, f32){ frame.width, frame.height };
     const pixel = std.gpu.frag_coord;
     const uv = @Vector(2, f32){
         (pixel[0] / resolution[0]) * 2.0 - 1.0,
         (pixel[1] / resolution[1]) * 2.0 - 1.0,
     };
     const r = @sqrt(uv[0] * uv[0] + uv[1] * uv[1]);
-    const t = r * tan_half_fov;
+    const t = r * frame.tan_half_fov;
     const inverse = 1.0 / (1.0 + t * t);
     const sin_theta = 2.0 * t * inverse;
     const cos_theta = (1.0 - t * t) * inverse;
@@ -42,6 +46,7 @@ export fn main() callconv(.spirv_fragment) void {
     const radial_y = if (r < 0.000001) 0.0 else sin_theta * uv[1] / r;
 
     const direction = @Vector(4, f32){ 0.0, radial_x, radial_y, cos_theta };
+    const origin_angle = frame.eye_height / frame.radius;
     const origin = @Vector(4, f32){ @cos(origin_angle), 0.0, @sin(origin_angle), 0.0 };
     const ground_a = origin[2];
     const ground_b = direction[2];
@@ -50,8 +55,8 @@ export fn main() callconv(.spirv_fragment) void {
     const ground_s = ground_a / ground_h;
     const point = origin * @as(@Vector(4, f32), @splat(ground_c)) + direction * @as(@Vector(4, f32), @splat(ground_s));
 
-    const walk = point[3] * radius;
-    const strafe = fastAtan2(point[1], point[0]) * radius;
+    const walk = point[3] * frame.radius;
+    const strafe = fastAtan2(point[1], point[0]) * frame.radius;
     const checker = @floor(walk) + @floor(strafe);
     const light = 0.6 + 0.4 * @abs(ground_b);
     const dark = checker - @floor(checker / 2.0) * 2.0 >= 1.0;

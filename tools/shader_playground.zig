@@ -6,6 +6,14 @@ const window_width = 960;
 const window_height = 640;
 const max_frames_in_flight = 2;
 
+const SphericalFrame = extern struct {
+    width: f32,
+    height: f32,
+    radius: f32,
+    eye_height: f32,
+    tan_half_fov: f32,
+};
+
 const default_vert_path = "zig-out/shaders/vga_passthrough_raw.vert.spv";
 const default_frag_path = "zig-out/shaders/vga_passthrough_raw.frag.spv";
 
@@ -584,14 +592,19 @@ const App = struct {
         };
 
         var pipeline_layout: c.VkPipelineLayout = null;
+        const push_constant_range = c.VkPushConstantRange{
+            .stageFlags = c.VK_SHADER_STAGE_FRAGMENT_BIT,
+            .offset = 0,
+            .size = @sizeOf(SphericalFrame),
+        };
         const pipeline_layout_info = c.VkPipelineLayoutCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
             .pNext = null,
             .flags = 0,
             .setLayoutCount = 0,
             .pSetLayouts = null,
-            .pushConstantRangeCount = 0,
-            .pPushConstantRanges = null,
+            .pushConstantRangeCount = 1,
+            .pPushConstantRanges = &push_constant_range,
         };
         try vkCheck(c.vkCreatePipelineLayout(self.device, &pipeline_layout_info, null, &pipeline_layout));
         errdefer c.vkDestroyPipelineLayout(self.device, pipeline_layout, null);
@@ -762,6 +775,21 @@ const App = struct {
             };
             c.vkCmdBeginRenderPass(command_buffer, &render_pass_info, c.VK_SUBPASS_CONTENTS_INLINE);
             c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.graphics_pipeline);
+            const frame = SphericalFrame{
+                .width = @floatFromInt(self.swapchain_extent.width),
+                .height = @floatFromInt(self.swapchain_extent.height),
+                .radius = 6.0,
+                .eye_height = 1.1,
+                .tan_half_fov = @tan(89.0 * std.math.pi / 360.0),
+            };
+            c.vkCmdPushConstants(
+                command_buffer,
+                self.pipeline_layout,
+                c.VK_SHADER_STAGE_FRAGMENT_BIT,
+                0,
+                @sizeOf(SphericalFrame),
+                @ptrCast(&frame),
+            );
             c.vkCmdDraw(command_buffer, 3, 1, 0, 0);
             c.vkCmdEndRenderPass(command_buffer);
             try vkCheck(c.vkEndCommandBuffer(command_buffer));
