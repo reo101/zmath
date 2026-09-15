@@ -109,8 +109,7 @@ pub const TangentFrame = struct {
                 inline for (.{ -1.0, 1.0 }) |sz| {
                     const tangent = self.x.scale(sx * half_extent)
                         .add(self.y.scale(sy * half_extent))
-                        .add(self.z.scale(sz * half_extent))
-                        .cast(Direction);
+                        .add(self.z.scale(sz * half_extent));
                     out[i] = expMap(self.center, tangent, self.radius);
                     i += 1;
                 }
@@ -141,7 +140,7 @@ pub fn rasterProjection(
     aspect_scale: f32,
 ) RasterProjection {
     const path_cos = std.math.clamp(dot(origin, target), -1.0, 1.0);
-    const tangent = target.sub(origin.scale(path_cos)).cast(Direction);
+    const tangent = target.sub(origin.scale(path_cos));
     const path_sin = @sqrt(@max(0.0, dot(tangent, tangent)));
     const forward_component = dot(forward, tangent);
     const valid = path_sin > 1e-6 and tan_half_fov > 0.0;
@@ -166,8 +165,7 @@ pub fn frameDirection(forward: Direction, right: Direction, up: Direction, tan_h
     const cos_theta = (1.0 - t * t) * inverse;
     return forward.scale(cos_theta)
         .add(right.scale(sin_theta * u / r))
-        .add(up.scale(sin_theta * v / r))
-        .cast(Direction);
+        .add(up.scale(sin_theta * v / r));
 }
 
 pub const GreatSphereIntersection = struct {
@@ -206,7 +204,7 @@ test "shared spherical view and plane kernels" {
     try std.testing.expectApproxEqAbs(@as(f32, 2.0), projected.clip_w, 1e-6);
     try std.testing.expectApproxEqAbs(@as(f32, 0.5), projected.depth, 1e-6);
 
-    const chart_pole = rasterProjection(origin, forward.negate().cast(Point), forward, right, up, 1.0, 1.0);
+    const chart_pole = rasterProjection(origin, forward.negate(), forward, right, up, 1.0, 1.0);
     try std.testing.expect(chart_pole.valid);
     try std.testing.expectApproxEqAbs(@as(f32, 0.0), chart_pole.clip_w, 1e-6);
 
@@ -223,7 +221,7 @@ test "shared spherical view and plane kernels" {
 pub fn normalize(v: Point) ?Point {
     const n = norm(v);
     if (n <= 1e-8) return null;
-    return v.scale(1.0 / n).cast(Point);
+    return v.scale(1.0 / n);
 }
 
 pub fn rotorBetween(unit_a: Point, unit_b: Point, angle: f32) Rotor {
@@ -235,7 +233,7 @@ pub fn rotorBetween(unit_a: Point, unit_b: Point, angle: f32) Rotor {
 }
 
 pub fn rotate(v: Point, rotor: Rotor) Point {
-    return rotor.gp(v).gp(rotor.reverse()).gradePart(1).cast(Point);
+    return rotor.gp(v).gp(rotor.reverse()).gradePart(1);
 }
 
 pub fn expMap(center: Point, tangent: Direction, radius: f32) Point {
@@ -243,7 +241,7 @@ pub fn expMap(center: Point, tangent: Direction, radius: f32) Point {
     if (len <= 1e-8) return center;
     const angle = len / radius;
     const axis = tangent.scale(1.0 / len);
-    return center.scale(@cos(angle)).add(axis.scale(@sin(angle))).cast(Point);
+    return center.scale(@cos(angle)).add(axis.scale(@sin(angle)));
 }
 
 pub fn logMap(center: Point, target: Point, radius: f32) ?Direction {
@@ -254,7 +252,7 @@ pub fn logMap(center: Point, target: Point, radius: f32) ?Direction {
     const s = @sin(theta);
     if (@abs(s) <= 1e-6) return null; // antipode: no unique shortest direction
 
-    return target.sub(center.scale(c)).scale((theta * radius) / s).cast(Direction);
+    return target.sub(center.scale(c)).scale((theta * radius) / s);
 }
 
 pub fn classifyHemisphere(camera: Point, world_point: Point, epsilon: f32) Hemisphere {
@@ -280,7 +278,7 @@ test "S3 pose moves by GA rotor on the position-forward plane" {
 
 test "S3 log projection sees a forward point in front" {
     const pose = Pose.north(2.0);
-    const target = expMap(pose.position, pose.forward.scale(0.5).cast(Direction), pose.radius);
+    const target = expMap(pose.position, pose.forward.scale(0.5), pose.radius);
     const projected = pose.project(target).?;
 
     try std.testing.expectApproxEqAbs(@as(f32, 0), projected.x, 1e-5);
@@ -309,5 +307,5 @@ test "S3 hemisphere classifier marks the equator border" {
 
     try std.testing.expectEqual(Hemisphere.front, pose.hemisphere(pose.position));
     try std.testing.expectEqual(Hemisphere.border, pose.hemisphere(pose.forward));
-    try std.testing.expectEqual(Hemisphere.back, pose.hemisphere(pose.position.negate().cast(Point)));
+    try std.testing.expectEqual(Hemisphere.back, pose.hemisphere(pose.position.negate()));
 }

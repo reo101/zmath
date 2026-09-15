@@ -59,8 +59,8 @@ export fn main() callconv(.spirv_fragment) void {
     const origin = s3.vector(frame.origin);
     const dir = s3.direction(uv, frame.viewport[3], s3.vector(frame.forward), s3.vector(frame.right), s3.vector(frame.up));
     const intersection = s3.greatSphereIntersection(origin, dir, s3.ground_normal);
-    const point = origin.scale(intersection.cos_angle).add(dir.scale(intersection.sin_angle)).cast(s3.Vector);
-    const tangent = dir.scale(intersection.cos_angle).sub(origin.scale(intersection.sin_angle)).cast(s3.Vector);
+    const point = origin.scale(intersection.cos_angle).add(dir.scale(intersection.sin_angle));
+    const tangent = dir.scale(intersection.cos_angle).sub(origin.scale(intersection.sin_angle));
     const brightness = @abs(tangent.scalarProduct(s3.ground_normal));
     out_color.* = groundColor(point) * @as(RawVec4, @splat(0.6 + 0.4 * brightness));
     std.gpu.frag_depth = (1.0 - intersection.cos_angle) * 0.5;

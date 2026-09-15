@@ -71,7 +71,7 @@ fn pointFromHomogeneous(comptime H: type, w: f32, coords: [3]f32) H.Full {
     const E = H.Basis;
     var v = E.e(4).scale(w).cast(H.Vector);
     inline for (coords, 0..) |coord, i| {
-        v = v.add(E.e(i + 1).scale(coord)).cast(H.Vector);
+        v = v.add(E.e(i + 1).scale(coord));
     }
     return v.dual().cast(H.Full);
 }

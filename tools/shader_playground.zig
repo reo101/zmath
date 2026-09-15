@@ -79,11 +79,11 @@ const FacePoint = struct {
 fn normalizePoint(point: Point) ?Point {
     const length = @sqrt(@max(point.scalarProduct(point), 0.0));
     if (length < 1e-6) return null;
-    return point.scale(1.0 / length).cast(Point);
+    return point.scale(1.0 / length);
 }
 
 fn nullVector(a: Point, b: Point, c_: Point) ?Point {
-    return normalizePoint(a.wedge(b).wedge(c_).hodgeDual().cast(Point));
+    return normalizePoint(a.wedge(b).wedge(c_).hodgeDual());
 }
 
 fn faceContains(point: Point, normals: [6]Point, faces: []const object_scene.Face) bool {
@@ -109,9 +109,9 @@ fn appendSubdividedTriangle(
         try triangles.append(allocator, .{ .points = .{ a, b, c_ }, .color = color, .plane = plane, .object_index = object_index });
         return;
     }
-    const ab = normalizePoint(a.add(b).cast(Point)) orelse return;
-    const bc = normalizePoint(b.add(c_).cast(Point)) orelse return;
-    const ca = normalizePoint(c_.add(a).cast(Point)) orelse return;
+    const ab = normalizePoint(a.add(b)) orelse return;
+    const bc = normalizePoint(b.add(c_)) orelse return;
+    const ca = normalizePoint(c_.add(a)) orelse return;
     try appendSubdividedTriangle(triangles, allocator, a, ab, ca, color, plane, object_index, depth - 1);
     try appendSubdividedTriangle(triangles, allocator, ab, b, bc, color, plane, object_index, depth - 1);
     try appendSubdividedTriangle(triangles, allocator, ca, bc, c_, color, plane, object_index, depth - 1);
@@ -172,7 +172,7 @@ fn buildMeshTriangles(allocator: std.mem.Allocator, file: object_scene.File) ![]
                     if (k == face_index) continue;
                     const candidate = nullVector(normals[face_index], normals[j], normals[k]) orelse continue;
                     for ([_]f32{ 1.0, -1.0 }) |sign| {
-                        const point = candidate.scale(sign).cast(Point);
+                        const point = candidate.scale(sign);
                         if (!faceContains(point, normals, object.faces)) continue;
                         var duplicate = false;
                         for (points[0..point_count]) |existing| {
@@ -188,9 +188,9 @@ fn buildMeshTriangles(allocator: std.mem.Allocator, file: object_scene.File) ![]
             if (point_count < 3) continue;
 
             var center_sum = Point.zero();
-            for (points[0..point_count]) |point| center_sum = center_sum.add(point.point).cast(Point);
+            for (points[0..point_count]) |point| center_sum = center_sum.add(point.point);
             const center = normalizePoint(center_sum) orelse continue;
-            const radial = points[0].point.sub(center.scale(spherical_scene.dot(points[0].point, center))).cast(Point);
+            const radial = points[0].point.sub(center.scale(spherical_scene.dot(points[0].point, center)));
             const e1 = normalizePoint(radial) orelse continue;
             const e2 = nullVector(normals[face_index], center, e1) orelse continue;
             for (points[0..point_count]) |*point| {

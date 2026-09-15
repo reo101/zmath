@@ -39,7 +39,7 @@ pub const Object = struct {
     pub fn transformNormal(self: Object, normal: Vec4) sg.Direction {
         const vector = sg.Direction.init(normal);
         const coefficients = self.transform orelse return vector;
-        return sg.rotate(vector, sg.Rotor.init(coefficients)).cast(sg.Direction);
+        return sg.rotate(vector, sg.Rotor.init(coefficients));
     }
 
     pub fn transformPoint(self: Object, point: Vec4) sg.Point {

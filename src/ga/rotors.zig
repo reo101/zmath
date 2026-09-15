@@ -8,7 +8,7 @@ const meta = @import("meta");
 const euclidean2 = blades.euclideanSignature(2);
 
 /// Canonical mask for the oriented 2D bivector `e12`.
-const e12_mask: blades.BladeMask = .init(0b11);
+const e12_mask = blades.BladeMask.parseForDimensionsPanicking("e12", 2);
 
 fn defaultTolerance(comptime T: type) T {
     return switch (T) {
@@ -66,6 +66,73 @@ fn assertCompatibleVectorAndRotor(comptime Vector: type, comptime RotorType: typ
     if (!std.meta.eql(Vector.metric_signature, RotorType.metric_signature)) {
         @compileError("rotated expects vector and rotor from the same metric signature");
     }
+}
+
+fn isCanonicalEuclideanRotor(comptime dimensions: usize, comptime Vector: type, comptime RotorType: type) bool {
+    return Vector.dimensions == dimensions and
+        Vector.metric_signature.p == dimensions and
+        Vector.metric_signature.q == 0 and
+        Vector.metric_signature.r == 0 and
+        blades.sameBladeSet(RotorType.blades, Vector.EvenType.blades);
+}
+
+fn rotateEuclidean2(vector: anytype, rotor: anytype) @TypeOf(vector).VectorType {
+    const Vector = @TypeOf(vector);
+    const e1 = blades.basisVectorMask(2, 1);
+    const e2 = blades.basisVectorMask(2, 2);
+    const scalar = rotor.scalarCoeff();
+    const bivector = rotor.coeff(e12_mask);
+    const diagonal = scalar * scalar - bivector * bivector;
+    const off_diagonal = 2 * scalar * bivector;
+
+    return Vector.VectorType.init(.{
+        diagonal * vector.coeff(e1) + off_diagonal * vector.coeff(e2),
+        -off_diagonal * vector.coeff(e1) + diagonal * vector.coeff(e2),
+    });
+}
+
+fn rotateEuclidean3(vector: anytype, rotor: anytype) @TypeOf(vector).VectorType {
+    const Vector = @TypeOf(vector);
+    const e1 = blades.basisVectorMask(3, 1);
+    const e2 = blades.basisVectorMask(3, 2);
+    const e3 = blades.basisVectorMask(3, 3);
+    const e12 = blades.BladeMask.parseForDimensionsPanicking("e12", 3);
+    const e13 = blades.BladeMask.parseForDimensionsPanicking("e13", 3);
+    const e23 = blades.BladeMask.parseForDimensionsPanicking("e23", 3);
+
+    const w = rotor.scalarCoeff();
+    const x = -rotor.coeff(e23);
+    const y = rotor.coeff(e13);
+    const z = -rotor.coeff(e12);
+    const vx = vector.coeff(e1);
+    const vy = vector.coeff(e2);
+    const vz = vector.coeff(e3);
+
+    const m00 = w * w + x * x - y * y - z * z;
+    const m01 = 2 * (x * y - w * z);
+    const m02 = 2 * (x * z + w * y);
+    const m10 = 2 * (x * y + w * z);
+    const m11 = w * w - x * x + y * y - z * z;
+    const m12 = 2 * (y * z - w * x);
+    const m20 = 2 * (x * z - w * y);
+    const m21 = 2 * (y * z + w * x);
+    const m22 = w * w - x * x - y * y + z * z;
+
+    if (comptime Vector.VectorType.use_simd) {
+        const column_x: @Vector(3, Vector.Coefficient) = .{ m00, m10, m20 };
+        const column_y: @Vector(3, Vector.Coefficient) = .{ m01, m11, m21 };
+        const column_z: @Vector(3, Vector.Coefficient) = .{ m02, m12, m22 };
+        const lanes = column_x * @as(@Vector(3, Vector.Coefficient), @splat(vx)) +
+            column_y * @as(@Vector(3, Vector.Coefficient), @splat(vy)) +
+            column_z * @as(@Vector(3, Vector.Coefficient), @splat(vz));
+        return Vector.VectorType.initStorage(lanes);
+    }
+
+    return Vector.VectorType.init(.{
+        m00 * vx + m01 * vy + m02 * vz,
+        m10 * vx + m11 * vy + m12 * vz,
+        m20 * vx + m21 * vy + m22 * vz,
+    });
 }
 
 /// Converts degrees to radians.
@@ -247,6 +314,15 @@ pub fn rotated(vector: anytype, rotor: anytype) @TypeOf(vector).VectorType {
     comptime assertFloatRotor(RotorType);
     comptime assertCompatibleVectorAndRotor(Vector, RotorType);
 
+    if (comptime isCanonicalEuclideanRotor(2, Vector, RotorType)) {
+        return rotateEuclidean2(vector, rotor);
+    }
+    if (comptime isCanonicalEuclideanRotor(3, Vector, RotorType)) {
+        return rotateEuclidean3(vector, rotor);
+    }
+
+    // `gradePart(1)` uses the rotor carrier's naming options; preserve the
+    // input vector carrier's names for callers with custom bases.
     return rotor.gp(vector).gp(rotor.reverse()).gradePart(1).cast(Vector.VectorType);
 }
 
@@ -273,11 +349,20 @@ pub fn rotatedAs(comptime To: type, vector: anytype, rotor: anytype) To {
     return rotated(vector, rotor).cast(To);
 }
 
-/// Rotates a vector by an angle in radians using a planar rotor.
+/// Rotates a 2D Euclidean vector by an angle in radians.
+///
+/// This is the specialized equivalent of sandwiching with `planarRotor()`.
+/// Use `rotated()` when the rotor is already available or the algebra is not 2D.
 pub fn rotatedByAngle(vector: anytype, angle_radians: @TypeOf(vector).Coefficient) @TypeOf(vector).VectorType {
     const Vector = @TypeOf(vector);
     comptime assertPlanarEuclideanVector(Vector);
-    return rotated(vector, planarRotor(Vector.Coefficient, angle_radians));
+
+    const sin = @sin(angle_radians);
+    const cos = @cos(angle_radians);
+    return Vector.VectorType.init(.{
+        cos * vector.coeff(blades.basisVectorMask(2, 1)) - sin * vector.coeff(blades.basisVectorMask(2, 2)),
+        sin * vector.coeff(blades.basisVectorMask(2, 1)) + cos * vector.coeff(blades.basisVectorMask(2, 2)),
+    });
 }
 
 test "2D rotors rotate vectors in the expected orientation" {
@@ -381,6 +466,50 @@ test "rotated supports non-2D algebras with compatible even rotors" {
     try std.testing.expect(nearlyEqual(result.coeffNamed("e1"), 1.0, 1e-12));
     try std.testing.expect(nearlyEqual(result.coeffNamed("e2"), 2.0, 1e-12));
     try std.testing.expect(nearlyEqual(result.coeffNamed("e3"), 3.0, 1e-12));
+}
+
+test "3D fast path matches quaternion rotation" {
+    const sig3 = comptime blades.euclideanSignature(3);
+    const Vec3 = multivector.Vector(f64, sig3);
+    const Rotor3 = multivector.Rotor(f64, sig3);
+    const vector = Vec3.init(.{ 1.0, 0.5, -0.25 });
+    // Quaternion (0.5, 0.5, 0.5, 0.5) maps to (s, -e12, e13, -e23).
+    const rotor = Rotor3.init(.{ 0.5, -0.5, 0.5, -0.5 });
+    const result = rotated(vector, rotor);
+
+    const tx = 2.0 * (0.5 * vector.e3() - 0.5 * vector.e2());
+    const ty = 2.0 * (0.5 * vector.e1() - 0.5 * vector.e3());
+    const tz = 2.0 * (0.5 * vector.e2() - 0.5 * vector.e1());
+    const expected = [_]f64{
+        vector.e1() + 0.5 * tx + 0.5 * tz - 0.5 * ty,
+        vector.e2() + 0.5 * ty + 0.5 * tx - 0.5 * tz,
+        vector.e3() + 0.5 * tz + 0.5 * ty - 0.5 * tx,
+    };
+
+    try std.testing.expect(nearlyEqual(result.e1(), expected[0], 1e-12));
+    try std.testing.expect(nearlyEqual(result.e2(), expected[1], 1e-12));
+    try std.testing.expect(nearlyEqual(result.e3(), expected[2], 1e-12));
+}
+
+test "2D fast path preserves non-unit sandwich semantics" {
+    const Vec2 = multivector.Vector(f64, euclidean2);
+    const Rotor2 = multivector.Rotor(f64, euclidean2);
+    const vector = Vec2.init(.{ 1.0, -2.0 });
+    const rotor = Rotor2.init(.{ 2.0, -0.75 });
+    const expected = rotor.gp(vector).gp(rotor.reverse()).gradePart(1);
+
+    try std.testing.expect(rotated(vector, rotor).eql(expected));
+}
+
+test "3D fast path preserves non-unit sandwich semantics" {
+    const sig3 = comptime blades.euclideanSignature(3);
+    const Vec3 = multivector.Vector(f64, sig3);
+    const Rotor3 = multivector.Rotor(f64, sig3);
+    const vector = Vec3.init(.{ 1.0, -2.0, 0.5 });
+    const rotor = Rotor3.init(.{ 2.0, -1.0, 0.75, -0.25 });
+    const expected = rotor.gp(vector).gp(rotor.reverse()).gradePart(1);
+
+    try std.testing.expect(rotated(vector, rotor).eql(expected));
 }
 
 test "normalizedRotor remains finite for 3D exponentiated bivectors" {

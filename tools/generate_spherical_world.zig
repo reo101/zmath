@@ -2,7 +2,6 @@ const std = @import("std");
 const scene = @import("spherical_scene");
 
 const Point = scene.Point;
-const Direction = scene.Direction;
 
 fn dot(a: Point, b: Point) f32 {
     return scene.dot(a, b);
@@ -33,18 +32,18 @@ fn printPlank(fence: scene.Fence, arc: f32, object_index: usize) void {
     const theta = arc / fence.radius;
     const sin_theta = @sin(theta);
     const cos_theta = @cos(theta);
-    const radial = fence.anchor.cast(Direction).scale(cos_theta).add(fence.axis.scale(sin_theta));
-    const pole = fence.pole.cast(Direction);
+    const radial = fence.anchor.scale(cos_theta).add(fence.axis.scale(sin_theta));
+    const pole = fence.pole;
     const sin_half_width = @sin(0.5 * fence.width / fence.radius);
     const cos_half_width = @cos(0.5 * fence.width / fence.radius);
     const sin_half_thick = @sin(0.5 * fence.thickness / fence.radius);
     const cos_half_thick = @cos(0.5 * fence.thickness / fence.radius);
     const near = pole.scale(cos_half_thick).sub(radial.scale(sin_half_thick));
     const far = pole.scale(cos_half_thick).add(radial.scale(sin_half_thick));
-    const low_raw = fence.anchor.cast(Direction)
+    const low_raw = fence.anchor
         .scale(cos_theta * sin_half_width - sin_theta * cos_half_width)
         .add(fence.axis.scale(cos_theta * cos_half_width + sin_theta * sin_half_width));
-    const high_raw = fence.anchor.cast(Direction)
+    const high_raw = fence.anchor
         .scale(-(cos_theta * sin_half_width + sin_theta * cos_half_width))
         .add(fence.axis.scale(cos_theta * cos_half_width - sin_theta * sin_half_width));
     const low = if (dot(radial, low_raw) < 0.0) low_raw.negate() else low_raw;
@@ -53,7 +52,7 @@ fn printPlank(fence: scene.Fence, arc: f32, object_index: usize) void {
     const cos_top = @sqrt(1.0 - sin_top * sin_top);
     const world_up = Point.init(.{ 0, 0, 1, 0 });
     const cap = world_up.scale(cos_top).sub(radial.scale(sin_top));
-    const center = radial.scale(@cos(0.5 * fence.height / fence.radius)).add(world_up.scale(@sin(0.5 * fence.height / fence.radius))).cast(Point);
+    const center = radial.scale(@cos(0.5 * fence.height / fence.radius)).add(world_up.scale(@sin(0.5 * fence.height / fence.radius)));
     const bound_angle = (0.5 * fence.width + 0.5 * fence.thickness + fence.height) / fence.radius;
 
     std.debug.print("    {{\n      \"name\": \"picket_{d}\",\n      \"kind\": \"halfspaces\",\n", .{object_index});
@@ -72,18 +71,18 @@ fn printRail(fence: scene.Fence, arc: f32, segment_width: f32, sin_lo: f32, cos_
     const theta = arc / fence.radius;
     const sin_theta = @sin(theta);
     const cos_theta = @cos(theta);
-    const radial = fence.anchor.cast(Direction).scale(cos_theta).add(fence.axis.scale(sin_theta));
-    const pole = fence.pole.cast(Direction);
+    const radial = fence.anchor.scale(cos_theta).add(fence.axis.scale(sin_theta));
+    const pole = fence.pole;
     const sin_thick = @sin(0.5 * scene.default_fence_rail_thickness / fence.radius);
     const cos_thick = @cos(0.5 * scene.default_fence_rail_thickness / fence.radius);
     const near = pole.scale(cos_thick).sub(radial.scale(sin_thick));
     const far = pole.scale(cos_thick).add(radial.scale(sin_thick));
     const sin_half_width = @sin(0.5 * segment_width / fence.radius);
     const cos_half_width = @cos(0.5 * segment_width / fence.radius);
-    const low_raw = fence.anchor.cast(Direction)
+    const low_raw = fence.anchor
         .scale(cos_theta * sin_half_width - sin_theta * cos_half_width)
         .add(fence.axis.scale(cos_theta * cos_half_width + sin_theta * sin_half_width));
-    const high_raw = fence.anchor.cast(Direction)
+    const high_raw = fence.anchor
         .scale(-(cos_theta * sin_half_width + sin_theta * cos_half_width))
         .add(fence.axis.scale(cos_theta * cos_half_width - sin_theta * sin_half_width));
     const low = if (dot(radial, low_raw) < 0.0) low_raw.negate() else low_raw;
@@ -93,7 +92,7 @@ fn printRail(fence: scene.Fence, arc: f32, segment_width: f32, sin_lo: f32, cos_
     const bottom = world_up.scale(cos_lo).sub(radial.scale(sin_lo));
     const center_sin = 0.5 * (sin_lo + sin_hi);
     const center_cos = @sqrt(1.0 - center_sin * center_sin);
-    const center = radial.scale(center_cos).add(world_up.scale(center_sin)).cast(Point);
+    const center = radial.scale(center_cos).add(world_up.scale(center_sin));
     const bound_angle = (0.5 * segment_width + 0.5 * scene.default_fence_rail_thickness + 0.1) / fence.radius;
 
     std.debug.print("    {{\n      \"name\": \"rail_{d}\",\n      \"kind\": \"halfspaces\",\n", .{object_index});

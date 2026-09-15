@@ -396,7 +396,7 @@ pub const Tracer = struct {
             .radius = cube.radius,
             .plane_a = undefined,
             .ground_a = sg.dot(camera_pose.position, worldUp()),
-            .fence_pole = fence.pole.cast(Direction),
+            .fence_pole = fence.pole,
             .fence_a = sg.dot(camera_pose.position, fence.pole),
             .sin_half_width = @sin(0.5 * fence.width / fence.radius),
             .cos_half_width = @cos(0.5 * fence.width / fence.radius),
@@ -441,8 +441,7 @@ pub const Tracer = struct {
         const sin_theta = @sin(theta);
         return self.forward.scale(@cos(theta))
             .add(self.right.scale(sin_theta * u / r))
-            .add(self.up.scale(sin_theta * v / r))
-            .cast(Direction);
+            .add(self.up.scale(sin_theta * v / r));
     }
 
     /// Intersects the ray with the geodesic box of the plank centered at
@@ -478,7 +477,7 @@ pub const Tracer = struct {
         sin_hi: f32,
         cos_hi: f32,
     ) ?PlankEntry {
-        const radial = self.fence.anchor.cast(Direction).scale(cos_theta)
+        const radial = self.fence.anchor.scale(cos_theta)
             .add(self.fence.axis.scale(sin_theta));
         const n_near = self.fence_pole.scale(self.cos_rail_thick)
             .sub(radial.scale(self.sin_rail_thick));
@@ -502,7 +501,7 @@ pub const Tracer = struct {
         cos_theta: f32,
         sin_top: f32,
     ) ?PlankEntry {
-        const radial = self.fence.anchor.cast(Direction).scale(cos_theta)
+        const radial = self.fence.anchor.scale(cos_theta)
             .add(self.fence.axis.scale(sin_theta));
         const n_near = self.fence_pole.scale(self.cos_half_thick)
             .sub(radial.scale(self.sin_half_thick));
@@ -514,10 +513,10 @@ pub const Tracer = struct {
         // angle, which would make the box inside-out for planks on half
         // the ring. With both normals pointing inward, inside is simply
         // x.edge >= 0 for both.
-        const edge_low_raw = self.fence.anchor.cast(Direction)
+        const edge_low_raw = self.fence.anchor
             .scale(cos_theta * self.sin_half_width - sin_theta * self.cos_half_width)
             .add(self.fence.axis.scale(cos_theta * self.cos_half_width + sin_theta * self.sin_half_width));
-        const edge_high_raw = self.fence.anchor.cast(Direction)
+        const edge_high_raw = self.fence.anchor
             .scale(-(cos_theta * self.sin_half_width + sin_theta * self.cos_half_width))
             .add(self.fence.axis.scale(cos_theta * self.cos_half_width - sin_theta * self.sin_half_width));
         const edge_low = if (sg.dot(radial, edge_low_raw) < 0.0) edge_low_raw.negate() else edge_low_raw;
@@ -557,8 +556,7 @@ pub const Tracer = struct {
         fence_part: *FencePart,
     ) bool {
         const cap_point = self.origin.scale(@cos(phi_c))
-            .add(dir.scale(@sin(phi_c)))
-            .cast(Point);
+            .add(dir.scale(@sin(phi_c)));
         // Cheap wedge gate before the full box solve: the cap point sits
         // on the top-level plane; its offset from the curtain tube is the
         // plank's thickness, widened by the arc-bound bulge of the rim
@@ -666,8 +664,7 @@ pub const Tracer = struct {
             const cos_f = -b_fence / h_fence;
             if (sin_f > 1e-3) {
                 const curtain_point = self.origin.scale(cos_f)
-                    .add(dir.scale(sin_f))
-                    .cast(Point);
+                    .add(dir.scale(sin_f));
                 const sin_psi = sg.dot(curtain_point, worldUp());
                 if (sin_psi >= 0.0 and sin_psi <= 3.0 * sin_top) {
                     const theta = fastAtan2(
@@ -701,8 +698,7 @@ pub const Tracer = struct {
         // coordinates degenerate to noise, but the box test then simply
         // rejects - no plank stands there.
         const ground_point = self.origin.scale(cos_ground)
-            .add(dir.scale(sin_ground))
-            .cast(Point);
+            .add(dir.scale(sin_ground));
         // Cheap reach gate: the plank stands within (height + width) of
         // the ring; rays whose ground foot is farther from the ring than
         // that (measured along the ground from the curtain plane) can
@@ -774,8 +770,7 @@ pub const Tracer = struct {
                 const cos_f = -b_rail / @sqrt(h_r2);
                 if (sin_f > 1e-3 and sin_f <= mean_cos) {
                     const rail_point = self.origin.scale(cos_f)
-                        .add(dir.scale(sin_f))
-                        .cast(Point);
+                        .add(dir.scale(sin_f));
                     // Height at the curtain crossing must be in band.
                     const psi_c = sg.dot(rail_point, worldUp());
                     if (psi_c >= rail.lo and psi_c <= rail.hi) {
@@ -807,8 +802,7 @@ pub const Tracer = struct {
                     for (roots) |phi_c| {
                         if (phi_c <= 0.0 or phi_c >= std.math.pi) continue;
                         const cap_point = self.origin.scale(@cos(phi_c))
-                            .add(dir.scale(@sin(phi_c)))
-                            .cast(Point);
+                            .add(dir.scale(@sin(phi_c)));
                         // Cheap reach gate before the full rail solve
                         // (rail band tops out at 1.45 units).
                         if (@abs(sg.dot(cap_point, self.fence_pole)) > 0.3) continue;
@@ -906,11 +900,9 @@ pub const Tracer = struct {
         }
 
         const point = self.origin.scale(cos_alpha)
-            .add(dir.scale(sin_alpha))
-            .cast(Point);
+            .add(dir.scale(sin_alpha));
         const tangent = dir.scale(cos_alpha)
-            .sub(self.origin.scale(sin_alpha))
-            .cast(Direction);
+            .sub(self.origin.scale(sin_alpha));
         var brightness = sg.dot(tangent, inward);
         if (best_entry == null) brightness = -brightness;
         if (surface == .ground or surface == .fence) brightness = @abs(brightness);
@@ -1036,7 +1028,7 @@ pub const Scene = struct {
         // initial bearing toward the cube center (tangent-projected).
         const camera_pose = self.camera();
         const cosine = sg.dot(camera_pose.position, self.cube.center);
-        const bearing = self.cube.center.sub(camera_pose.position.scale(cosine)).cast(Direction);
+        const bearing = self.cube.center.sub(camera_pose.position.scale(cosine));
         const bearing_unit = sg.normalize(bearing) orelse return 1.0;
         return sg.dot(camera_pose.forward, bearing_unit);
     }
@@ -1070,8 +1062,7 @@ fn facePlane(center: Point, axis: Direction, sign: f32, half_extent: f32, radius
     const angle = half_extent / radius;
     return .{
         .inward_normal = center.scale(@sin(angle))
-            .sub(axis.scale(sign * @cos(angle)))
-            .cast(Direction),
+            .sub(axis.scale(sign * @cos(angle))),
         .face = face,
     };
 }
@@ -1144,8 +1135,8 @@ test "cube planes enclose the center and share face edges" {
     // cos(b)·sin(a) - sin(b)·cos(a)/sqrt(2) = 0, i.e. b = atan(sqrt(2)·tan(a)).
     const a = cube.half_extent / cube.radius;
     const beta = std.math.atan(@sqrt(2.0) * std.math.tan(a));
-    const diagonal = cube.right.scale(-1.0).add(cube.forward.scale(-1.0)).cast(Direction);
-    const edge = sg.expMap(cube.center, sg.normalize(diagonal).?.scale(beta * cube.radius).cast(Direction), cube.radius);
+    const diagonal = cube.right.scale(-1.0).add(cube.forward.scale(-1.0));
+    const edge = sg.expMap(cube.center, sg.normalize(diagonal).?.scale(beta * cube.radius), cube.radius);
 
     for (cube.planes) |plane| {
         const side = sg.dot(edge, plane.inward_normal);
@@ -1218,7 +1209,7 @@ test "fence planks wrap the zenith with far planks at scale" {
 }
 
 fn unitToward(from: Point, to: Point) Direction {
-    const raw = to.sub(from.scale(sg.dot(from, to))).cast(Direction);
+    const raw = to.sub(from.scale(sg.dot(from, to)));
     return raw.scale(1.0 / @sqrt(sg.dot(raw, raw)));
 }
 
@@ -1230,11 +1221,10 @@ test "fence planks flip through their edges when circling the ring" {
     // cube's silhouette from the start.
     const picket_angle = 11.775 / default_radius;
     const mid_height = (default_fence_height / 2.0) / default_radius;
-    const radial = scene.fence.anchor.cast(Direction).scale(@cos(picket_angle))
+    const radial = scene.fence.anchor.scale(@cos(picket_angle))
         .add(scene.fence.axis.scale(@sin(picket_angle)));
     const target = radial.scale(@cos(mid_height))
-        .add(worldUp().scale(@sin(mid_height)))
-        .cast(Point);
+        .add(worldUp().scale(@sin(mid_height)));
 
     // From the cube the sight line crosses the curtain rotated toward the
     // pole (the plank's near face) inside the plank's arc range.
@@ -1251,27 +1241,25 @@ test "fence planks flip through their edges when circling the ring" {
     const stand_theta = (stand_angle - 0.5) / default_radius;
     const eps = 0.01;
     const ground = scene.fence.pole.scale(@sin(eps))
-        .add(scene.fence.anchor.cast(Direction).scale(@cos(stand_theta) * @cos(eps)))
-        .add(scene.fence.axis.scale(@sin(stand_theta) * @cos(eps)))
-        .cast(Point);
+        .add(scene.fence.anchor.scale(@cos(stand_theta) * @cos(eps)))
+        .add(scene.fence.axis.scale(@sin(stand_theta) * @cos(eps)));
     const lift = sg.rotorBetween(ground, worldUp(), default_eye_height / default_radius);
     const pose = sg.Pose{
         .position = sg.rotate(ground, lift),
-        .right = sg.rotate(ground.cast(Direction), lift),
+        .right = sg.rotate(ground, lift),
         .up = sg.rotate(worldUp(), lift),
         .forward = sg.rotate(
-            scene.fence.anchor.cast(Direction).scale(-@sin(stand_theta))
+            scene.fence.anchor.scale(-@sin(stand_theta))
                 .add(scene.fence.axis.scale(@cos(stand_theta))),
             lift,
         ),
         .radius = default_radius,
     };
     const edge_tracer = Tracer.init(pose, scene.cube, scene.fence);
-    const edge_target = scene.fence.anchor.cast(Direction)
+    const edge_target = scene.fence.anchor
         .scale(@cos(stand_angle / default_radius) * @cos(mid_height))
         .add(scene.fence.axis.scale(@sin(stand_angle / default_radius) * @cos(mid_height)))
-        .add(worldUp().scale(@sin(mid_height)))
-        .cast(Point);
+        .add(worldUp().scale(@sin(mid_height)));
     const edge_hit = edge_tracer.trace(unitToward(edge_tracer.origin, edge_target));
     try std.testing.expectEqual(Surface.fence, edge_hit.surface);
     try std.testing.expectEqual(FencePart.edge, edge_hit.fence_part);
@@ -1352,8 +1340,7 @@ test "cube image owns the zenith and releases it at the horizon" {
             fn f(t: Tracer, zeta: f32, psi: f32) Direction {
                 return t.up.scale(@cos(zeta))
                     .add(t.forward.scale(@sin(zeta) * @cos(psi)))
-                    .add(t.right.scale(@sin(zeta) * @sin(psi)))
-                    .cast(Direction);
+                    .add(t.right.scale(@sin(zeta) * @sin(psi)));
             }
         }.f;
 
