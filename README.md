@@ -1,19 +1,36 @@
 # zmath
 
-`zmath` is a Zig library for compile-time-specialized Geometric Algebra / Clifford Algebra.
+[![CI](https://github.com/reo101/zmath/actions/workflows/ci.yml/badge.svg)](https://github.com/reo101/zmath/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-The core idea: describe the algebra in the type system, keep multivectors sparse, and let `comptime` erase as much abstraction as possible.
+[zmath](https://github.com/reo101/zmath) is a Zig library for
+compile-time-specialized geometric algebra and Clifford algebra.
+
+Describe an algebra in the type system, keep its multivectors sparse, and let
+`comptime` erase the generic machinery. The result is type-directed products
+and carriers without paying for the whole algebra when an operation cannot
+produce it.
+
+## Requirements
+
+Zig 0.16.0 or newer.
 
 ## Install
 
+Fetch the repository. Zig resolves the default branch and records the resulting
+commit and content hash in the consuming project's `build.zig.zon`.
+
 ```sh
-zig fetch --save <repo-url>
+zig fetch --save git+https://github.com/reo101/zmath
 ```
 
-Then in your `build.zig`:
+Import its `zmath` module from `build.zig`:
 
 ```zig
-const zmath = b.dependency("zmath", .{ .target = target }).module("zmath");
+const zmath = b.dependency("zmath", .{
+    .target = target,
+    .optimize = optimize,
+}).module("zmath");
 
 const exe = b.addExecutable(.{
     .name = "app",
@@ -26,7 +43,7 @@ const exe = b.addExecutable(.{
 });
 ```
 
-## Quick example
+## Quick start
 
 ```zig
 const std = @import("std");
@@ -35,86 +52,112 @@ const zmath = @import("zmath");
 const Cl3 = zmath.ga.Algebra(.euclidean(3)).Instantiate(f32);
 
 pub fn main() void {
-    const v = Cl3.Vector.init(.{ 1, 2, 3 });
-    const result = Cl3.expr("{v} ^ e12 + 5", .{ .v = v });
+    const vector = Cl3.Vector.init(.{ 1, 2, 3 });
+    const result = Cl3.expr("{vector} ^ e12 + 5", .{ .vector = vector });
     std.debug.print("{}\n", .{result});
 }
 ```
 
-## Main surfaces
-
-- `zmath.ga`: algebra factory, sparse multivectors, products, duals, rotors,
-  RGA interior products/projections (`ga.rga`), and the comptime expression
-  compiler. `ga.Algebra(sig)` is the entry point; see below.
-- `zmath.geometry`: constant-curvature and spherical-game geometry kernels.
-- `zmath.parse`: comptime expression parser (implementation detail of `ga`).
-
-## Making an algebra
-
-`ga.Algebra(sig)` bakes a `Cl(p, q, r)` signature into a namespace of
-comptime-specialized types:
+`ga.Algebra(signature)` produces an algebra factory. `Instantiate(T)` binds a
+coefficient type and exposes sparse carriers such as `Vector`, `Bivector`,
+`Rotor`, `Even`, `KVector(n)`, and `Full`, plus product and expression helpers.
 
 ```zig
-const Cl3 = zmath.ga.Algebra(.euclidean(3)).Instantiate(f32);
-// Cl3.Vector, Cl3.Rotor, Cl3.KVector(2), Cl3.Basis, Cl3.expr, ...
+const Cl31 = zmath.ga.Algebra(.{ .p = 3, .q = 1 }).Instantiate(f64);
+const scalar = Cl31.Scalar.init(.{1});
+const e1 = Cl31.basisVector(1);
+const product = e1.gp(e1);
+_ = scalar;
+_ = product;
 ```
 
-Signatures are plain values: `.euclidean(n)`, or explicit `.{ .p = 3, .q = 1 }`
-for mixed metrics (the library itself uses `Cl(3,1)` for hyperbolic space and
-`Cl(4,0)` for S³). Non-default basis naming (projective `e0` axes, custom
-names) is configured with
-`ga.AlgebraWithNamingOptions(sig, ga.blade_parsing.SignedBladeNamingOptions)`
-— see the naming test in `src/ga.zig` for the pattern.
+Signatures can use `.euclidean(n)` or explicit `.{ .p, .q, .r }` values for
+`Cl(p, q, r)`. For custom basis names, including a projective `e0` axis, use
+`ga.AlgebraWithNamingOptions`. The tested pattern lives in
+[`src/ga.zig`](src/ga.zig).
+
+## Surfaces
+
+- `zmath.ga`: algebra factories, sparse multivectors, products, duals, rotors,
+  RGA operations, PGA helpers, and the comptime expression compiler.
+- `zmath.ga.pga`: semantic `Cl(3,0,1)` helpers. `pga.extend(Base)` adds planes,
+  points, lines, motors, direct motor composition, and prepared point/direction
+  transforms while retaining the sparse base carriers.
+- `zmath.geometry`: constant-curvature, spherical-game, and hyperbolic geometry
+  kernels.
+- `zmath.parse`: the expression parser used by `ga`.
+
+### PGA example
+
+```zig
+const std = @import("std");
+const zmath = @import("zmath");
+
+const RawP3 = zmath.ga.Algebra(.{ .p = 3, .q = 0, .r = 1 }).Instantiate(f32);
+const P3 = zmath.ga.pga.extend(RawP3);
+
+pub fn main() !void {
+    const motor = P3.compose(
+        P3.translator(.{ 1, 0, 0 }),
+        try P3.rotation(.{ 0, 0, 1 }, std.math.pi / 2),
+    );
+    const transformed = P3.transformPoint(P3.point(.{ 1, 0, 0 }), motor);
+    _ = transformed;
+}
+```
+
+Use `P3.prepare(motor)` when applying one motor to a batch of points or
+directions.
 
 ## Conventions
 
-- Prefer `complementDual()` for the metric-independent Poincaré dual.
-- `dual()` is only a short alias for `complementDual()`.
-- Use `hodgeDual()` for the metric-aware dual on non-degenerate metrics.
+- `gp()` / `geometricProduct()` is the Clifford product.
+- `wedge()` / `outerProduct()` is the exterior product.
+- `complementDual()` is the metric-independent Poincaré dual and is the default
+  dual for degenerate projective metrics.
+- `dual()` is an alias for `complementDual()`.
+- `hodgeDual()` is the metric-aware dual and requires a non-degenerate metric.
 
-See `docs/ga-conventions.md` for the product, duality, and expression
-conventions.
+See [GA conventions](docs/ga-conventions.md) for products, duality, expression
+syntax, RGA operations, and the PGA model.
 
-## Demos
-
-The S³ walker is a Vulkan raster renderer: a spherical cube,
-conjugate-region reverse perspective, and a great-circle picket fence.
-Its S³ geometry is authored once in Zig with `Cl(4,0)` zmath kernels.
-
-`demo-worlds` is a separate raylib executable with four live-switchable
-spaces (euclidean / isometric / spherical / hyperbolic). The hyperbolic
-world walks the hyperboloid on GA carriers with Beltrami-Klein projection.
-
-Both scene cores are pinned by headless geometry tests.
-
-## Commands
+## Build and test
 
 ```sh
-zig build test --summary all       # suite: 140 tests across 10 binaries
-zig build run                      # usage example
-zig build bench-simd               # micro-benchmark (ReleaseFast)
-zig build fuzz-expr                # expression parser/evaluator smoke fuzz
-zig build fuzz-ga                  # GA algebra-law property tests (Smith-driven)
-zig build demo-spherical-build     # build the Vulkan S3 spherical-game demo
-zig build demo-spherical           # run the Vulkan S3 spherical-game demo
-zig build demo-spherical-check     # headless S3 demo geometry checks
-zig build demo-worlds-build        # build the raylib worlds demo (4 spaces)
-zig build demo-worlds              # run the worlds demo (keys 1-4 switch)
-zig build demo-worlds-check        # headless worlds geometry checks
-zig build spirv-vga                # build VGA-based SPIR-V shaders
-zig build spirv-raw                # build raw SPIR-V shader baseline
-zig build spirv-compare            # compare GA vs raw SPIR-V shader size
-zig build spirv-spherical           # build Zig-authored S3 ground shaders
-zig build shader-playground-build  # build local Vulkan/GLFW shader playground
-zig build shader-playground        # run playground with raw shaders
-zig build shader-playground-ga     # run playground with GA shaders
-zig build shader-playground-spherical # run the Vulkan S3 renderer
+zig build test                         # all tests
+zig build run                          # usage example
+zig build bench-simd                   # full ReleaseFast micro-benchmark suite
+zig build bench-simd -- vec3           # one benchmark case
+zig build bench-simd -- rotate2
+zig build bench-simd -- rotor3
+zig build bench-simd -- pga-compose
+zig build bench-simd -- pga-point
+zig build fuzz-expr                    # expression parser/evaluator smoke fuzz
+zig build fuzz-ga                      # GA algebra-law fuzz target
 ```
 
-The Vulkan demo and shader playground are the same renderer. Run it from the
-Nix devshell so Vulkan/GLFW and `spirv-opt` are available. It uses W/S to walk,
-A/D to strafe, arrows to look, R to reset, and Esc to quit.
+## Demos and shaders
+
+The graphical tooling is optional. Run it from the Nix devshell so Vulkan,
+GLFW, raylib, and `spirv-opt` are available.
+
+```sh
+zig build demo-spherical-build         # build the Vulkan S³ scene
+zig build demo-spherical               # run the Vulkan S³ scene
+zig build demo-spherical-check         # headless S³ geometry checks
+zig build demo-worlds-build            # build the raylib four-space demo
+zig build demo-worlds                  # run it, keys 1–4 switch spaces
+zig build demo-worlds-check            # headless worlds checks
+zig build spirv-vga                    # build GA SPIR-V shaders
+zig build spirv-raw                    # build raw-SPIR-V baselines
+zig build spirv-compare                # compare shader sizes
+zig build spirv-spherical              # build Zig-authored S³ shaders
+zig build shader-playground-build      # build the Vulkan shader playground
+zig build shader-playground            # run raw shaders
+zig build shader-playground-ga         # run GA shaders
+zig build shader-playground-spherical  # run the Zig-authored S³ scene
+```
 
 ## License
 
-MIT. See `LICENSE`.
+[MIT](LICENSE).
