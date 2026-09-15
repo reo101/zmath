@@ -311,9 +311,10 @@ pub const SphericalRenderer = struct {
     radius: f32,
 
     pub fn init(world: scene.Scene) SphericalRenderer {
+        const cam = world.frameCamera();
         return .{
-            .tracer = world.tracer(),
-            .cam = world.frameCamera(),
+            .tracer = scene.Tracer.init(cam.pose, world.cube, world.fence),
+            .cam = cam,
             .radius = world.radius,
         };
     }

@@ -48,7 +48,7 @@ pub fn build(b: *std.Build) void {
     const bench_step = b.step("bench-simd", "Run SIMD micro-benchmarks (ReleaseFast)");
     bench_step.dependOn(&b.addRunArtifact(bench).step);
 
-    addSphericalGameDemoSteps(b, target, optimize, modules);
+    addSphericalGameToolSteps(b, target, modules);
     addWorldsDemoSteps(b, target, optimize, modules);
     addLocalVulkanPlaygroundSteps(b, target, optimize, use_llvm_spirv, compare_spirv, modules);
     addTests(b, target, optimize, modules, example, fuzz_use_llvm);
@@ -117,40 +117,11 @@ fn addModules(b: *std.Build, target: std.Build.ResolvedTarget) Modules {
     };
 }
 
-fn addSphericalGameDemoSteps(
+fn addSphericalGameToolSteps(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
     modules: Modules,
 ) void {
-    const spherical_shader = b.addModule("spherical_shader", .{
-        .root_source_file = b.path("src/shaders/spherical_source.zig"),
-        .target = target,
-    });
-    const exe = b.addExecutable(.{
-        .name = "zmath-demo-spherical",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/demos/spherical_game/main.zig"),
-            .target = target,
-            // Per-pixel S3 ray tracing needs optimization; Debug is unusable.
-            .optimize = if (optimize == .Debug) .ReleaseFast else optimize,
-            .link_libc = true,
-            .imports = &.{
-                .{ .name = "zmath", .module = modules.zmath },
-                .{ .name = "spherical_shader", .module = spherical_shader },
-            },
-        }),
-    });
-    addEnvModuleIncludePaths(b, exe.root_module, "C_INCLUDE_PATH");
-    addEnvModuleIncludePaths(b, exe.root_module, "CPATH");
-    exe.root_module.linkSystemLibrary("raylib", .{});
-
-    const build_step = b.step("demo-spherical-build", "Build the raylib S3 spherical-game demo");
-    build_step.dependOn(&exe.step);
-
-    const step = b.step("demo-spherical", "Run the raylib S3 spherical-game demo");
-    step.dependOn(&b.addRunArtifact(exe).step);
-
     const generator = b.addExecutable(.{
         .name = "generate-spherical-world-v2",
         .root_module = b.createModule(.{
@@ -255,6 +226,12 @@ fn addLocalVulkanPlaygroundSteps(
     if (b.args) |args| run_spherical.addArgs(args);
     const spherical_step = b.step("shader-playground-spherical", "Run the Zig-authored S3 rasterized spherical scene in Vulkan");
     spherical_step.dependOn(&run_spherical.step);
+
+    const spherical_demo_build = b.step("demo-spherical-build", "Build the Vulkan S3 spherical-game demo");
+    spherical_demo_build.dependOn(&shader_playground_exe.step);
+    spherical_demo_build.dependOn(spirv_steps.spherical);
+    const spherical_demo = b.step("demo-spherical", "Run the Vulkan S3 spherical-game demo");
+    spherical_demo.dependOn(&run_spherical.step);
 
     const run_ga = b.addRunArtifact(shader_playground_exe);
     run_ga.step.dependOn(spirv_steps.vga);

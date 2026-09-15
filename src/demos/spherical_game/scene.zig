@@ -995,8 +995,8 @@ pub const Scene = struct {
 
     pub fn sampleFrame(self: Scene, width: usize, height: usize) ViewStats {
         var stats = ViewStats{};
-        const frame_tracer = self.tracer();
         const cam = self.frameCamera();
+        const frame_tracer = Tracer.init(cam.pose, self.cube, self.fence);
         for (0..height) |row| {
             for (0..width) |column| {
                 const u = ((@as(f32, @floatFromInt(column)) + 0.5) / @as(f32, @floatFromInt(width))) * 2.0 - 1.0;

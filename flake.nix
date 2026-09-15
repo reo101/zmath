@@ -67,9 +67,6 @@
                 pkgs.spirv-tools
                 pkgs.python3
                 pkgs.vulkan-tools
-                # golden-image check (tools/golden_check.nu)
-                pkgs.imagemagick
-                pkgs.xorg-server
                 pkgs.nushell
               ];
               buildInputs = nativeGraphicsInputs;
@@ -89,9 +86,6 @@
               packages = [
                 zig
                 pkgs.pkg-config
-                # golden-image check (tools/golden_check.nu)
-                pkgs.imagemagick
-                pkgs.xorg-server
                 pkgs.nushell
               ];
               buildInputs = nativeGraphicsInputs;

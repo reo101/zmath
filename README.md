@@ -77,19 +77,15 @@ conventions.
 
 ## Demos
 
-Two first-hit ray-tracing demos double as the geometry library's test rigs:
+The S³ walker is a Vulkan raster renderer: a spherical cube,
+conjugate-region reverse perspective, and a great-circle picket fence.
+Its S³ geometry is authored once in Zig with `Cl(4,0)` zmath kernels.
 
-- `demo-spherical`: S³ walker - a spherical cube, conjugate-region
-  reverse perspective, and a great-circle picket fence, rendered with a
-  zero-iteration exact tracer.
-- `demo-worlds`: one executable, four spaces (euclidean / isometric /
-  spherical / hyperbolic), live-switched with keys 1-4. The hyperbolic
-  world walks the hyperboloid on GA carriers with Beltrami-Klein
-  projection.
+`demo-worlds` is a separate raylib executable with four live-switchable
+spaces (euclidean / isometric / spherical / hyperbolic). The hyperbolic
+world walks the hyperboloid on GA carriers with Beltrami-Klein projection.
 
-Both demos split scene from backend, so their geometry is pinned by
-headless tests (`demo-*-check` steps) and by the golden-image palette
-check (`tools/golden_check.nu`).
+Both scene cores are pinned by headless geometry tests.
 
 ## Commands
 
@@ -99,8 +95,8 @@ zig build run                      # usage example
 zig build bench-simd               # micro-benchmark (ReleaseFast)
 zig build fuzz-expr                # expression parser/evaluator smoke fuzz
 zig build fuzz-ga                  # GA algebra-law property tests (Smith-driven)
-zig build demo-spherical-build     # build the raylib S3 spherical-game demo
-zig build demo-spherical           # run the spherical-game demo
+zig build demo-spherical-build     # build the Vulkan S3 spherical-game demo
+zig build demo-spherical           # run the Vulkan S3 spherical-game demo
 zig build demo-spherical-check     # headless S3 demo geometry checks
 zig build demo-worlds-build        # build the raylib worlds demo (4 spaces)
 zig build demo-worlds              # run the worlds demo (keys 1-4 switch)
@@ -112,16 +108,12 @@ zig build spirv-spherical           # build Zig-authored S3 ground shaders
 zig build shader-playground-build  # build local Vulkan/GLFW shader playground
 zig build shader-playground        # run playground with raw shaders
 zig build shader-playground-ga     # run playground with GA shaders
-zig build shader-playground-spherical # run Zig-authored S3 ground shader
-nix develop -c nu tools/golden_check.nu  # golden-image palette check
+zig build shader-playground-spherical # run the Vulkan S3 renderer
 ```
 
-The shader playground, the golden check, and the demos are opt-in; run them
-from the Nix devshell so Vulkan/GLFW/raylib, Xvfb, ImageMagick and
-`spirv-opt` are on the include/library paths. The spherical playground uses
-W/S to walk, A/D to strafe, the arrow keys to look, R to reset, and Esc to
-quit. It redraws only after input, resize, or shader reload because the
-analytic pass is intentionally expensive.
+The Vulkan demo and shader playground are the same renderer. Run it from the
+Nix devshell so Vulkan/GLFW and `spirv-opt` are available. It uses W/S to walk,
+A/D to strafe, arrows to look, R to reset, and Esc to quit.
 
 ## License
 

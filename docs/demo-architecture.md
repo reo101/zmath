@@ -1,245 +1,91 @@
-# Demo architecture and test strategy
-
-Status after the spherical-game rebuild and the legacy-suite cull.
-History, current logic, what is tested without human input, and what
-comes next.
+# S³ demo architecture
 
 ## Inventory
 
 | Path | What it is | State |
 | --- | --- | --- |
-| `src/demos/spherical_game/` | Canonical graphical demo: S³ scene core + raylib/OpenGL frontend | Active |
-| `src/demos/worlds/` | One executable, four live-switchable spaces | Active |
-| `tools/golden_check.nu` | Headless palette-fingerprint regression check | Active |
-| `tools/shader_playground.zig` | Vulkan/GLFW SPIR-V playground | Opt-in |
-| `tools/profile/*` | CPU probes for curved walk/projection pathologies | Opt-in, not wired |
+| `src/geometry/spherical_game.zig` | Shared `Cl(4,0)` S³ kernels | Canonical |
+| `src/demos/spherical_game/scene.zig` | Backend-free S³ scene and exact tracer oracle | Canonical |
+| `src/demos/spherical_game/object_scene.zig` | Data-defined S³ half-space scene format | Canonical |
+| `tools/shader_playground.zig` | Vulkan/GLFW S³ renderer | Canonical graphical demo |
+| `src/demos/worlds/` | Raylib four-space educational demo | Active, separate |
 
-Two older demo generations (the terminal ASCII walker and the
-four-mode mesh-projection raylib app, plus the curved-chart suite and
-render module they rode on) were deleted: the current demos trace rays
-exactly instead of projecting sampled meshes, and nothing else
-consumed the old stack. Harvest git history, not a fossil tree.
+The old raylib/OpenGL S³ frontend and its handwritten GLSL math were removed.
+`demo-spherical` now runs the Vulkan renderer. There is one graphical S³
+implementation, authored in Zig against zmath and compiled to SPIR-V.
 
-## Spherical-game demo
+## Geometry
 
-### Geometry model
+S³ is the unit sphere in `Cl(4,0)`. Spatial data uses zmath `Point`,
+`Direction`, and `Rotor` carriers:
 
-- Space is true **S³**: unit vectors in `Cl(4,0)` (`geometry.spherical_game`).
-- The ground is a convention, not a metric: the equatorial **S²** at
-  `w = 0` (`groundPoint`). The renderer still traces full S³, so the far
-  hemisphere is visible through the wrap.
-- The reference (CodeParade/Hyperbolica) renders **H³/S³ directly**; the
-  `H² × R` / `S² × R` product spaces are *physics* simplifications they
-  adopted separately (devlog #4). Our ground convention mirrors that spirit
-  without lying in the math.
+- Player movement and camera orientation are rotor sandwiches.
+- The ground is the equatorial great 2-sphere at `w = 0`.
+- The cube, fence planks, and rails are intersections of great-sphere
+  half-spaces.
+- Rays follow `p(a) = cos(a) origin + sin(a) direction`.
+- Great-sphere intersections return cosine/sine angle pairs, avoiding
+  unnecessary inverse trigonometry in the renderer.
 
-### Scene core (`scene.zig`), backend-free
+`scene.zig` retains an exact CPU first-hit tracer. It is the geometry oracle and
+test reference, not the graphical rendering path.
 
-- `GroundPose`: position on the equator + `right`/`forward` + eye height.
-  Movement is a GA rotor between position and the movement axis (`sg.Pose`
-  machinery); looking is rotor composition plus a clamped pitch angle.
-- `Pose.camera()`: lifts the ground frame to eye height and applies pitch,
-  giving an orthonormal GA frame `(position, right, up, forward)`.
-- `Cube`: the exact spherical cube — intersection of six hemispheres whose
-  boundary great spheres sit `half_extent` from the center. No mesh, no
-  tessellation. The demo cube is 4.4 units on an R=6 world, so its
-  conjugate-region image can dominate the sky.
-- `Tracer`: per-frame first-hit ray tracer over the full view sphere.
-  Along a geodesic `p(a) = cos(a)·origin + sin(a)·dir`, plane i is crossed
-  at `r_i ± pi/2` with `r_i = atan2(dir·n_i, origin·n_i)`; the cube interior
-  along the ray is the arc intersection
-  `(max r_i - pi/2, min r_i + pi/2)`, so the entry/exit faces and angles are
-  exact with zero iteration. Ground = first crossing of the equatorial
-  great sphere. Occlusion is exact by construction.
-- `Fence`: a picket fence along the ground great circle whose pole is the
-  cube's ground point - the ring sits a quarter circle (pi*R/2) from the
-  cube in every direction and crosses the walk path exactly halfway
-  between the cube and its antipode. The vertical "curtain" great sphere
-  over the ring (pole = the same ground point, exactly the ground-plane
-  structure) selects plank candidates via a height band and a picket/gap
-  pattern along the arc; gaps fall through to the ground behind. Each
-  plank is a little parallelepiped on S3 standing on the ground (its
-  floor cap is the ground great sphere itself, so what a viewer past the
-  fence sees hanging overhead are the planks' undersides): its faces
-  are the curtain
-  rotated by the half thickness around the plank's ring tangent, its arc
-  edges are the tangent great spheres at the pattern bounds, and its
-  roof/floor are two-plane caps (the rim spheres through the center and
-  arc-edge rims, meeting at a shallow ridge) - five visible faces, like
-  a real box. Plank candidates are box-tested per ray: the curtain
-  crossing (side entries, band widened upward), the ray's ground-crossing
-  arc (the far side of the ring: from the gate the far planks hang
-  overhead with their undersides toward the zenith), the descending
-  top-level crossing e3·x = sin(psi_top) (roof entries), and the
-  ascending base-level crossing e3·x = sin(psi_base) (underside
-  entries). Circling the fence
-  rotates the sight line through a plank's face plane, so the entry
-  switches face -> edge -> far face: planks flip instead of sliding
-  around as painted patches. Shading uses the true surface normals
-  (back faces darker, roof/floor two-tone, edges catch light). From the cube the ring
-  reads as a circle around the world; standing at the crossing it is a
-  straight picket row receding to the horizon. Crossing-point pickets are
-  never first-hit (the pattern keeps a gate gap there, and pickets near
-  the cube base are occluded by the cube itself).
-- `Scene.frameDirection`: stereographic wide-FOV frame (150° by default).
-  Conformal, maps circles to circles, and keeps the conjugate-region image
-  continuous across the frame — the same projection family the reference
-  engine uses for spherical space (devlog #4). `Tracer` itself stays a
-  pure per-direction tracer.
-- `fastAtan2`: polynomial approximation (~1e-5 rad, pinned by test); the
-  per-pixel cost is a handful of SIMD dots plus ~7 atan2 calls.
+## Vulkan renderer
 
-### Frontend (`main.zig`), raylib-only
+`tools/shader_playground.zig` creates the S³ mesh once from
+`assets/spherical/world.s3obj.json`:
 
-- C raylib via `@cImport`; no raylib-zig dependency.
-- GPU fullscreen fragment tracing at the current window resolution. The
-  demo executable is forced to ReleaseFast.
-- Analytic and raster passes write RGB plus normalized S³ cosine depth into
-  RGBA render targets; a final compositor selects the nearer surface.
-- `ZMATH_DEMO_MESH` optionally loads an OBJ/glTF model through raylib. Its
-  custom vertex shader maps tangent-space vertices through the S³
-  exponential map before stereographic projection.
-- Runtime `.s3obj.json` data is validated, transformed through GA rotors,
-  and uploaded through a std140 `ObjectBlock` UBO.
-- The shader traces generic bounded half-space objects. It does not know
-  about cubes, pickets, or rails.
-- The current GPU ABI supports 64 objects, 6 faces per object, and 16
-  materials. Oversized scenes are rejected before upload.
-- Ground shading = checker in ground arc coordinates; object colors come
-  from the loaded material table with tone-based headlight shading.
-- Capture mode: `ZMATH_DEMO_CAPTURE=path.png` renders one hidden-window
-  frame and exits. `ZMATH_DEMO_WALK` is the absolute walk distance
-  (default = the showcase frame), `ZMATH_DEMO_PITCH` the pitch in radians,
-  `ZMATH_DEMO_YAW` the yaw in radians, `ZMATH_DEMO_FRAMES` caps the frame
-  count for headless perf timing.
+1. Face vertices come from the GA null-vector construction
+   `a ^ b ^ c` followed by the Hodge dual.
+2. Great-sphere faces are subdivided on S³.
+3. Vertices are deduplicated only when point, color, and face plane match.
+4. Vertex and index buffers are uploaded once into device-local memory.
 
-#### Data-defined analytic objects
+The current scene has 387,072 triangles, 206,010 persistent vertices, and
+1,161,216 indices.
 
-`object_scene.zig` defines the human-editable analytic scene format:
+Every swapchain image owns a small `FrameGpu` uniform slice and descriptor set.
+Camera movement waits only for the acquired image, updates that slice, and
+submits a recorded command buffer. It does not reproject mesh vertices on the
+CPU, rewrite device-local meshes, wait for all frames, or rerecord commands.
 
-- Objects are intersections of up to six spherical half-spaces.
-- Face normals and bound centers are four-component S³ points.
-- Optional Spin(4) rotor coefficients transform both face normals and
-  broad-phase bound centers through zmath GA.
-- `assets/spherical/world.s3obj.json` contains one cube, 50 pickets, and
-  12 rail segments generated by `tools/generate_spherical_world.zig`.
-- `triangular_prism.s3obj.json` is a small standalone parser/runtime
-  fixture.
-- `assets/spherical/curved_mesh_fixture.glb` is generated from Blender by
-  `tools/generate_spherical_mesh.py` and exercises the raster compositor.
+### Shader boundary
 
-The mesh path is deliberately separate from analytic half-space
-intersection, but shares the executable and compositor. Ordinary
-Blender/glTF meshes use curvature-aware rasterization rather than being
-forced through per-pixel half-space intersection. Regenerate the fixture
-with:
+`src/shaders/spherical_ga.zig` is the ABI adapter:
 
-```sh
-nix run nixpkgs#blender -- --background --python tools/generate_spherical_mesh.py
-```
+- Raw `@Vector` values are restricted to vertex attributes, UBO fields, colors,
+  and SPIR-V built-ins.
+- Attributes and frame data convert immediately to zmath S³ vectors.
+- Shared projection, screen-direction, and great-sphere-intersection kernels
+  come from `geometry.spherical_game`.
 
-## The reverse-perspective frame
+The mesh vertex shader projects the initial tangent from camera origin to S³
+point into homogeneous stereographic clip coordinates. The denominator remains
+in `clip_w`, so hardware clipping happens before perspective division. A
+near-pole guard collapses invalid chart vertices to the homogeneous origin,
+degenerating unsafe primitives instead of letting them cover the frame.
 
-Walking backward from the cube:
+The mesh fragment shader reconstructs the ray direction and uses its interpolated
+great-sphere plane to write exact S³ depth. Ground and mesh shaders both retain
+the unit-disc viewport mask. Window dimensions come from the live swapchain
+extent, so the spherical screen fills the current framebuffer.
 
-1. Near: ordinary wide-angle view, only the front face.
-2. Quarter-turn away: apparent size *dips* (spherical geometry is not
-   Euclidean-monotonic).
-3. Near the cube's antipodal region the wrapped image explodes. The cube's
-   image **owns the entire zenith cap** — every upward ray's great circle
-   passes through the cube — and releases it only at the horizon band
-   ("all rays eventually hit the ground").
-4. The showcase frame: walk to 0.15 before the cube's ground-point
-   antipode and pitch up ~80°. The **roof centers overhead** (its ground
-   point is nearly antipodal, so it sits almost straight up), the four
-   walls splay outward to the frame edges, and ~81% of the frame is cube.
-   Walking either direction from there closes the distance and cycles the
-   faces behind the roof.
-5. The bottom face is never a first hit from above ground — asserted for
-   the whole walk.
+## Tests and checks
 
-## Testing without user input
+- `zig build test`: GA, scene, object-format, and renderer-support tests.
+- `zig build demo-spherical-check`: S³ scene geometry tests only.
+- `zig build spirv-spherical`: Zig-authored spherical SPIR-V modules.
+- `spirv-val --target-env vulkan1.2 zig-out/shaders/spherical_*.spv`:
+  Vulkan module validation.
+- `zig build demo-spherical -- --benchmark N`: Vulkan renderer benchmark.
 
-Layered, cheapest first:
+The CPU tracer remains deliberately richer than the raster path. It validates
+scene geometry and occlusion; the renderer validates mesh coverage and exact
+fragment depth over representative camera poses.
 
-1. **Geometry invariants** (`spherical_game` + `scene.zig` unit tests,
-   `zig build test`): orthonormal GA frames after movement; cube plane
-   edges shared exactly (arc `atan(sqrt(2)·tan(h/R))`); forward ray hits
-   the front face on-plane; straight-up rays hit wrapped ground at
-   `pi*R - eye_height` ("no sky"); the cube image owns the zenith cap in
-   every azimuth and releases it at the horizon; the pitched showcase
-   frame centers the roof, shows all five faces with zero bottom hits and
-   >80% cube coverage; walking either way from the showcase approaches
-   the cube; fence ring geometry, picket rhythm, and occlusion
-   dominance; `fastAtan2` bounded against `std.math.atan2`.
-2. **Headless smoke step** (`zig build demo-spherical-check`): runs the
-   scene tests alone; wired as a fast CI-able gate.
-3. **Object-format tests**: parser, GA rotor, transformed-bound, and GPU
-   capacity validation run as part of `zig build test`.
-4. **Rendered smoke capture**: hidden-window Xvfb render + `TakeScreenshot`,
-   then an ImageMagick histogram check that all five face colors survive
-   in the final composited frame. Set `ZMATH_DEMO_MESH` to exercise the
-   curvature-aware raster pass and compositor.
-5. **Golden-image palette check** (`tools/golden_check.nu`): captures
-   three canonical poses headlessly and compares each palette share
-   against committed tolerance bands. Deterministic rendering makes any
-   out-of-band drift a tracer/framing/shading change that must be
-   re-pinned deliberately.
-6. **Parameter sweeps**: env-driven walk/pitch/yaw capture grid used to
-   locate the showcase frame; rerun when the scene or renderer changes.
+## `demo-worlds`
 
-The first-hit tracer eliminated the entire artifact class of the previous
-painter-sorted two-branch projection (branch tears + far/near overlap
-"self-intersection") by construction.
-
-## The worlds demo (`src/demos/worlds/`)
-
-One executable, four spaces, live switching with keys 1-4. Each mode
-implements the same contract — per-frame `Renderer` with `render(u, v) ->
-Hit` — so the shell (window, input, threaded row bands, capture, HUD) is
-shared and the pixel loop pays one predictable branch per pixel:
-
-1. **euclidean** — flat ground plane + axis-aligned box (slab-method AABB
-   tracer), pinhole camera, per-pixel origins for the sky. Zero
-   transcendentals; ~135 fps.
-2. **isometric** — the same flat world through an orthographic camera:
-   per-pixel ray *origins* on the iso view plane, constant direction
-   (true isometric elevation 35.264°). WASD pans, Q/E rotates, wheel zooms.
-3. **spherical** — wraps the canonical `spherical_game` scene module
-   unchanged (shared via the `spherical_scene` build module).
-4. **hyperbolic** — H3 through the Beltrami-Klein model, the reference
-   engine's own hyperbolic projection: geodesics are straight chords and
-   totally-geodesic planes are Euclidean planes cutting the Klein ball, so
-   the per-pixel tracer is flat linear algebra. Hyperbolicity lives in the
-   metric: the player state is a hyperboloid point + boosted tangent frame
-   (`ga.Algebra(.{ .p = 3, .q = 1 })` carriers, e4² = −1 — the HPGA
-   convention), moved by Lorentz boosts with parallel transport
-   (`u' = u_perp + <u,d>·(cosh(t)·d + sinh(t)·p)`); the depth proxy is
-   `cosh(d/r) = λ_eye·λ_hit·(1 − k·u)` (rational, no transcendentals);
-   the ground checker uses hyperbolic Fermi coordinates
-   `r·asinh(<P, e_i>)`. The box is a cell of six Klein planes standing on
-   the ground plane; its bottom face is structurally never a first hit
-   from above (same invariant as the spherical demo). The eye's hyperbolic
-   height above the ground is preserved under walking by construction.
-
-Curvature is a runtime value here: the mode union tag selects the metric
-and projection. Structural invariants pinned by tests (`demo-worlds-check`):
-flat AABB entry/exit faces, isometric ortho framing, hyperbolic frame
-orthonormality under boosts, front-face hits, bottom-face exclusion,
-exponential cube recession (`cosh(d/r)` grows 2.7x over 4 walk units),
-and ground checker coordinates shifting by the walked distance.
-
-## Next steps
-
-1. **GPU port**: the tracer maps 1:1 to a fragment shader (fullscreen quad,
-   same per-pixel math, uniforms for the camera frame and cube planes);
-   reuse `build_spirv.zig` plumbing. The CPU path becomes the reference
-   oracle for shader output, and the golden check extends to it for free.
-2. **Gameplay physics**: constrain to the S² ground for walking (matching
-   the reference's product-space compromise) while keeping full-S³
-   rendering; add jump/gravity on the S².
-3. **Scene content**: more objects (the tracer costs ~O(planes) per
-   pixel — a BVH over object planes/spheres keeps headroom).
-4. **Fence in-plane solve**: standing exactly on the ring line looking
-   exactly along it shows no pickets (measure-zero; the ray lies in the
-   curtain plane). The in-plane picket-boundary solve closes it.
+The worlds demo remains raylib because it is a separate educational executable,
+not an alternate S³ renderer. Its spherical mode consumes the same semantic
+scene core. Euclidean, isometric, and hyperbolic modes retain their own backend
+math and controls.

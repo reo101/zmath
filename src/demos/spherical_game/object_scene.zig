@@ -36,16 +36,16 @@ pub const Object = struct {
     /// representation; all actual S3 transforms go through zmath GA.
     transform: ?RotorCoefficients = null,
 
-    pub fn transformNormal(self: Object, normal: Vec4) Vec4 {
-        const coefficients = self.transform orelse return normal;
-        const rotor = sg.Rotor.init(coefficients);
-        return sg.rotate(sg.Direction.init(normal), rotor).coeffsArray();
+    pub fn transformNormal(self: Object, normal: Vec4) sg.Direction {
+        const vector = sg.Direction.init(normal);
+        const coefficients = self.transform orelse return vector;
+        return sg.rotate(vector, sg.Rotor.init(coefficients)).cast(sg.Direction);
     }
 
-    pub fn transformPoint(self: Object, point: Vec4) Vec4 {
-        const coefficients = self.transform orelse return point;
-        const rotor = sg.Rotor.init(coefficients);
-        return sg.rotate(sg.Point.init(point), rotor).coeffsArray();
+    pub fn transformPoint(self: Object, point: Vec4) sg.Point {
+        const vector = sg.Point.init(point);
+        const coefficients = self.transform orelse return vector;
+        return sg.rotate(vector, sg.Rotor.init(coefficients));
     }
 };
 
@@ -117,8 +117,8 @@ test "S3 object transforms use GA rotors" {
         .bound = .{ .center = .{ 1, 0, 0, 0 }, .cos_radius = 0.9 },
         .transform = rotor.coeffsArray(),
     };
-    const normal = object.transformNormal(.{ 1, 0, 0, 0 });
-    const bound_center = object.transformPoint(object.bound.?.center);
+    const normal = object.transformNormal(.{ 1, 0, 0, 0 }).coeffsArray();
+    const bound_center = object.transformPoint(object.bound.?.center).coeffsArray();
     try std.testing.expectApproxEqAbs(@as(f32, 0.0), normal[0], 1e-5);
     try std.testing.expectApproxEqAbs(@as(f32, 0.0), normal[1], 1e-5);
     try std.testing.expectApproxEqAbs(@as(f32, 0.0), normal[2], 1e-5);

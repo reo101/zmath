@@ -13,15 +13,15 @@ const MaxFaces = 384;
 const MaxObjects = 64;
 const MaxMaterials = 16;
 
-const SphericalFrame = extern struct {
+const SphericalFrame = struct {
     width: f32,
     height: f32,
     radius: f32,
     tan_half_fov: f32,
-    origin: [4]f32,
-    right: [4]f32,
-    up: [4]f32,
-    forward: [4]f32,
+    origin: Point,
+    right: Direction,
+    up: Direction,
+    forward: Direction,
 };
 
 const RawVec4 = @Vector(4, f32);
@@ -46,6 +46,7 @@ const default_vert_path = "zig-out/shaders/vga_passthrough_raw.vert.spv";
 const default_frag_path = "zig-out/shaders/vga_passthrough_raw.frag.spv";
 
 const Point = spherical_scene.Point;
+const Direction = spherical_scene.Direction;
 
 const Vertex = extern struct {
     point: RawVec4,
@@ -74,10 +75,6 @@ const FacePoint = struct {
     point: Point,
     angle: f32,
 };
-
-fn framePoint(values: [4]f32) Point {
-    return Point.init(values);
-}
 
 fn normalizePoint(point: Point) ?Point {
     const length = @sqrt(@max(point.scalarProduct(point), 0.0));
@@ -123,11 +120,11 @@ fn appendSubdividedTriangle(
 
 fn projectPoint(frame: SphericalFrame, point: Point) ?[3]f32 {
     const projection = spherical_scene.rasterProjection(
-        framePoint(frame.origin),
+        frame.origin,
         point,
-        framePoint(frame.forward),
-        framePoint(frame.right),
-        framePoint(frame.up),
+        frame.forward,
+        frame.right,
+        frame.up,
         frame.tan_half_fov,
         1.0,
     );
@@ -139,19 +136,19 @@ fn projectPoint(frame: SphericalFrame, point: Point) ?[3]f32 {
     };
 }
 
-fn frameDirection(frame: SphericalFrame, uv: [2]f32) Point {
+fn frameDirection(frame: SphericalFrame, uv: [2]f32) Direction {
     return spherical_scene.basisFrameDirection(
-        framePoint(frame.forward),
-        framePoint(frame.right),
-        framePoint(frame.up),
+        frame.forward,
+        frame.right,
+        frame.up,
         frame.tan_half_fov,
         uv[0],
         uv[1],
     );
 }
 
-fn planeDepth(frame: SphericalFrame, dir: Point, plane: Point) f32 {
-    const intersection = spherical_scene.greatSphereIntersection(framePoint(frame.origin), dir, plane);
+fn planeDepth(frame: SphericalFrame, dir: Direction, plane: Point) f32 {
+    const intersection = spherical_scene.greatSphereIntersection(frame.origin, dir, plane);
     return (1.0 - intersection.cos_angle) * 0.5;
 }
 
@@ -162,7 +159,7 @@ fn buildMeshTriangles(allocator: std.mem.Allocator, file: object_scene.File) ![]
     for (file.objects, 0..) |object, object_index| {
         if (object.faces.len != 6) continue;
         var normals: [6]Point = undefined;
-        for (object.faces, 0..) |face, i| normals[i] = Point.init(object.transformNormal(face.normal));
+        for (object.faces, 0..) |face, i| normals[i] = object.transformNormal(face.normal);
 
         for (object.faces, 0..) |face, face_index| {
             var points: [8]FacePoint = undefined;
@@ -253,17 +250,17 @@ fn buildMeshData(allocator: std.mem.Allocator, triangles: []const MeshTriangle) 
 }
 
 fn frameForScene(scene: spherical_scene.Scene, width: f32, height: f32) SphericalFrame {
-    const tracer = scene.tracer();
     const camera = scene.frameCamera();
+    const tracer = spherical_scene.Tracer.init(camera.pose, scene.cube, scene.fence);
     return .{
         .width = width,
         .height = height,
         .radius = tracer.radius,
         .tan_half_fov = camera.tan_half_fov,
-        .origin = tracer.origin.coeffsArray(),
-        .right = tracer.right.coeffsArray(),
-        .up = tracer.up.coeffsArray(),
-        .forward = tracer.forward.coeffsArray(),
+        .origin = tracer.origin,
+        .right = tracer.right,
+        .up = tracer.up,
+        .forward = tracer.forward,
     };
 }
 
@@ -414,7 +411,7 @@ fn rasterCompare(triangles: []const MeshTriangle, scene: spherical_scene.Scene) 
                 };
                 if (!triangleContainsStrict(point, projected)) continue;
                 const dir = frameDirection(frame, .{ point[0], -point[1] });
-                if (!spherical_scene.greatSphereIntersection(framePoint(frame.origin), dir, triangle.plane).valid) continue;
+                if (!spherical_scene.greatSphereIntersection(frame.origin, dir, triangle.plane).valid) continue;
                 const depth = planeDepth(frame, dir, triangle.plane);
                 const index = @as(usize, @intCast(y)) * width + @as(usize, @intCast(x));
                 if (depth < raster[index].depth) raster[index] = .{ .object_index = triangle.object_index, .depth = depth };
@@ -517,7 +514,7 @@ fn meshSelfCheck(triangles: []const MeshTriangle, compare: bool) !void {
         if (!triangleContains(projected, .{ a, b, c_ })) continue;
         if (triangleContainsStrict(projected, .{ a, b, c_ })) {
             strict_hits += 1;
-            if (spherical_scene.greatSphereIntersection(framePoint(frame.origin), dir, triangle.plane).valid) strict_valid_hits += 1;
+            if (spherical_scene.greatSphereIntersection(frame.origin, dir, triangle.plane).valid) strict_valid_hits += 1;
         }
         const depth = planeDepth(frame, dir, triangle.plane);
         if (depth < nearest_depth) {
@@ -1681,17 +1678,17 @@ const App = struct {
     }
 
     fn currentFrame(self: *App) SphericalFrame {
-        const tracer = self.world.tracer();
         const camera = self.world.frameCamera();
+        const tracer = spherical_scene.Tracer.init(camera.pose, self.world.cube, self.world.fence);
         return .{
             .width = @floatFromInt(self.swapchain_extent.width),
             .height = @floatFromInt(self.swapchain_extent.height),
             .radius = tracer.radius,
             .tan_half_fov = camera.tan_half_fov,
-            .origin = tracer.origin.coeffsArray(),
-            .right = tracer.right.coeffsArray(),
-            .up = tracer.up.coeffsArray(),
-            .forward = tracer.forward.coeffsArray(),
+            .origin = tracer.origin,
+            .right = tracer.right,
+            .up = tracer.up,
+            .forward = tracer.forward,
         };
     }
 
@@ -1699,10 +1696,10 @@ const App = struct {
         const frame = self.currentFrame();
         const gpu_frame = FrameGpu{
             .viewport = .{ frame.width, frame.height, frame.radius, frame.tan_half_fov },
-            .origin = @bitCast(frame.origin),
-            .right = @bitCast(frame.right),
-            .up = @bitCast(frame.up),
-            .forward = @bitCast(frame.forward),
+            .origin = @bitCast(frame.origin.coeffsArray()),
+            .right = @bitCast(frame.right.coeffsArray()),
+            .up = @bitCast(frame.up.coeffsArray()),
+            .forward = @bitCast(frame.forward.coeffsArray()),
         };
         const offset = self.frame_stride * image_index;
         var mapped: ?*anyopaque = null;
@@ -1959,7 +1956,7 @@ fn fillObjectBlock(block: *ObjectGpuBlock, file: object_scene.File) !void {
         const base = object_index * 6;
         for (object.faces, 0..) |face, face_index| {
             const normal = object.transformNormal(face.normal);
-            block.normals[base + face_index] = normal;
+            block.normals[base + face_index] = normal.coeffsArray();
             block.meta[base + face_index] = .{
                 if (face.positive) 1.0 else 0.0,
                 file.materials[face.material].tone,
@@ -1968,7 +1965,7 @@ fn fillObjectBlock(block: *ObjectGpuBlock, file: object_scene.File) !void {
             };
         }
         if (object.bound) |bound| {
-            block.bounds[object_index] = object.transformPoint(bound.center);
+            block.bounds[object_index] = object.transformPoint(bound.center).coeffsArray();
             block.meta[base][3] = bound.cos_radius;
         } else {
             block.meta[base][3] = -1.0;
