@@ -146,6 +146,12 @@ pub fn addSpirvSteps(
 
     spirv_ga.addImport("ga", spirv_ga);
 
+    const spirv_spherical_geometry = b.addModule("spherical-geometry-spirv", .{
+        .root_source_file = b.path("src/geometry/spherical_game.zig"),
+        .target = spirv_target,
+        .imports = &.{.{ .name = "ga", .module = spirv_ga }},
+    });
+
     const spirv_step = b.step("spirv-vga", "Build the VGA-based SPIR-V vertex and fragment shaders");
     const spirv_raw_step = b.step("spirv-raw", "Build raw SPIR-V vertex and fragment shaders for driver baselines");
     const spirv_compare_step = b.step("spirv-compare", "Build GA and raw SPIR-V vertex shader variants for size comparison");
@@ -155,6 +161,10 @@ pub fn addSpirvSteps(
         .{
             .name = "ga",
             .module = spirv_ga,
+        },
+        .{
+            .name = "spherical_geometry",
+            .module = spirv_spherical_geometry,
         },
         .{
             .name = "build_options",
@@ -234,7 +244,7 @@ pub fn addSpirvSteps(
         .target = spirv_target,
         .optimize = optimize,
         .use_llvm = use_llvm_spirv,
-        .imports = &.{},
+        .imports = &spirv_shader_imports,
         .pair_step = spirv_spherical_step,
     });
     const spherical_mesh_shaders = SpirvShaderPair.init("spherical_mesh");
@@ -242,7 +252,7 @@ pub fn addSpirvSteps(
         .target = spirv_target,
         .optimize = optimize,
         .use_llvm = use_llvm_spirv,
-        .imports = &.{},
+        .imports = &spirv_shader_imports,
         .pair_step = spirv_spherical_step,
     });
 

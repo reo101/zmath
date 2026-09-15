@@ -7,7 +7,7 @@ const spherical_scene = @import("spherical_scene");
 const window_width = 960;
 const window_height = 640;
 const max_frames_in_flight = 2;
-const raster_margin_pixels = 0.75;
+const mesh_subdivision_depth = 4;
 
 const MaxFaces = 384;
 const MaxObjects = 64;
@@ -18,12 +18,19 @@ const SphericalFrame = extern struct {
     height: f32,
     radius: f32,
     tan_half_fov: f32,
-    ground_a: f32,
-    object_count: f32,
     origin: [4]f32,
     right: [4]f32,
     up: [4]f32,
     forward: [4]f32,
+};
+
+const RawVec4 = @Vector(4, f32);
+const FrameGpu = extern struct {
+    viewport: RawVec4,
+    origin: RawVec4,
+    right: RawVec4,
+    up: RawVec4,
+    forward: RawVec4,
 };
 
 const ObjectGpuBlock = extern struct {
@@ -38,65 +45,53 @@ const default_object_path = "assets/spherical/world.s3obj.json";
 const default_vert_path = "zig-out/shaders/vga_passthrough_raw.vert.spv";
 const default_frag_path = "zig-out/shaders/vga_passthrough_raw.frag.spv";
 
+const Point = spherical_scene.Point;
+
 const Vertex = extern struct {
-    pos: [3]f32,
-    color: [4]f32,
-    plane: [4]f32,
+    point: RawVec4,
+    color: RawVec4,
+    plane: RawVec4,
+};
+
+const MeshData = struct {
+    vertices: []Vertex,
+    indices: []u32,
+
+    fn deinit(self: MeshData, allocator: std.mem.Allocator) void {
+        allocator.free(self.vertices);
+        allocator.free(self.indices);
+    }
 };
 
 const MeshTriangle = struct {
-    points: [3][4]f32,
+    points: [3]Point,
     color: [4]f32,
-    plane: [4]f32,
+    plane: Point,
     object_index: usize,
 };
 
 const FacePoint = struct {
-    point: [4]f32,
+    point: Point,
     angle: f32,
 };
 
-fn dot4(a: [4]f32, b: [4]f32) f32 {
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+fn framePoint(values: [4]f32) Point {
+    return Point.init(values);
 }
 
-fn normalize4(v: [4]f32) ?[4]f32 {
-    const length = @sqrt(dot4(v, v));
+fn normalizePoint(point: Point) ?Point {
+    const length = @sqrt(@max(point.scalarProduct(point), 0.0));
     if (length < 1e-6) return null;
-    return .{ v[0] / length, v[1] / length, v[2] / length, v[3] / length };
+    return point.scale(1.0 / length).cast(Point);
 }
 
-fn sub4(a: [4]f32, b: [4]f32) [4]f32 {
-    return .{ a[0] - b[0], a[1] - b[1], a[2] - b[2], a[3] - b[3] };
+fn nullVector(a: Point, b: Point, c_: Point) ?Point {
+    return normalizePoint(a.wedge(b).wedge(c_).hodgeDual().cast(Point));
 }
 
-fn add4(a: [4]f32, b: [4]f32) [4]f32 {
-    return .{ a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3] };
-}
-
-fn scale4(a: [4]f32, scale: f32) [4]f32 {
-    return .{ a[0] * scale, a[1] * scale, a[2] * scale, a[3] * scale };
-}
-
-fn det3(a: [3]f32, b: [3]f32, c_: [3]f32) f32 {
-    return a[0] * (b[1] * c_[2] - b[2] * c_[1]) -
-        a[1] * (b[0] * c_[2] - b[2] * c_[0]) +
-        a[2] * (b[0] * c_[1] - b[1] * c_[0]);
-}
-
-fn nullVector(a: [4]f32, b: [4]f32, c_: [4]f32) ?[4]f32 {
-    const result = [4]f32{
-        det3(.{ a[1], a[2], a[3] }, .{ b[1], b[2], b[3] }, .{ c_[1], c_[2], c_[3] }),
-        -det3(.{ a[0], a[2], a[3] }, .{ b[0], b[2], b[3] }, .{ c_[0], c_[2], c_[3] }),
-        det3(.{ a[0], a[1], a[3] }, .{ b[0], b[1], b[3] }, .{ c_[0], c_[1], c_[3] }),
-        -det3(.{ a[0], a[1], a[2] }, .{ b[0], b[1], b[2] }, .{ c_[0], c_[1], c_[2] }),
-    };
-    return normalize4(result);
-}
-
-fn faceContains(point: [4]f32, normals: [6][4]f32, faces: []const object_scene.Face) bool {
+fn faceContains(point: Point, normals: [6]Point, faces: []const object_scene.Face) bool {
     for (faces, 0..) |face, i| {
-        const side = dot4(point, normals[i]);
+        const side = spherical_scene.dot(point, normals[i]);
         if (if (face.positive) side < -1e-4 else side > 1e-4) return false;
     }
     return true;
@@ -105,11 +100,11 @@ fn faceContains(point: [4]f32, normals: [6][4]f32, faces: []const object_scene.F
 fn appendSubdividedTriangle(
     triangles: *std.ArrayList(MeshTriangle),
     allocator: std.mem.Allocator,
-    a: [4]f32,
-    b: [4]f32,
-    c_: [4]f32,
+    a: Point,
+    b: Point,
+    c_: Point,
     color: [4]f32,
-    plane: [4]f32,
+    plane: Point,
     object_index: usize,
     depth: u32,
 ) !void {
@@ -117,57 +112,47 @@ fn appendSubdividedTriangle(
         try triangles.append(allocator, .{ .points = .{ a, b, c_ }, .color = color, .plane = plane, .object_index = object_index });
         return;
     }
-    const ab = normalize4(add4(a, b)) orelse return;
-    const bc = normalize4(add4(b, c_)) orelse return;
-    const ca = normalize4(add4(c_, a)) orelse return;
+    const ab = normalizePoint(a.add(b).cast(Point)) orelse return;
+    const bc = normalizePoint(b.add(c_).cast(Point)) orelse return;
+    const ca = normalizePoint(c_.add(a).cast(Point)) orelse return;
     try appendSubdividedTriangle(triangles, allocator, a, ab, ca, color, plane, object_index, depth - 1);
     try appendSubdividedTriangle(triangles, allocator, ab, b, bc, color, plane, object_index, depth - 1);
     try appendSubdividedTriangle(triangles, allocator, ca, bc, c_, color, plane, object_index, depth - 1);
     try appendSubdividedTriangle(triangles, allocator, ab, bc, ca, color, plane, object_index, depth - 1);
 }
 
-fn projectPoint(frame: SphericalFrame, point: [4]f32) ?[3]f32 {
-    // A screen pixel denotes the initial tangent direction of a geodesic,
-    // not the S3 position of its eventual hit. Euclidean perspective makes
-    // those equivalent; S3 does not. Project the tangent from the camera to
-    // the point so a raster vertex uses the exact same view map as the tracer.
-    const path_cos = dot4(frame.origin, point);
-    const path_sin = @sqrt(@max(0.0, 1.0 - path_cos * path_cos));
-    if (path_sin <= 1e-5) return null;
-    const tangent = scale4(sub4(point, scale4(frame.origin, path_cos)), 1.0 / path_sin);
-    const forward_cos = dot4(frame.forward, tangent);
-    const denominator = 1.0 + forward_cos;
-    if (denominator <= 0.02) return null;
-    const inv = 1.0 / (denominator * frame.tan_half_fov);
-    const aspect_scale = frame.height / frame.width * (1280.0 / 720.0);
+fn projectPoint(frame: SphericalFrame, point: Point) ?[3]f32 {
+    const projection = spherical_scene.rasterProjection(
+        framePoint(frame.origin),
+        point,
+        framePoint(frame.forward),
+        framePoint(frame.right),
+        framePoint(frame.up),
+        frame.tan_half_fov,
+        1.0,
+    );
+    if (!projection.valid or projection.clip_w <= 0.02) return null;
     return .{
-        dot4(frame.right, tangent) * inv * aspect_scale,
-        -dot4(frame.up, tangent) * inv,
-        (1.0 - path_cos) * 0.5,
+        projection.clip_x / projection.clip_w,
+        projection.clip_y / projection.clip_w,
+        projection.depth,
     };
 }
 
-fn frameDirection(frame: SphericalFrame, uv: [2]f32) [4]f32 {
-    const r = @sqrt(uv[0] * uv[0] + uv[1] * uv[1]);
-    if (r < 1e-6) return frame.forward;
-    const t = r * frame.tan_half_fov;
-    const inverse = 1.0 / (1.0 + t * t);
-    const sin_theta = 2.0 * t * inverse;
-    const cos_theta = (1.0 - t * t) * inverse;
-    return normalize4(.{
-        frame.forward[0] * cos_theta + (frame.right[0] * uv[0] + frame.up[0] * uv[1]) * sin_theta / r,
-        frame.forward[1] * cos_theta + (frame.right[1] * uv[0] + frame.up[1] * uv[1]) * sin_theta / r,
-        frame.forward[2] * cos_theta + (frame.right[2] * uv[0] + frame.up[2] * uv[1]) * sin_theta / r,
-        frame.forward[3] * cos_theta + (frame.right[3] * uv[0] + frame.up[3] * uv[1]) * sin_theta / r,
-    }).?;
+fn frameDirection(frame: SphericalFrame, uv: [2]f32) Point {
+    return spherical_scene.basisFrameDirection(
+        framePoint(frame.forward),
+        framePoint(frame.right),
+        framePoint(frame.up),
+        frame.tan_half_fov,
+        uv[0],
+        uv[1],
+    );
 }
 
-fn planeDepth(frame: SphericalFrame, dir: [4]f32, plane: [4]f32) f32 {
-    const a = dot4(frame.origin, plane);
-    const b = dot4(dir, plane);
-    const h = @sqrt(a * a + b * b);
-    const cos_angle = if (a >= 0.0) -b / h else b / h;
-    return (1.0 - cos_angle) * 0.5;
+fn planeDepth(frame: SphericalFrame, dir: Point, plane: Point) f32 {
+    const intersection = spherical_scene.greatSphereIntersection(framePoint(frame.origin), dir, plane);
+    return (1.0 - intersection.cos_angle) * 0.5;
 }
 
 fn buildMeshTriangles(allocator: std.mem.Allocator, file: object_scene.File) ![]MeshTriangle {
@@ -176,8 +161,8 @@ fn buildMeshTriangles(allocator: std.mem.Allocator, file: object_scene.File) ![]
 
     for (file.objects, 0..) |object, object_index| {
         if (object.faces.len != 6) continue;
-        var normals: [6][4]f32 = undefined;
-        for (object.faces, 0..) |face, i| normals[i] = object.transformNormal(face.normal);
+        var normals: [6]Point = undefined;
+        for (object.faces, 0..) |face, i| normals[i] = Point.init(object.transformNormal(face.normal));
 
         for (object.faces, 0..) |face, face_index| {
             var points: [8]FacePoint = undefined;
@@ -190,11 +175,11 @@ fn buildMeshTriangles(allocator: std.mem.Allocator, file: object_scene.File) ![]
                     if (k == face_index) continue;
                     const candidate = nullVector(normals[face_index], normals[j], normals[k]) orelse continue;
                     for ([_]f32{ 1.0, -1.0 }) |sign| {
-                        const point = scale4(candidate, sign);
+                        const point = candidate.scale(sign).cast(Point);
                         if (!faceContains(point, normals, object.faces)) continue;
                         var duplicate = false;
                         for (points[0..point_count]) |existing| {
-                            if (dot4(existing.point, point) > 0.9999) duplicate = true;
+                            if (spherical_scene.dot(existing.point, point) > 0.9999) duplicate = true;
                         }
                         if (!duplicate and point_count < points.len) {
                             points[point_count] = .{ .point = point, .angle = 0.0 };
@@ -205,14 +190,14 @@ fn buildMeshTriangles(allocator: std.mem.Allocator, file: object_scene.File) ![]
             }
             if (point_count < 3) continue;
 
-            var center_sum = [4]f32{ 0.0, 0.0, 0.0, 0.0 };
-            for (points[0..point_count]) |point| center_sum = add4(center_sum, point.point);
-            const center = normalize4(center_sum) orelse continue;
-            const radial = sub4(points[0].point, scale4(center, dot4(points[0].point, center)));
-            const e1 = normalize4(radial) orelse continue;
+            var center_sum = Point.zero();
+            for (points[0..point_count]) |point| center_sum = center_sum.add(point.point).cast(Point);
+            const center = normalizePoint(center_sum) orelse continue;
+            const radial = points[0].point.sub(center.scale(spherical_scene.dot(points[0].point, center))).cast(Point);
+            const e1 = normalizePoint(radial) orelse continue;
             const e2 = nullVector(normals[face_index], center, e1) orelse continue;
             for (points[0..point_count]) |*point| {
-                point.angle = std.math.atan2(dot4(point.point, e2), dot4(point.point, e1));
+                point.angle = std.math.atan2(spherical_scene.dot(point.point, e2), spherical_scene.dot(point.point, e1));
             }
             std.mem.sort(FacePoint, points[0..point_count], {}, struct {
                 fn lessThan(_: void, left: FacePoint, right: FacePoint) bool {
@@ -229,11 +214,42 @@ fn buildMeshTriangles(allocator: std.mem.Allocator, file: object_scene.File) ![]
             };
             for (0..point_count) |i| {
                 const next = (i + 1) % point_count;
-                try appendSubdividedTriangle(&triangles, allocator, center, points[i].point, points[next].point, color, normals[face_index], object_index, 4);
+                try appendSubdividedTriangle(&triangles, allocator, center, points[i].point, points[next].point, color, normals[face_index], object_index, mesh_subdivision_depth);
             }
         }
     }
     return try triangles.toOwnedSlice(allocator);
+}
+
+fn buildMeshData(allocator: std.mem.Allocator, triangles: []const MeshTriangle) !MeshData {
+    var vertices: std.ArrayList(Vertex) = .empty;
+    defer vertices.deinit(allocator);
+    var indices: std.ArrayList(u32) = .empty;
+    defer indices.deinit(allocator);
+    var vertex_indices: std.AutoHashMap([12]u32, u32) = .init(allocator);
+    defer vertex_indices.deinit();
+
+    for (triangles) |triangle| {
+        for (triangle.points) |point| {
+            const vertex = Vertex{
+                .point = @bitCast(point.coeffsArray()),
+                .color = @bitCast(triangle.color),
+                .plane = @bitCast(triangle.plane.coeffsArray()),
+            };
+            const entry = try vertex_indices.getOrPut(@bitCast(vertex));
+            if (!entry.found_existing) {
+                entry.value_ptr.* = @intCast(vertices.items.len);
+                try vertices.append(allocator, vertex);
+            }
+            try indices.append(allocator, entry.value_ptr.*);
+        }
+    }
+    const owned_vertices = try vertices.toOwnedSlice(allocator);
+    errdefer allocator.free(owned_vertices);
+    return .{
+        .vertices = owned_vertices,
+        .indices = try indices.toOwnedSlice(allocator),
+    };
 }
 
 fn frameForScene(scene: spherical_scene.Scene, width: f32, height: f32) SphericalFrame {
@@ -244,8 +260,6 @@ fn frameForScene(scene: spherical_scene.Scene, width: f32, height: f32) Spherica
         .height = height,
         .radius = tracer.radius,
         .tan_half_fov = camera.tan_half_fov,
-        .ground_a = tracer.ground_a,
-        .object_count = 0.0,
         .origin = tracer.origin.coeffsArray(),
         .right = tracer.right.coeffsArray(),
         .up = tracer.up.coeffsArray(),
@@ -279,7 +293,7 @@ fn triangleContainsStrict(point: [3]f32, triangle: [3][3]f32) bool {
         (a <= 0.0 and b <= 0.0 and c_ <= 0.0);
 }
 
-fn meshStrictCoversPoint(triangles: []const MeshTriangle, frame: SphericalFrame, point: [4]f32) bool {
+fn meshStrictCoversPoint(triangles: []const MeshTriangle, frame: SphericalFrame, point: Point) bool {
     const projected_point = projectPoint(frame, point) orelse return false;
     for (triangles) |triangle| {
         const a = projectPoint(frame, triangle.points[0]) orelse continue;
@@ -290,7 +304,7 @@ fn meshStrictCoversPoint(triangles: []const MeshTriangle, frame: SphericalFrame,
     return false;
 }
 
-fn meshCoversPoint(triangles: []const MeshTriangle, frame: SphericalFrame, point: [4]f32) bool {
+fn meshCoversPoint(triangles: []const MeshTriangle, frame: SphericalFrame, point: Point) bool {
     const projected_point = projectPoint(frame, point) orelse return false;
     for (triangles) |triangle| {
         const a = projectPoint(frame, triangle.points[0]) orelse continue;
@@ -303,7 +317,7 @@ fn meshCoversPoint(triangles: []const MeshTriangle, frame: SphericalFrame, point
 
 const MeshCoverStatus = enum { none, rasterizable, filtered };
 
-fn meshCoverStatus(triangles: []const MeshTriangle, frame: SphericalFrame, point: [4]f32) MeshCoverStatus {
+fn meshCoverStatus(triangles: []const MeshTriangle, frame: SphericalFrame, point: Point) MeshCoverStatus {
     const projected_point = projectPoint(frame, point) orelse return .none;
     var covered = false;
     for (triangles) |triangle| {
@@ -352,8 +366,8 @@ fn rasterCompare(triangles: []const MeshTriangle, scene: spherical_scene.Scene) 
         const disc_u = (@as(f32, @floatFromInt(x)) + 0.5) / width * 2.0 - 1.0;
         const disc_v = 1.0 - (@as(f32, @floatFromInt(y)) + 0.5) / height * 2.0;
         if (disc_u * disc_u + disc_v * disc_v > 1.0) continue;
-        const dir = frameDirection(frame, .{ disc_u * frame.width / frame.height / (1280.0 / 720.0), disc_v });
-        hit.depth = planeDepth(frame, dir, .{ 0.0, 0.0, 1.0, 0.0 });
+        const dir = frameDirection(frame, .{ disc_u, disc_v });
+        hit.depth = planeDepth(frame, dir, Point.init(.{ 0.0, 0.0, 1.0, 0.0 }));
     }
 
     for (triangles) |triangle| {
@@ -380,19 +394,6 @@ fn rasterCompare(triangles: []const MeshTriangle, scene: spherical_scene.Scene) 
         }
         if (!valid) continue;
 
-        const center = [2]f32{
-            (projected[0][0] + projected[1][0] + projected[2][0]) / 3.0,
-            (projected[0][1] + projected[1][1] + projected[2][1]) / 3.0,
-        };
-        for (&projected) |*vertex| {
-            const dx = (vertex[0] - center[0]) * frame.width * 0.5;
-            const dy = (vertex[1] - center[1]) * frame.height * 0.5;
-            const length = @sqrt(dx * dx + dy * dy);
-            if (length == 0.0) continue;
-            vertex[0] += dx / length * (2.0 * raster_margin_pixels / @as(f32, window_width));
-            vertex[1] += dy / length * (2.0 * raster_margin_pixels / @as(f32, window_height));
-        }
-
         const left = @min(projected[0][0], @min(projected[1][0], projected[2][0]));
         const right = @max(projected[0][0], @max(projected[1][0], projected[2][0]));
         const top = @max(projected[0][1], @max(projected[1][1], projected[2][1]));
@@ -412,10 +413,8 @@ fn rasterCompare(triangles: []const MeshTriangle, scene: spherical_scene.Scene) 
                     0.0,
                 };
                 if (!triangleContainsStrict(point, projected)) continue;
-                const dir = frameDirection(frame, .{ point[0] * frame.width / frame.height / (1280.0 / 720.0), -point[1] });
-                const a = dot4(frame.origin, triangle.plane);
-                const b = dot4(dir, triangle.plane);
-                if (a * a + b * b < 1e-10) continue;
+                const dir = frameDirection(frame, .{ point[0], -point[1] });
+                if (!spherical_scene.greatSphereIntersection(framePoint(frame.origin), dir, triangle.plane).valid) continue;
                 const depth = planeDepth(frame, dir, triangle.plane);
                 const index = @as(usize, @intCast(y)) * width + @as(usize, @intCast(x));
                 if (depth < raster[index].depth) raster[index] = .{ .object_index = triangle.object_index, .depth = depth };
@@ -433,9 +432,9 @@ fn rasterCompare(triangles: []const MeshTriangle, scene: spherical_scene.Scene) 
             1.0 - (@as(f32, @floatFromInt(y)) + 0.5) / height * 2.0,
         };
         if (disc_uv[0] * disc_uv[0] + disc_uv[1] * disc_uv[1] > 1.0) continue;
-        const uv = [2]f32{ disc_uv[0] * frame.width / frame.height / (1280.0 / 720.0), disc_uv[1] };
+        const uv = disc_uv;
         result.pixels += 1;
-        const hit = tracer.trace(spherical_scene.Direction.init(frameDirection(frame, uv)));
+        const hit = tracer.trace(frameDirection(frame, uv));
         const expected: ?usize = switch (hit.surface) {
             .ground => null,
             .cube => 0,
@@ -443,14 +442,14 @@ fn rasterCompare(triangles: []const MeshTriangle, scene: spherical_scene.Scene) 
         };
         const actual_object = if (actual.object_index) |object_index| if (object_index == 0) @as(?usize, 0) else 1 else null;
         const expected_depth = (1.0 - hit.cos_angle) * 0.5;
-        const hit_ndc = projectPoint(frame, hit.point.coeffsArray()).?;
+        const hit_ndc = projectPoint(frame, hit.point).?;
         const sample_ndc = [2]f32{ disc_uv[0], -disc_uv[1] };
         if (expected != actual_object) {
             result.object_mismatches += 1;
-            if (result.first_mismatch == null) result.first_mismatch = .{ .x = x, .y = y, .expected = expected, .actual = actual_object, .expected_depth = expected_depth, .actual_depth = actual.depth, .mesh_covers = meshCoversPoint(triangles, frame, hit.point.coeffsArray()), .mesh_strict_covers = meshStrictCoversPoint(triangles, frame, hit.point.coeffsArray()), .cover_status = meshCoverStatus(triangles, frame, hit.point.coeffsArray()), .hit_ndc = .{ hit_ndc[0], hit_ndc[1] }, .sample_ndc = sample_ndc };
+            if (result.first_mismatch == null) result.first_mismatch = .{ .x = x, .y = y, .expected = expected, .actual = actual_object, .expected_depth = expected_depth, .actual_depth = actual.depth, .mesh_covers = meshCoversPoint(triangles, frame, hit.point), .mesh_strict_covers = meshStrictCoversPoint(triangles, frame, hit.point), .cover_status = meshCoverStatus(triangles, frame, hit.point), .hit_ndc = .{ hit_ndc[0], hit_ndc[1] }, .sample_ndc = sample_ndc };
         } else if (expected != null and @abs(expected_depth - actual.depth) > 1e-3) {
             result.depth_mismatches += 1;
-            if (result.first_mismatch == null) result.first_mismatch = .{ .x = x, .y = y, .expected = expected, .actual = actual_object, .expected_depth = expected_depth, .actual_depth = actual.depth, .mesh_covers = meshCoversPoint(triangles, frame, hit.point.coeffsArray()), .mesh_strict_covers = meshStrictCoversPoint(triangles, frame, hit.point.coeffsArray()), .cover_status = meshCoverStatus(triangles, frame, hit.point.coeffsArray()), .hit_ndc = .{ hit_ndc[0], hit_ndc[1] }, .sample_ndc = sample_ndc };
+            if (result.first_mismatch == null) result.first_mismatch = .{ .x = x, .y = y, .expected = expected, .actual = actual_object, .expected_depth = expected_depth, .actual_depth = actual.depth, .mesh_covers = meshCoversPoint(triangles, frame, hit.point), .mesh_strict_covers = meshStrictCoversPoint(triangles, frame, hit.point), .cover_status = meshCoverStatus(triangles, frame, hit.point), .hit_ndc = .{ hit_ndc[0], hit_ndc[1] }, .sample_ndc = sample_ndc };
         }
     }
     return result;
@@ -484,29 +483,19 @@ fn meshSelfCheck(triangles: []const MeshTriangle, compare: bool) !void {
             while (x < 8) : (x += 1) {
                 const pixel = [2]f32{ @floatFromInt(x * 2 + 1), @floatFromInt(y * 2 + 1) };
                 const uv = [2]f32{
-                    (pixel[0] / frame.width * 2.0 - 1.0) * frame.width / frame.height / (1280.0 / 720.0),
+                    pixel[0] / frame.width * 2.0 - 1.0,
                     (1.0 - pixel[1] / frame.height) * 2.0 - 1.0,
                 };
                 if (uv[0] * uv[0] + uv[1] * uv[1] > 1.0) continue;
-                const r = @sqrt(uv[0] * uv[0] + uv[1] * uv[1]);
-                const t = r * frame.tan_half_fov;
-                const inverse = 1.0 / (1.0 + t * t);
-                const sin_theta = 2.0 * t * inverse;
-                const cos_theta = (1.0 - t * t) * inverse;
-                const dir = normalize4(.{
-                    frame.forward[0] * cos_theta + (frame.right[0] * uv[0] + frame.up[0] * uv[1]) * sin_theta / @max(r, 1e-6),
-                    frame.forward[1] * cos_theta + (frame.right[1] * uv[0] + frame.up[1] * uv[1]) * sin_theta / @max(r, 1e-6),
-                    frame.forward[2] * cos_theta + (frame.right[2] * uv[0] + frame.up[2] * uv[1]) * sin_theta / @max(r, 1e-6),
-                    frame.forward[3] * cos_theta + (frame.right[3] * uv[0] + frame.up[3] * uv[1]) * sin_theta / @max(r, 1e-6),
-                }) orelse continue;
-                const hit = tracer.trace(spherical_scene.Direction.init(dir));
+                const dir = frameDirection(frame, uv);
+                const hit = tracer.trace(dir);
                 const object_hit = switch (hit.surface) {
                     .ground => false,
                     .fence, .cube => true,
                 };
                 if (object_hit) {
                     expected_objects += 1;
-                    if (meshCoversPoint(triangles, frame, hit.point.coeffsArray())) covered_objects += 1;
+                    if (meshCoversPoint(triangles, frame, hit.point)) covered_objects += 1;
                 }
                 samples += 1;
             }
@@ -515,8 +504,8 @@ fn meshSelfCheck(triangles: []const MeshTriangle, compare: bool) !void {
     const frame = frameForScene(spherical_scene.Scene.init(), 960.0, 640.0);
     const tracer = spherical_scene.Scene.init().tracer();
     const dir = frameDirection(frame, .{ 0.0, 0.0 });
-    const hit = tracer.trace(spherical_scene.Direction.init(dir));
-    const projected = projectPoint(frame, hit.point.coeffsArray()).?;
+    const hit = tracer.trace(dir);
+    const projected = projectPoint(frame, hit.point).?;
     var nearest_depth: f32 = 1.0;
     var nearest_color: ?[4]f32 = null;
     var strict_hits: usize = 0;
@@ -528,9 +517,7 @@ fn meshSelfCheck(triangles: []const MeshTriangle, compare: bool) !void {
         if (!triangleContains(projected, .{ a, b, c_ })) continue;
         if (triangleContainsStrict(projected, .{ a, b, c_ })) {
             strict_hits += 1;
-            const plane_a = dot4(frame.origin, triangle.plane);
-            const plane_b = dot4(dir, triangle.plane);
-            if (plane_a * plane_a + plane_b * plane_b >= 1e-10) strict_valid_hits += 1;
+            if (spherical_scene.greatSphereIntersection(framePoint(frame.origin), dir, triangle.plane).valid) strict_valid_hits += 1;
         }
         const depth = planeDepth(frame, dir, triangle.plane);
         if (depth < nearest_depth) {
@@ -538,7 +525,7 @@ fn meshSelfCheck(triangles: []const MeshTriangle, compare: bool) !void {
             nearest_color = triangle.color;
         }
     }
-    std.debug.print("mesh self-check: {d}/{d} object hits covered across {d} samples; center cpu={d:.6} mesh={d:.6} ground={d:.6} strict={d}/{d} color={any}\n", .{ covered_objects, expected_objects, samples, (1.0 - hit.cos_angle) * 0.5, nearest_depth, planeDepth(frame, dir, .{ 0.0, 0.0, 1.0, 0.0 }), strict_valid_hits, strict_hits, nearest_color });
+    std.debug.print("mesh self-check: {d}/{d} object hits covered across {d} samples; center cpu={d:.6} mesh={d:.6} ground={d:.6} strict={d}/{d} color={any}\n", .{ covered_objects, expected_objects, samples, (1.0 - hit.cos_angle) * 0.5, nearest_depth, planeDepth(frame, dir, Point.init(.{ 0.0, 0.0, 1.0, 0.0 })), strict_valid_hits, strict_hits, nearest_color });
     if (compare) {
         for (poses, 0..) |pose, i| {
             const comparison = try rasterCompare(triangles, pose);
@@ -577,10 +564,10 @@ const App = struct {
     io: std.Io,
     world: spherical_scene.Scene,
     object_block: ObjectGpuBlock,
-    object_count: u32,
-    mesh_triangles: []MeshTriangle,
-    projected_vertices: []Vertex,
-    mesh_vertex_count: u32 = 0,
+    mesh_data: MeshData,
+    mesh_triangle_count: usize,
+    mesh_vertex_count: u32,
+    mesh_index_count: u32,
     window: ?*c.GLFWwindow = null,
 
     instance: c.VkInstance = null,
@@ -612,11 +599,17 @@ const App = struct {
 
     vertex_buffer: c.VkBuffer = null,
     vertex_buffer_memory: c.VkDeviceMemory = null,
+    index_buffer: c.VkBuffer = null,
+    index_buffer_memory: c.VkDeviceMemory = null,
     object_buffer: c.VkBuffer = null,
     object_buffer_memory: c.VkDeviceMemory = null,
-    object_descriptor_set_layout: c.VkDescriptorSetLayout = null,
-    object_descriptor_pool: c.VkDescriptorPool = null,
-    object_descriptor_set: c.VkDescriptorSet = null,
+    frame_buffer: c.VkBuffer = null,
+    frame_buffer_memory: c.VkDeviceMemory = null,
+    frame_stride: c.VkDeviceSize = 0,
+    descriptor_set_layout: c.VkDescriptorSetLayout = null,
+    descriptor_pool: c.VkDescriptorPool = null,
+    descriptor_sets: []c.VkDescriptorSet = &.{},
+    images_in_flight: []c.VkFence = &.{},
 
     image_available: [max_frames_in_flight]c.VkSemaphore = [_]c.VkSemaphore{null} ** max_frames_in_flight,
     render_finished: [max_frames_in_flight]c.VkSemaphore = [_]c.VkSemaphore{null} ** max_frames_in_flight,
@@ -643,20 +636,19 @@ const App = struct {
         @memset(std.mem.asBytes(&object_block), 0);
         try fillObjectBlock(&object_block, parsed.value);
         const mesh_triangles = try buildMeshTriangles(allocator, parsed.value);
-        const projected_vertices = allocator.alloc(Vertex, mesh_triangles.len * 3) catch |err| {
-            allocator.free(mesh_triangles);
-            return err;
-        };
+        defer allocator.free(mesh_triangles);
         try meshSelfCheck(mesh_triangles, compare);
+        const mesh_data = try buildMeshData(allocator, mesh_triangles);
 
         var app = App{
             .allocator = allocator,
             .io = io,
             .world = world,
             .object_block = object_block,
-            .object_count = @intCast(parsed.value.objects.len),
-            .mesh_triangles = mesh_triangles,
-            .projected_vertices = projected_vertices,
+            .mesh_data = mesh_data,
+            .mesh_triangle_count = mesh_triangles.len,
+            .mesh_vertex_count = @intCast(mesh_data.vertices.len),
+            .mesh_index_count = @intCast(mesh_data.indices.len),
             .vert_path = vert_path,
             .frag_path = frag_path,
             .mesh_vert_path = mesh_vert_path,
@@ -679,12 +671,12 @@ const App = struct {
 
         if (self.vertex_buffer != null) c.vkDestroyBuffer(self.device, self.vertex_buffer, null);
         if (self.vertex_buffer_memory != null) c.vkFreeMemory(self.device, self.vertex_buffer_memory, null);
-        self.allocator.free(self.mesh_triangles);
-        self.allocator.free(self.projected_vertices);
+        if (self.index_buffer != null) c.vkDestroyBuffer(self.device, self.index_buffer, null);
+        if (self.index_buffer_memory != null) c.vkFreeMemory(self.device, self.index_buffer_memory, null);
+        self.mesh_data.deinit(self.allocator);
         if (self.object_buffer != null) c.vkDestroyBuffer(self.device, self.object_buffer, null);
         if (self.object_buffer_memory != null) c.vkFreeMemory(self.device, self.object_buffer_memory, null);
-        if (self.object_descriptor_pool != null) c.vkDestroyDescriptorPool(self.device, self.object_descriptor_pool, null);
-        if (self.object_descriptor_set_layout != null) c.vkDestroyDescriptorSetLayout(self.device, self.object_descriptor_set_layout, null);
+        if (self.descriptor_set_layout != null) c.vkDestroyDescriptorSetLayout(self.device, self.descriptor_set_layout, null);
 
         for (0..max_frames_in_flight) |i| {
             if (self.image_available[i] != null) c.vkDestroySemaphore(self.device, self.image_available[i], null);
@@ -704,7 +696,7 @@ const App = struct {
         std.debug.print("shader playground\n", .{});
         std.debug.print("  vertex:   {s}\n", .{self.vert_path});
         std.debug.print("  fragment: {s}\n", .{self.frag_path});
-        std.debug.print("  mesh triangles: {d}, projected vertices: {d}\n", .{ self.mesh_triangles.len, self.projected_vertices.len });
+        std.debug.print("  mesh triangles: {d}, persistent vertices: {d}, indices: {d}\n", .{ self.mesh_triangle_count, self.mesh_vertex_count, self.mesh_index_count });
         std.debug.print("  controls: W/S walk, A/D strafe, arrows look, R reset, Esc quit\n", .{});
         std.debug.print("Run this in another terminal for live SPIR-V rebuilds:\n", .{});
         std.debug.print("  zig build --watch spirv-raw     # driver-valid raw baseline\n", .{});
@@ -722,11 +714,7 @@ const App = struct {
             if (self.benchmark_frames > 0) dirty = true;
             if (self.framebuffer_resized) dirty = true;
             if (try self.reloadShadersIfChanged()) dirty = true;
-            if (try self.updateInput(delta_time)) {
-                try vkCheck(c.vkDeviceWaitIdle(self.device));
-                try self.recreateCommandBuffers();
-                dirty = true;
-            }
+            if (try self.updateInput(delta_time)) dirty = true;
             if (dirty) {
                 try self.drawFrame();
                 self.rendered_frames += 1;
@@ -813,6 +801,7 @@ const App = struct {
         try self.createLogicalDevice();
         try self.createObjectResources();
         try self.createSwapchain();
+        try self.createFrameResources();
         try self.createImageViews();
         try self.createRenderPass();
         try self.createDepthResources();
@@ -827,6 +816,8 @@ const App = struct {
         try self.createFramebuffers();
         try self.createCommandPool();
         try self.createVertexBuffer();
+        self.mesh_data.deinit(self.allocator);
+        self.mesh_data = .{ .vertices = &.{}, .indices = &.{} };
         try self.createCommandBuffers();
         try self.createSyncObjects();
     }
@@ -999,21 +990,30 @@ const App = struct {
     }
 
     fn createObjectResources(self: *App) !void {
-        const binding = c.VkDescriptorSetLayoutBinding{
-            .binding = 0,
-            .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .descriptorCount = 1,
-            .stageFlags = c.VK_SHADER_STAGE_FRAGMENT_BIT,
-            .pImmutableSamplers = null,
+        const bindings = [_]c.VkDescriptorSetLayoutBinding{
+            .{
+                .binding = 0,
+                .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = c.VK_SHADER_STAGE_FRAGMENT_BIT,
+                .pImmutableSamplers = null,
+            },
+            .{
+                .binding = 1,
+                .descriptorType = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT,
+                .pImmutableSamplers = null,
+            },
         };
         const layout_info = c.VkDescriptorSetLayoutCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
             .pNext = null,
             .flags = 0,
-            .bindingCount = 1,
-            .pBindings = &binding,
+            .bindingCount = bindings.len,
+            .pBindings = &bindings,
         };
-        try vkCheck(c.vkCreateDescriptorSetLayout(self.device, &layout_info, null, &self.object_descriptor_set_layout));
+        try vkCheck(c.vkCreateDescriptorSetLayout(self.device, &layout_info, null, &self.descriptor_set_layout));
 
         try self.createBuffer(
             @sizeOf(ObjectGpuBlock),
@@ -1027,48 +1027,83 @@ const App = struct {
         const bytes = std.mem.asBytes(&self.object_block);
         @memcpy(@as([*]u8, @ptrCast(mapped.?))[0..bytes.len], bytes);
         c.vkUnmapMemory(self.device, self.object_buffer_memory);
+    }
 
-        const pool_size = c.VkDescriptorPoolSize{
-            .type = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .descriptorCount = 1,
+    fn createFrameResources(self: *App) !void {
+        var properties: c.VkPhysicalDeviceProperties = undefined;
+        c.vkGetPhysicalDeviceProperties(self.physical_device, &properties);
+        const alignment = properties.limits.minUniformBufferOffsetAlignment;
+        self.frame_stride = std.mem.alignForward(c.VkDeviceSize, @sizeOf(FrameGpu), @max(alignment, 1));
+        try self.createBuffer(
+            self.frame_stride * self.swapchain_images.len,
+            c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            &self.frame_buffer,
+            &self.frame_buffer_memory,
+        );
+
+        const set_count: u32 = @intCast(self.swapchain_images.len);
+        const pool_sizes = [_]c.VkDescriptorPoolSize{
+            .{ .type = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = set_count },
+            .{ .type = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = set_count },
         };
         const pool_info = c.VkDescriptorPoolCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
             .pNext = null,
             .flags = 0,
-            .maxSets = 1,
-            .poolSizeCount = 1,
-            .pPoolSizes = &pool_size,
+            .maxSets = set_count,
+            .poolSizeCount = pool_sizes.len,
+            .pPoolSizes = &pool_sizes,
         };
-        try vkCheck(c.vkCreateDescriptorPool(self.device, &pool_info, null, &self.object_descriptor_pool));
+        try vkCheck(c.vkCreateDescriptorPool(self.device, &pool_info, null, &self.descriptor_pool));
 
+        self.descriptor_sets = try self.allocator.alloc(c.VkDescriptorSet, self.swapchain_images.len);
+        const layouts = try self.allocator.alloc(c.VkDescriptorSetLayout, self.swapchain_images.len);
+        defer self.allocator.free(layouts);
+        @memset(layouts, self.descriptor_set_layout);
         const allocate_info = c.VkDescriptorSetAllocateInfo{
             .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
             .pNext = null,
-            .descriptorPool = self.object_descriptor_pool,
-            .descriptorSetCount = 1,
-            .pSetLayouts = &self.object_descriptor_set_layout,
+            .descriptorPool = self.descriptor_pool,
+            .descriptorSetCount = set_count,
+            .pSetLayouts = layouts.ptr,
         };
-        try vkCheck(c.vkAllocateDescriptorSets(self.device, &allocate_info, &self.object_descriptor_set));
+        try vkCheck(c.vkAllocateDescriptorSets(self.device, &allocate_info, self.descriptor_sets.ptr));
 
-        const buffer_info = c.VkDescriptorBufferInfo{
-            .buffer = self.object_buffer,
-            .offset = 0,
-            .range = @sizeOf(ObjectGpuBlock),
-        };
-        const write = c.VkWriteDescriptorSet{
-            .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .pNext = null,
-            .dstSet = self.object_descriptor_set,
-            .dstBinding = 0,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pImageInfo = null,
-            .pBufferInfo = &buffer_info,
-            .pTexelBufferView = null,
-        };
-        c.vkUpdateDescriptorSets(self.device, 1, &write, 0, null);
+        const object_info = c.VkDescriptorBufferInfo{ .buffer = self.object_buffer, .offset = 0, .range = @sizeOf(ObjectGpuBlock) };
+        for (self.descriptor_sets, 0..) |descriptor_set, i| {
+            const frame_info = c.VkDescriptorBufferInfo{ .buffer = self.frame_buffer, .offset = self.frame_stride * i, .range = @sizeOf(FrameGpu) };
+            const writes = [_]c.VkWriteDescriptorSet{
+                .{
+                    .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .pNext = null,
+                    .dstSet = descriptor_set,
+                    .dstBinding = 0,
+                    .dstArrayElement = 0,
+                    .descriptorCount = 1,
+                    .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                    .pImageInfo = null,
+                    .pBufferInfo = &object_info,
+                    .pTexelBufferView = null,
+                },
+                .{
+                    .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .pNext = null,
+                    .dstSet = descriptor_set,
+                    .dstBinding = 1,
+                    .dstArrayElement = 0,
+                    .descriptorCount = 1,
+                    .descriptorType = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                    .pImageInfo = null,
+                    .pBufferInfo = &frame_info,
+                    .pTexelBufferView = null,
+                },
+            };
+            c.vkUpdateDescriptorSets(self.device, writes.len, &writes, 0, null);
+        }
+
+        self.images_in_flight = try self.allocator.alloc(c.VkFence, self.swapchain_images.len);
+        @memset(self.images_in_flight, null);
     }
 
     fn createSwapchain(self: *App) !void {
@@ -1265,7 +1300,7 @@ const App = struct {
             .inputRate = c.VK_VERTEX_INPUT_RATE_VERTEX,
         };
         const vertex_attributes = [_]c.VkVertexInputAttributeDescription{
-            .{ .location = 0, .binding = 0, .format = c.VK_FORMAT_R32G32B32_SFLOAT, .offset = @offsetOf(Vertex, "pos") },
+            .{ .location = 0, .binding = 0, .format = c.VK_FORMAT_R32G32B32A32_SFLOAT, .offset = @offsetOf(Vertex, "point") },
             .{ .location = 1, .binding = 0, .format = c.VK_FORMAT_R32G32B32A32_SFLOAT, .offset = @offsetOf(Vertex, "color") },
             .{ .location = 2, .binding = 0, .format = c.VK_FORMAT_R32G32B32A32_SFLOAT, .offset = @offsetOf(Vertex, "plane") },
         };
@@ -1354,19 +1389,14 @@ const App = struct {
         };
 
         var pipeline_layout: c.VkPipelineLayout = null;
-        const push_constant_range = c.VkPushConstantRange{
-            .stageFlags = c.VK_SHADER_STAGE_FRAGMENT_BIT,
-            .offset = 0,
-            .size = @sizeOf(SphericalFrame),
-        };
         const pipeline_layout_info = c.VkPipelineLayoutCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
             .pNext = null,
             .flags = 0,
             .setLayoutCount = 1,
-            .pSetLayouts = &self.object_descriptor_set_layout,
-            .pushConstantRangeCount = 1,
-            .pPushConstantRanges = &push_constant_range,
+            .pSetLayouts = &self.descriptor_set_layout,
+            .pushConstantRangeCount = 0,
+            .pPushConstantRanges = null,
         };
         try vkCheck(c.vkCreatePipelineLayout(self.device, &pipeline_layout_info, null, &pipeline_layout));
         errdefer c.vkDestroyPipelineLayout(self.device, pipeline_layout, null);
@@ -1515,18 +1545,85 @@ const App = struct {
     }
 
     fn createVertexBuffer(self: *App) !void {
-        const buffer_size: c.VkDeviceSize = @intCast(self.projected_vertices.len * @sizeOf(Vertex));
-        try self.createBuffer(
-            buffer_size,
+        try self.createDeviceBufferWithData(
+            std.mem.sliceAsBytes(self.mesh_data.vertices),
             c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-            c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
             &self.vertex_buffer,
             &self.vertex_buffer_memory,
         );
+        try self.createDeviceBufferWithData(
+            std.mem.sliceAsBytes(self.mesh_data.indices),
+            c.VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+            &self.index_buffer,
+            &self.index_buffer_memory,
+        );
+    }
+
+    fn createDeviceBufferWithData(self: *App, bytes: []const u8, usage: c.VkBufferUsageFlags, buffer: *c.VkBuffer, memory: *c.VkDeviceMemory) !void {
+        const buffer_size: c.VkDeviceSize = @intCast(bytes.len);
+        var staging_buffer: c.VkBuffer = null;
+        var staging_memory: c.VkDeviceMemory = null;
+        try self.createBuffer(
+            buffer_size,
+            c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            &staging_buffer,
+            &staging_memory,
+        );
+        defer c.vkDestroyBuffer(self.device, staging_buffer, null);
+        defer c.vkFreeMemory(self.device, staging_memory, null);
 
         var mapped: ?*anyopaque = null;
-        try vkCheck(c.vkMapMemory(self.device, self.vertex_buffer_memory, 0, buffer_size, 0, &mapped));
-        c.vkUnmapMemory(self.device, self.vertex_buffer_memory);
+        try vkCheck(c.vkMapMemory(self.device, staging_memory, 0, buffer_size, 0, &mapped));
+        @memcpy(@as([*]u8, @ptrCast(mapped.?))[0..bytes.len], bytes);
+        c.vkUnmapMemory(self.device, staging_memory);
+
+        try self.createBuffer(
+            buffer_size,
+            @as(c.VkBufferUsageFlags, c.VK_BUFFER_USAGE_TRANSFER_DST_BIT) | usage,
+            c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            buffer,
+            memory,
+        );
+        try self.copyBuffer(staging_buffer, buffer.*, buffer_size);
+    }
+
+    fn copyBuffer(self: *App, source: c.VkBuffer, destination: c.VkBuffer, size: c.VkDeviceSize) !void {
+        const allocate_info = c.VkCommandBufferAllocateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .pNext = null,
+            .commandPool = self.command_pool,
+            .level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1,
+        };
+        var command_buffer: c.VkCommandBuffer = null;
+        try vkCheck(c.vkAllocateCommandBuffers(self.device, &allocate_info, &command_buffer));
+        defer c.vkFreeCommandBuffers(self.device, self.command_pool, 1, &command_buffer);
+
+        const begin_info = c.VkCommandBufferBeginInfo{
+            .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .pNext = null,
+            .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+            .pInheritanceInfo = null,
+        };
+        try vkCheck(c.vkBeginCommandBuffer(command_buffer, &begin_info));
+        const region = c.VkBufferCopy{ .srcOffset = 0, .dstOffset = 0, .size = size };
+        c.vkCmdCopyBuffer(command_buffer, source, destination, 1, &region);
+        try vkCheck(c.vkEndCommandBuffer(command_buffer));
+
+        const submit_info = c.VkSubmitInfo{
+            .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .pNext = null,
+            .waitSemaphoreCount = 0,
+            .pWaitSemaphores = null,
+            .pWaitDstStageMask = null,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &command_buffer,
+            .signalSemaphoreCount = 0,
+            .pSignalSemaphores = null,
+        };
+        try vkCheck(c.vkQueueSubmit(self.graphics_queue, 1, &submit_info, null));
+        try vkCheck(c.vkQueueWaitIdle(self.graphics_queue));
     }
 
     fn createBuffer(self: *App, size: c.VkDeviceSize, usage: c.VkBufferUsageFlags, properties: c.VkMemoryPropertyFlags, buffer: *c.VkBuffer, memory: *c.VkDeviceMemory) !void {
@@ -1591,8 +1688,6 @@ const App = struct {
             .height = @floatFromInt(self.swapchain_extent.height),
             .radius = tracer.radius,
             .tan_half_fov = camera.tan_half_fov,
-            .ground_a = tracer.ground_a,
-            .object_count = @floatFromInt(self.object_count),
             .origin = tracer.origin.coeffsArray(),
             .right = tracer.right.coeffsArray(),
             .up = tracer.up.coeffsArray(),
@@ -1600,66 +1695,23 @@ const App = struct {
         };
     }
 
-    fn updateProjectedMesh(self: *App, frame: SphericalFrame) !void {
-        var vertex_count: usize = 0;
-
-        for (self.mesh_triangles) |triangle| {
-            var projected: [3]Vertex = undefined;
-            var valid = true;
-            for (triangle.points, 0..) |point, i| {
-                const pos = projectPoint(frame, point) orelse {
-                    valid = false;
-                    break;
-                };
-                // The stereographic chart is singular at the antipode. Letting
-                // Vulkan clip a triangle with a near-singular vertex creates a
-                // giant screen-spanning primitive that is no longer the
-                // spherical triangle. Drop it until chart-boundary clipping
-                // is implemented.
-                if (@abs(pos[0]) > 4.0 or @abs(pos[1]) > 4.0) {
-                    valid = false;
-                    break;
-                }
-                projected[i] = .{ .pos = pos, .color = triangle.color, .plane = triangle.plane };
-            }
-            if (valid) {
-                inline for (0..3) |i| {
-                    const next = (i + 1) % 3;
-                    const dx = projected[i].pos[0] - projected[next].pos[0];
-                    const dy = projected[i].pos[1] - projected[next].pos[1];
-                    if (dx * dx + dy * dy > 4.0) valid = false;
-                }
-            }
-            if (!valid) continue;
-            const center = [2]f32{
-                (projected[0].pos[0] + projected[1].pos[0] + projected[2].pos[0]) / 3.0,
-                (projected[0].pos[1] + projected[1].pos[1] + projected[2].pos[1]) / 3.0,
-            };
-            for (&projected) |*vertex| {
-                const dx = (vertex.pos[0] - center[0]) * frame.width * 0.5;
-                const dy = (vertex.pos[1] - center[1]) * frame.height * 0.5;
-                const length = @sqrt(dx * dx + dy * dy);
-                if (length == 0.0) continue;
-                vertex.pos[0] += dx / length * (2.0 * raster_margin_pixels / frame.width);
-                vertex.pos[1] += dy / length * (2.0 * raster_margin_pixels / frame.height);
-            }
-            self.projected_vertices[vertex_count + 0] = projected[0];
-            self.projected_vertices[vertex_count + 1] = projected[1];
-            self.projected_vertices[vertex_count + 2] = projected[2];
-            vertex_count += 3;
-        }
-        self.mesh_vertex_count = @intCast(vertex_count);
-
+    fn updateFrameBuffer(self: *App, image_index: usize) !void {
+        const frame = self.currentFrame();
+        const gpu_frame = FrameGpu{
+            .viewport = .{ frame.width, frame.height, frame.radius, frame.tan_half_fov },
+            .origin = @bitCast(frame.origin),
+            .right = @bitCast(frame.right),
+            .up = @bitCast(frame.up),
+            .forward = @bitCast(frame.forward),
+        };
+        const offset = self.frame_stride * image_index;
         var mapped: ?*anyopaque = null;
-        try vkCheck(c.vkMapMemory(self.device, self.vertex_buffer_memory, 0, @intCast(self.projected_vertices.len * @sizeOf(Vertex)), 0, &mapped));
-        const bytes = std.mem.sliceAsBytes(self.projected_vertices[0..vertex_count]);
-        @memcpy(@as([*]u8, @ptrCast(mapped.?))[0..bytes.len], bytes);
-        c.vkUnmapMemory(self.device, self.vertex_buffer_memory);
+        try vkCheck(c.vkMapMemory(self.device, self.frame_buffer_memory, offset, @sizeOf(FrameGpu), 0, &mapped));
+        @as(*FrameGpu, @ptrCast(@alignCast(mapped.?))).* = gpu_frame;
+        c.vkUnmapMemory(self.device, self.frame_buffer_memory);
     }
 
     fn recordCommandBuffers(self: *App) !void {
-        const frame = self.currentFrame();
-        try self.updateProjectedMesh(frame);
         for (self.command_buffers, 0..) |command_buffer, i| {
             const begin_info = c.VkCommandBufferBeginInfo{
                 .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -1690,32 +1742,27 @@ const App = struct {
                 self.pipeline_layout,
                 0,
                 1,
-                &self.object_descriptor_set,
+                &self.descriptor_sets[i],
                 0,
                 null,
             );
-            c.vkCmdPushConstants(
-                command_buffer,
-                self.pipeline_layout,
-                c.VK_SHADER_STAGE_FRAGMENT_BIT,
-                0,
-                @sizeOf(SphericalFrame),
-                @ptrCast(&frame),
-            );
             c.vkCmdDraw(command_buffer, 3, 1, 0, 0);
-            if (self.mesh_pipeline != null and self.mesh_vertex_count > 0) {
+            if (self.mesh_pipeline != null and self.mesh_index_count > 0) {
                 c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.mesh_pipeline);
-                c.vkCmdPushConstants(
+                c.vkCmdBindDescriptorSets(
                     command_buffer,
+                    c.VK_PIPELINE_BIND_POINT_GRAPHICS,
                     self.mesh_pipeline_layout,
-                    c.VK_SHADER_STAGE_FRAGMENT_BIT,
                     0,
-                    @sizeOf(SphericalFrame),
-                    @ptrCast(&frame),
+                    1,
+                    &self.descriptor_sets[i],
+                    0,
+                    null,
                 );
                 const offsets = [_]c.VkDeviceSize{0};
                 c.vkCmdBindVertexBuffers(command_buffer, 0, 1, &self.vertex_buffer, &offsets);
-                c.vkCmdDraw(command_buffer, self.mesh_vertex_count, 1, 0, 0);
+                c.vkCmdBindIndexBuffer(command_buffer, self.index_buffer, 0, c.VK_INDEX_TYPE_UINT32);
+                c.vkCmdDrawIndexed(command_buffer, self.mesh_index_count, 1, 0, 0, 0);
             }
             c.vkCmdEndRenderPass(command_buffer);
             try vkCheck(c.vkEndCommandBuffer(command_buffer));
@@ -1760,6 +1807,11 @@ const App = struct {
         }
         try vkCheckAllowSuboptimal(acquire_result);
 
+        if (self.images_in_flight[image_index] != null) {
+            try vkCheck(c.vkWaitForFences(self.device, 1, &self.images_in_flight[image_index], c.VK_TRUE, std.math.maxInt(u64)));
+        }
+        self.images_in_flight[image_index] = self.in_flight[self.current_frame];
+        try self.updateFrameBuffer(image_index);
         try vkCheck(c.vkResetFences(self.device, 1, &self.in_flight[self.current_frame]));
 
         const wait_semaphores = [_]c.VkSemaphore{self.image_available[self.current_frame]};
@@ -1836,6 +1888,7 @@ const App = struct {
         try vkCheck(c.vkDeviceWaitIdle(self.device));
         self.cleanupSwapchain();
         try self.createSwapchain();
+        try self.createFrameResources();
         try self.createImageViews();
         try self.createRenderPass();
         try self.createDepthResources();
@@ -1857,6 +1910,18 @@ const App = struct {
             self.allocator.free(self.command_buffers);
             self.command_buffers = &.{};
         }
+        if (self.descriptor_pool != null) c.vkDestroyDescriptorPool(self.device, self.descriptor_pool, null);
+        self.descriptor_pool = null;
+        self.allocator.free(self.descriptor_sets);
+        self.descriptor_sets = &.{};
+        if (self.frame_buffer != null) c.vkDestroyBuffer(self.device, self.frame_buffer, null);
+        self.frame_buffer = null;
+        if (self.frame_buffer_memory != null) c.vkFreeMemory(self.device, self.frame_buffer_memory, null);
+        self.frame_buffer_memory = null;
+        self.frame_stride = 0;
+        self.allocator.free(self.images_in_flight);
+        self.images_in_flight = &.{};
+
         for (self.framebuffers) |framebuffer| c.vkDestroyFramebuffer(self.device, framebuffer, null);
         self.allocator.free(self.framebuffers);
         self.framebuffers = &.{};

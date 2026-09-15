@@ -6,6 +6,10 @@ pub const Point = sg.Point;
 pub const Direction = sg.Direction;
 pub const Pose = sg.Pose;
 pub const dot = sg.dot;
+pub const basisFrameDirection = sg.frameDirection;
+pub const screenRadiusSquared = sg.screenRadiusSquared;
+pub const rasterProjection = sg.rasterProjection;
+pub const greatSphereIntersection = sg.greatSphereIntersection;
 
 pub const default_radius: f32 = 6.0;
 pub const default_cube_distance: f32 = 2.8;
@@ -612,12 +616,11 @@ pub const Tracer = struct {
             }
         }
 
-        // Ground first-positive root: (cos, sin) = (-b_g, a_g)/h_g, since
-        // a_g = sin(eye_height/R) > 0.
+        // Ground first-positive root on the world-up great sphere.
         const b_ground = sg.dot(dir, worldUp());
-        const h_g = @sqrt(b_ground * b_ground + self.ground_a * self.ground_a);
-        const cos_ground = -b_ground / h_g;
-        const sin_ground = self.ground_a / h_g;
+        const ground = sg.greatSphereIntersection(self.origin, dir, worldUp());
+        const cos_ground = ground.cos_angle;
+        const sin_ground = ground.sin_angle;
 
         // Fence candidates. A plank the ray transits always stands on the
         // ring; which plank, and which surface the ray enters through,
@@ -938,17 +941,7 @@ pub const Tracer = struct {
 /// transcendentals: with t = r·tan(fov/2), sin(2·atan t) = 2t/(1+t²)
 /// and cos(2·atan t) = (1-t²)/(1+t²).
 pub fn frameDirection(pose: Pose, tan_half_fov: f32, u: f32, v: f32) Direction {
-    const r = @sqrt(u * u + v * v);
-    if (r < 1e-6) return pose.forward;
-
-    const t = r * tan_half_fov;
-    const denom = 1.0 / (1.0 + t * t);
-    const sin_theta = 2.0 * t * denom;
-    const cos_theta = (1.0 - t * t) * denom;
-    return pose.forward.scale(cos_theta)
-        .add(pose.right.scale(sin_theta * u / r))
-        .add(pose.up.scale(sin_theta * v / r))
-        .cast(Direction);
+    return sg.frameDirection(pose.forward, pose.right, pose.up, tan_half_fov, u, v);
 }
 
 pub const Scene = struct {

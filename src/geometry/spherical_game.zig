@@ -1,6 +1,7 @@
 const std = @import("std");
 const ga = @import("ga");
 
+pub const screen = ga.Algebra(.euclidean(2)).Instantiate(f32);
 pub const h = ga.Algebra(.euclidean(4)).Instantiate(f32);
 pub const Point = h.Vector;
 pub const Direction = h.Vector;
@@ -11,6 +12,14 @@ pub const Projection = struct {
     y: f32,
     z: f32,
     distance: f32,
+};
+
+pub const RasterProjection = struct {
+    clip_x: f32,
+    clip_y: f32,
+    clip_w: f32,
+    depth: f32,
+    valid: bool,
 };
 
 pub const Hemisphere = enum { front, border, back };
@@ -115,8 +124,100 @@ pub fn dot(a: Point, b: Point) f32 {
     return a.scalarProduct(b);
 }
 
+pub fn screenRadiusSquared(u: f32, v: f32) f32 {
+    return screen.scalarNormSquared(screen.Vector.init(.{ u, v }));
+}
+
+/// Homogeneous stereographic projection of the initial camera-to-point tangent.
+/// Keeping the chart denominator in `clip_w` lets the rasterizer clip before
+/// perspective division instead of manufacturing giant near-singular triangles.
+pub fn rasterProjection(
+    origin: Point,
+    target: Point,
+    forward: Direction,
+    right: Direction,
+    up: Direction,
+    tan_half_fov: f32,
+    aspect_scale: f32,
+) RasterProjection {
+    const path_cos = std.math.clamp(dot(origin, target), -1.0, 1.0);
+    const tangent = target.sub(origin.scale(path_cos)).cast(Direction);
+    const path_sin = @sqrt(@max(0.0, dot(tangent, tangent)));
+    const forward_component = dot(forward, tangent);
+    const valid = path_sin > 1e-6 and tan_half_fov > 0.0;
+    const inverse_fov = if (valid) 1.0 / tan_half_fov else 0.0;
+    return .{
+        .clip_x = dot(right, tangent) * inverse_fov * aspect_scale,
+        .clip_y = -dot(up, tangent) * inverse_fov,
+        .clip_w = path_sin + forward_component,
+        .depth = (1.0 - path_cos) * 0.5,
+        .valid = valid,
+    };
+}
+
+/// Stereographic screen direction in the tangent frame at the camera.
+pub fn frameDirection(forward: Direction, right: Direction, up: Direction, tan_half_fov: f32, u: f32, v: f32) Direction {
+    const r = @sqrt(screenRadiusSquared(u, v));
+    if (r < 1e-6) return forward;
+
+    const t = r * tan_half_fov;
+    const inverse = 1.0 / (1.0 + t * t);
+    const sin_theta = 2.0 * t * inverse;
+    const cos_theta = (1.0 - t * t) * inverse;
+    return forward.scale(cos_theta)
+        .add(right.scale(sin_theta * u / r))
+        .add(up.scale(sin_theta * v / r))
+        .cast(Direction);
+}
+
+pub const GreatSphereIntersection = struct {
+    cos_angle: f32,
+    sin_angle: f32,
+    valid: bool,
+};
+
+/// First ray intersection with the great sphere whose normal is `plane`.
+pub fn greatSphereIntersection(origin: Point, direction: Direction, plane: Point) GreatSphereIntersection {
+    const a = dot(origin, plane);
+    const b = dot(direction, plane);
+    const magnitude = @sqrt(a * a + b * b);
+    const valid = magnitude >= 1e-5;
+    return .{
+        .cos_angle = if (valid) (if (a >= 0.0) -b / magnitude else b / magnitude) else -1.0,
+        .sin_angle = if (valid) @abs(a) / magnitude else 0.0,
+        .valid = valid,
+    };
+}
+
 pub fn norm(v: Point) f32 {
     return @sqrt(@max(dot(v, v), 0.0));
+}
+
+test "shared spherical view and plane kernels" {
+    const origin = Point.init(.{ 1.0, 0.0, 0.0, 0.0 });
+    const forward = Direction.init(.{ 0.0, 1.0, 0.0, 0.0 });
+    const right = Direction.init(.{ 0.0, 0.0, 1.0, 0.0 });
+    const up = Direction.init(.{ 0.0, 0.0, 0.0, 1.0 });
+
+    const projected = rasterProjection(origin, forward, forward, right, up, 1.0, 1.0);
+    try std.testing.expect(projected.valid);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), projected.clip_x, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), projected.clip_y, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), projected.clip_w, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.5), projected.depth, 1e-6);
+
+    const chart_pole = rasterProjection(origin, forward.negate().cast(Point), forward, right, up, 1.0, 1.0);
+    try std.testing.expect(chart_pole.valid);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), chart_pole.clip_w, 1e-6);
+
+    try std.testing.expect(frameDirection(forward, right, up, 1.0, 0.0, 0.0).eql(forward));
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), norm(frameDirection(forward, right, up, 1.0, 0.5, -0.25)), 1e-6);
+
+    const hit = greatSphereIntersection(origin, forward, origin);
+    try std.testing.expect(hit.valid);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0), hit.cos_angle, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), hit.sin_angle, 1e-6);
+    try std.testing.expect(!greatSphereIntersection(origin, forward, right).valid);
 }
 
 pub fn normalize(v: Point) ?Point {

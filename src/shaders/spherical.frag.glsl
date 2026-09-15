@@ -226,8 +226,6 @@ vec3 groundColor(vec4 point) {
 
 void main() {
     vec2 uv = (gl_FragCoord.xy / u_resolution) * 2.0 - 1.0;
-    uv.x *= u_resolution.x / u_resolution.y;
-    uv.x /= 1280.0 / 720.0;
     Hit hit;
     if (length(uv) > 1.0) {
         gl_FragColor = vec4(4.0, 6.0, 10.0, 0.0) / 255.0;
