@@ -84,7 +84,7 @@ vectors `e1..en` for Euclidean directions and `e0` for the degenerate
 projective basis vector. Configure it with naming spans:
 
 ```zig
-const P3 = zmath.ga.AlgebraWithNamingOptions(
+const RawP3 = zmath.ga.AlgebraWithNamingOptions(
     .{ .p = 3, .q = 0, .r = 1 },
     zmath.ga.blade_parsing.SignedBladeNamingOptions.withBasisSpans(
         zmath.ga.blades.BasisIndexSpans.init(.{
@@ -93,6 +93,7 @@ const P3 = zmath.ga.AlgebraWithNamingOptions(
         }),
     ),
 ).Instantiate(f32);
+const P3 = zmath.ga.pga.extend(RawP3);
 ```
 
 3D PGA points are trivectors built as the complement dual of their
@@ -107,6 +108,17 @@ Planes are vectors:
 ```text
 π(a, b, c, d) = a*e1 + b*e2 + c*e3 + d*e0
 ```
+
+`P3` names the semantic sparse carriers as `Plane`, `Line`, `Point`,
+`Direction`, and `Motor`; the underlying general algebra remains available as
+`P3.base`. `P3.rotation(axis, angle)` and `P3.translator(.{ dx, dy, dz })`
+construct unit motors, `P3.compose(lhs, rhs)` applies `rhs` then `lhs`, and
+`P3.transformPoint(point, motor)` applies the sandwich. Motor composition and
+point/direction actions use the dual-quaternion basis of the same `Even`
+subalgebra internally, so they retain general PGA product semantics for
+non-unit motors without materializing intermediate multivectors. For batches,
+`P3.prepare(motor)` precomputes that action and exposes
+`PreparedMotor.transformPoint` and `.transformDirection`.
 
 So for PGA, `wedge()`/`meet()` is the direct incidence product and
 `join()` is the regressive product built through complement duality.

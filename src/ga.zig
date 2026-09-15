@@ -24,6 +24,7 @@ pub const expression = @import("ga/expression.zig");
 pub const multivector = @import("ga/multivector.zig");
 pub const rga = @import("ga/rga.zig");
 pub const rotors = @import("ga/rotors.zig");
+pub const pga = @import("ga/pga.zig");
 
 pub const MetricSignature = blades.MetricSignature;
 pub const BasisIndexSpans = blades.BasisIndexSpans;
@@ -143,6 +144,12 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
         /// Returns a namespace where all type constructors and common operations are bound to a specific coefficient type `T`.
         pub fn Instantiate(comptime T: type) type {
             return struct {
+                /// Coefficient type bound to this algebra namespace.
+                pub const Coefficient = T;
+                /// Metric signature bound to this algebra namespace.
+                pub const signature = Self.metric_signature;
+                /// Ambient algebra dimensions.
+                pub const algebra_dimensions = Self.dimensions;
                 /// Scalar type (Grade 0) bound to `T`.
                 pub const Scalar = Self.Scalar(T);
                 /// Vector type (Grade 1) bound to `T`.
@@ -408,6 +415,56 @@ test "ga facade exposes canonical family and rotor surface" {
     const rotated_e1 = rotors.rotated(e1, half_turn);
     try std.testing.expect(rotors.nearlyEqual(rotated_e1.coeffNamed("e1"), -1.0, 1e-12));
     try std.testing.expect(rotors.nearlyEqual(rotated_e1.coeffNamed("e2"), 0.0, 1e-12));
+}
+
+test "PGA extension provides motors and homogeneous transforms" {
+    const RawP3 = Algebra(.{ .p = 3, .q = 0, .r = 1 }).Instantiate(f64);
+    const P3 = pga.extend(RawP3);
+
+    try std.testing.expectEqual(RawP3, P3.base);
+    try std.testing.expectEqual(RawP3.Even, P3.Motor);
+    try std.testing.expectEqual(RawP3.Trivector, P3.Point);
+
+    const translation = P3.translator(.{ 1.0, -2.0, 0.5 });
+    const moved_origin = P3.transformPoint(P3.point(.{ 0.0, 0.0, 0.0 }), translation);
+    const moved_direction = P3.transformDirection(P3.direction(.{ 1.0, 2.0, 3.0 }), translation);
+    const composed = P3.compose(P3.translator(.{ 1.0, 0.0, 0.0 }), P3.translator(.{ 0.0, 2.0, 0.0 }));
+    const quarter_turn = try P3.rotation(.{ 0.0, 0.0, 1.0 }, std.math.pi / 2.0);
+    const rotated_e1 = P3.transformPoint(P3.point(.{ 1.0, 0.0, 0.0 }), quarter_turn);
+
+    try std.testing.expect(moved_origin.eql(P3.point(.{ 1.0, -2.0, 0.5 })));
+    try std.testing.expect(moved_direction.eql(P3.direction(.{ 1.0, 2.0, 3.0 })));
+    try std.testing.expect(P3.transformPoint(P3.point(.{ 0.0, 0.0, 0.0 }), composed).eql(P3.point(.{ 1.0, 2.0, 0.0 })));
+    inline for (P3.Point.blades) |mask| {
+        try std.testing.expectApproxEqAbs(P3.point(.{ 0.0, 1.0, 0.0 }).coeff(mask), rotated_e1.coeff(mask), 1e-12);
+    }
+    const arbitrary_lhs = P3.compose(
+        P3.translator(.{ 0.3, -0.1, 0.2 }),
+        try P3.rotation(.{ 1.0, 2.0, -1.0 }, 0.7),
+    ).add(P3.compose(
+        P3.translator(.{ -0.2, 0.4, 0.1 }),
+        try P3.rotation(.{ -1.0, 0.5, 2.0 }, -0.3),
+    )).cast(P3.Motor);
+    const arbitrary_rhs = P3.compose(
+        P3.translator(.{ -0.4, 0.2, 0.3 }),
+        try P3.rotation(.{ 2.0, -1.0, 0.5 }, 0.4),
+    );
+    const generic_composed = arbitrary_lhs.gp(arbitrary_rhs);
+    const optimized_composed = P3.compose(arbitrary_lhs, arbitrary_rhs);
+    const sample_point = P3.point(.{ 0.2, -0.3, 0.7 });
+    const sample_direction = P3.direction(.{ -0.5, 0.4, 0.1 });
+    const generic_point = arbitrary_lhs.sandwichGrade(sample_point, 3).cast(P3.Point);
+    const generic_direction = arbitrary_lhs.sandwichGrade(sample_direction, 3).cast(P3.Direction);
+
+    inline for (P3.Motor.blades) |mask| {
+        try std.testing.expectApproxEqAbs(generic_composed.coeff(mask), optimized_composed.coeff(mask), 1e-12);
+    }
+    inline for (P3.Point.blades) |mask| {
+        try std.testing.expectApproxEqAbs(generic_point.coeff(mask), P3.transformPoint(sample_point, arbitrary_lhs).coeff(mask), 1e-12);
+        try std.testing.expectApproxEqAbs(generic_direction.coeff(mask), P3.transformDirection(sample_direction, arbitrary_lhs).coeff(mask), 1e-12);
+        try std.testing.expectApproxEqAbs(generic_point.coeff(mask), P3.prepare(arbitrary_lhs).transformPoint(sample_point).coeff(mask), 1e-12);
+    }
+    try std.testing.expectError(error.ZeroAxis, P3.rotation(.{ 0.0, 0.0, 0.0 }, 1.0));
 }
 
 test "signature-baked algebra namespace drives metric-dependent products" {

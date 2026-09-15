@@ -44,8 +44,8 @@ pub const BladeMask = struct {
     /// Convenience constructor for tuple/array literals of raw masks.
     pub inline fn initMany(comptime values: anytype) [values.len]BladeMask {
         var masks: [values.len]BladeMask = undefined;
-        inline for (values, 0..) |value, i| {
-            masks[i] = init(value);
+        inline for (&masks, values) |*mask, value| {
+            mask.* = .init(value);
         }
         return masks;
     }
@@ -829,6 +829,31 @@ fn unionMaskTable(
     inline for (rhs_masks) |mask| marked[mask.index()] = true;
 
     return marked;
+}
+
+/// Returns the subset of `masks` with the requested grade, in canonical order.
+pub fn masksOfGrade(
+    comptime dimensions: usize,
+    comptime masks: []const BladeMask,
+    comptime grade: usize,
+) [countMasksOfGrade(masks, grade)]BladeMask {
+    validateDimensions(dimensions);
+    if (grade > dimensions) @compileError("grade must not exceed the ambient dimensions");
+
+    var result: [countMasksOfGrade(masks, grade)]BladeMask = undefined;
+    var next_index: usize = 0;
+    inline for (masks) |mask| {
+        if (comptime bladeGrade(mask) != grade) continue;
+        result[next_index] = mask;
+        next_index += 1;
+    }
+    return result;
+}
+
+fn countMasksOfGrade(comptime masks: []const BladeMask, comptime grade: usize) usize {
+    var count: usize = 0;
+    inline for (masks) |mask| count += @intFromBool(bladeGrade(mask) == grade);
+    return count;
 }
 
 /// Returns every blade that can appear in the geometric product of two blade sets.

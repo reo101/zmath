@@ -989,17 +989,59 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             const lhs_coeffs = self.coeffsArray();
             const rhs_coeffs = rhs.coeffsArray();
 
+            if (comptime Result.stored_blade_count * stored_blade_count * Rhs.stored_blade_count <= 100_000) {
+                inline for (0..Result.stored_blade_count) |result_index| {
+                    const result_mask = Result.blades[result_index];
+                    inline for (blade_masks, 0..) |lhs_mask, lhs_index| {
+                        inline for (Rhs.blades, 0..) |rhs_mask, rhs_index| {
+                            if (comptime lhs_mask.toInt() ^ rhs_mask.toInt() != result_mask.toInt()) continue;
+
+                            const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, sig);
+                            result_coeffs[result_index] += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @intFromEnum(sign);
+                        }
+                    }
+                }
+            } else {
+                inline for (blade_masks, 0..) |lhs_mask, lhs_index| {
+                    inline for (Rhs.blades, 0..) |rhs_mask, rhs_index| {
+                        const result_index = comptime Result.getBladeIndex(BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt()));
+                        const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, sig);
+
+                        result_coeffs[result_index] += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @intFromEnum(sign);
+                    }
+                }
+            }
+
+            return Result.init(result_coeffs);
+        }
+
+        /// Returns only one grade of the geometric product without materializing its other grades.
+        pub fn gpGrade(self: Self, rhs: anytype, comptime target_grade: usize) Rebind(&blade_ops.masksOfGrade(dimensions, &blade_ops.geometricProductMasks(dimensions, blade_masks, @TypeOf(rhs).blades), target_grade)) {
+            const Rhs = @TypeOf(rhs);
+            comptime assertCompatibleMultivector(Self, Rhs);
+            const ProductMasks = comptime blade_ops.geometricProductMasks(dimensions, blade_masks, Rhs.blades);
+            const Result = Rebind(&blade_ops.masksOfGrade(dimensions, &ProductMasks, target_grade));
+            var result_coeffs = std.mem.zeroes([Result.stored_blade_count]T);
+
+            const lhs_coeffs = self.coeffsArray();
+            const rhs_coeffs = rhs.coeffsArray();
+
             inline for (blade_masks, 0..) |lhs_mask, lhs_index| {
                 inline for (Rhs.blades, 0..) |rhs_mask, rhs_index| {
                     const result_index = comptime Result.getBladeIndex(BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt()));
-                    const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, sig);
+                    if (comptime result_index == Result.missing_blade_index) continue;
 
-                    std.debug.assert(result_index < Result.stored_blade_count);
+                    const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, sig);
                     result_coeffs[result_index] += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @intFromEnum(sign);
                 }
             }
 
             return Result.init(result_coeffs);
+        }
+
+        /// Returns one grade of `self * value * reverse(self)` without materializing the final product's other grades.
+        pub fn sandwichGrade(self: Self, value: anytype, comptime target_grade: usize) @TypeOf(self.gp(value).gpGrade(self.reverse(), target_grade)) {
+            return self.gp(value).gpGrade(self.reverse(), target_grade);
         }
 
         /// Returns the outer product of two multivectors.
@@ -1921,6 +1963,22 @@ test "multivector Named struct allows field access" {
     const Scal2 = Scalar(f32, .euclidean(2));
     const s = Scal2.init(.{4.0});
     try std.testing.expectEqual(@as(f32, 4.0), s.named().s);
+}
+
+test "multivector operations retain only possible blades" {
+    const Vector4 = Vector(f32, .euclidean(4));
+    const Full4 = FullMultivector(f32, .euclidean(4));
+    const a = Vector4.init(.{ 1.0, 2.0, 3.0, 4.0 });
+    const b = Vector4.init(.{ 4.0, 3.0, 2.0, 1.0 });
+
+    const sum = a.add(b);
+    const plane = a.wedge(b);
+    const plane_times_vector = plane.gp(a);
+
+    try std.testing.expectEqual(@as(usize, 4), @TypeOf(sum).stored_blade_count);
+    try std.testing.expectEqual(@as(usize, 6), @TypeOf(plane).stored_blade_count);
+    try std.testing.expectEqual(@as(usize, 8), @TypeOf(plane_times_vector).stored_blade_count);
+    try std.testing.expect(@sizeOf(@TypeOf(plane_times_vector)) < @sizeOf(Full4));
 }
 
 test "multivector Named struct supports alias fields without a prefix" {

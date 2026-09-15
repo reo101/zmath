@@ -46,7 +46,9 @@ pub fn build(b: *std.Build) void {
     });
 
     const bench_step = b.step("bench-simd", "Run SIMD micro-benchmarks (ReleaseFast)");
-    bench_step.dependOn(&b.addRunArtifact(bench).step);
+    const bench_run = b.addRunArtifact(bench);
+    if (b.args) |args| bench_run.addArgs(args);
+    bench_step.dependOn(&bench_run.step);
 
     addSphericalGameToolSteps(b, target, modules);
     addWorldsDemoSteps(b, target, optimize, modules);
