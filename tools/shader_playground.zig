@@ -621,6 +621,8 @@ const App = struct {
     benchmark_frames: u32 = 0,
     rendered_frames: u32 = 0,
     benchmark_started_at: f64 = 0.0,
+    fps_frames: u32 = 0,
+    fps_last_update: f64 = 0.0,
     vert_mtime: i128 = 0,
     frag_mtime: i128 = 0,
 
@@ -702,6 +704,7 @@ const App = struct {
         var dirty = true;
         self.benchmark_started_at = c.glfwGetTime();
         var previous_time = self.benchmark_started_at;
+        self.fps_last_update = self.benchmark_started_at;
         while (c.glfwWindowShouldClose(self.window) == c.GLFW_FALSE) {
             if (self.benchmark_frames == 0) c.glfwWaitEventsTimeout(1.0 / 60.0) else c.glfwPollEvents();
             const now = c.glfwGetTime();
@@ -715,12 +718,23 @@ const App = struct {
             if (dirty) {
                 try self.drawFrame();
                 self.rendered_frames += 1;
+                self.fps_frames += 1;
                 dirty = false;
                 if (self.benchmark_frames > 0 and self.rendered_frames >= self.benchmark_frames) {
                     try vkCheck(c.vkDeviceWaitIdle(self.device));
                     const elapsed = c.glfwGetTime() - self.benchmark_started_at;
                     std.debug.print("benchmark: {d} frames, {d:.3}s, {d:.1} fps\n", .{ self.rendered_frames, elapsed, @as(f64, @floatFromInt(self.rendered_frames)) / @max(elapsed, 0.000001) });
                     c.glfwSetWindowShouldClose(self.window, c.GLFW_TRUE);
+                }
+            }
+
+            if (self.benchmark_frames == 0) {
+                const fps_elapsed = now - self.fps_last_update;
+                if (fps_elapsed >= 0.5) {
+                    const fps = @as(f64, @floatFromInt(self.fps_frames)) / fps_elapsed;
+                    std.debug.print("\r{d: >5.0} fps  ", .{fps});
+                    self.fps_frames = 0;
+                    self.fps_last_update = now;
                 }
             }
         }
