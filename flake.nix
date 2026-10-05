@@ -42,7 +42,6 @@
             nativeGraphicsInputs = [
               pkgs.glfw
               pkgs.libGL
-              pkgs.raylib
               pkgs.libx11
               pkgs.libxcursor
               pkgs.libxext

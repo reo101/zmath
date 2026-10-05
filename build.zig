@@ -10,6 +10,7 @@ const Modules = struct {
     zmath: *std.Build.Module,
     spherical_scene: *std.Build.Module,
     object_scene: *std.Build.Module,
+    worlds_render: *std.Build.Module,
 };
 
 pub fn build(b: *std.Build) void {
@@ -52,7 +53,6 @@ pub fn build(b: *std.Build) void {
     bench_step.dependOn(&bench_run.step);
 
     addSphericalGameToolSteps(b, target, modules);
-    addWorldsDemoSteps(b, target, optimize, modules);
     addLocalVulkanPlaygroundSteps(b, target, optimize, use_llvm_spirv, compare_spirv, modules);
     addTests(b, target, optimize, modules, example, fuzz_use_llvm);
 }
@@ -109,6 +109,15 @@ fn addModules(b: *std.Build, target: std.Build.ResolvedTarget) Modules {
         .imports = &.{.{ .name = "zmath", .module = zmath }},
     });
 
+    const worlds_render = b.addModule("worlds_render", .{
+        .root_source_file = b.path("src/demos/worlds/render.zig"),
+        .target = target,
+        .imports = &.{
+            .{ .name = "zmath", .module = zmath },
+            .{ .name = "spherical_scene", .module = spherical_scene },
+        },
+    });
+
     return .{
         .meta = meta,
         .parse = parse,
@@ -117,6 +126,7 @@ fn addModules(b: *std.Build, target: std.Build.ResolvedTarget) Modules {
         .zmath = zmath,
         .spherical_scene = spherical_scene,
         .object_scene = object_scene,
+        .worlds_render = worlds_render,
     };
 }
 
@@ -138,44 +148,6 @@ fn addSphericalGameToolSteps(
     generate_step.dependOn(&b.addRunArtifact(generator).step);
 }
 
-fn addWorldsDemoSteps(
-    b: *std.Build,
-    target: std.Build.ResolvedTarget,
-    optimize: std.lang.Optimize,
-    modules: Modules,
-) void {
-    const raylib_translate: Translator = .init(b.dependency("translate_c", .{}), .{
-        .c_source_file = b.path("tools/raylib.h"),
-        .target = target,
-        .optimize = if (optimize == .debug) .fast else optimize,
-    });
-    addEnvIncludePaths(b, &raylib_translate, "C_INCLUDE_PATH");
-    addEnvIncludePaths(b, &raylib_translate, "CPATH");
-
-    const exe = b.addExecutable(.{
-        .name = "zmath-demo-worlds",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/demos/worlds/main.zig"),
-            .target = target,
-            // Per-pixel ray tracing needs optimization; Debug is unusable.
-            .optimize = if (optimize == .debug) .fast else optimize,
-            .link_libc = true,
-            .imports = &.{
-                .{ .name = "zmath", .module = modules.zmath },
-                .{ .name = "spherical_scene", .module = modules.spherical_scene },
-                .{ .name = "raylib", .module = raylib_translate.mod },
-            },
-        }),
-    });
-    exe.root_module.linkSystemLibrary("raylib", .{});
-
-    const build_step = b.step("demo-worlds-build", "Build the raylib worlds demo (euclidean/isometric/spherical/hyperbolic)");
-    build_step.dependOn(&exe.step);
-
-    const step = b.step("demo-worlds", "Run the raylib worlds demo");
-    step.dependOn(&b.addRunArtifact(exe).step);
-}
-
 fn addLocalVulkanPlaygroundSteps(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
@@ -194,27 +166,48 @@ fn addLocalVulkanPlaygroundSteps(
     addEnvIncludePaths(b, &vulkan_glfw_translate, "C_INCLUDE_PATH");
     addEnvIncludePaths(b, &vulkan_glfw_translate, "CPATH");
 
+    const vulkan_renderer = b.addModule("vulkan_renderer", .{
+        .root_source_file = b.path("tools/shader_playground.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{ .{
+            .name = "vulkan_glfw",
+            .module = vulkan_glfw_translate.mod,
+        }, .{
+            .name = "object_scene",
+            .module = modules.object_scene,
+        }, .{
+            .name = "spherical_scene",
+            .module = modules.spherical_scene,
+        }, .{
+            .name = "worlds_render",
+            .module = modules.worlds_render,
+        } },
+    });
+    vulkan_renderer.linkSystemLibrary("glfw", .{});
+    vulkan_renderer.linkSystemLibrary("vulkan", .{});
     const shader_playground_exe = b.addExecutable(.{
         .name = "zmath-shader-playground",
+        .root_module = vulkan_renderer,
+    });
+    const worlds_exe = b.addExecutable(.{
+        .name = "zmath-demo-worlds",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/shader_playground.zig"),
+            .root_source_file = b.path("src/demos/worlds/main.zig"),
             .target = target,
             .optimize = optimize,
-            .link_libc = true,
-            .imports = &.{ .{
-                .name = "vulkan_glfw",
-                .module = vulkan_glfw_translate.mod,
-            }, .{
-                .name = "object_scene",
-                .module = modules.object_scene,
-            }, .{
-                .name = "spherical_scene",
-                .module = modules.spherical_scene,
-            } },
+            .imports = &.{.{ .name = "vulkan_renderer", .module = vulkan_renderer }},
         }),
     });
-    shader_playground_exe.root_module.linkSystemLibrary("glfw", .{});
-    shader_playground_exe.root_module.linkSystemLibrary("vulkan", .{});
+    const worlds_build = b.step("demo-worlds-build", "Build the Vulkan four-space demo");
+    worlds_build.dependOn(&worlds_exe.step);
+    worlds_build.dependOn(spirv_steps.worlds);
+    const run_worlds = b.addRunArtifact(worlds_exe);
+    run_worlds.step.dependOn(spirv_steps.worlds);
+    run_worlds.addPassthruArgs();
+    const worlds_step = b.step("demo-worlds", "Run the Vulkan four-space demo");
+    worlds_step.dependOn(&run_worlds.step);
 
     const build_step = b.step("shader-playground-build", "Build the Vulkan SPIR-V shader playground");
     build_step.dependOn(&shader_playground_exe.step);
@@ -329,8 +322,26 @@ fn addTests(
     });
     const worlds_space_run = b.addRunArtifact(worlds_space_tests);
     test_step.dependOn(&worlds_space_run.step);
+    const worlds_render_tests = b.addTest(.{
+        .name = "zmath-worlds-render",
+        .root_module = modules.worlds_render,
+    });
+    const worlds_render_run = b.addRunArtifact(worlds_render_tests);
+    test_step.dependOn(&worlds_render_run.step);
     const worlds_check_step = b.step("demo-worlds-check", "Run headless worlds demo checks");
     worlds_check_step.dependOn(&worlds_space_run.step);
+    worlds_check_step.dependOn(&worlds_render_run.step);
+    const capture_tests = b.addTest(.{
+        .name = "zmath-framebuffer-capture",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/png_capture.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const capture_run = b.addRunArtifact(capture_tests);
+    test_step.dependOn(&capture_run.step);
+    worlds_check_step.dependOn(&capture_run.step);
 
     const compile_fail_hodge_dual = b.addObject(.{
         .name = "zmath-compile-fail-hodge-dual-degenerate",

@@ -8,11 +8,12 @@
 | `src/demos/spherical_game/scene.zig` | Backend-free S³ scene and exact tracer oracle | Canonical |
 | `src/demos/spherical_game/object_scene.zig` | Data-defined S³ half-space scene format | Canonical |
 | `tools/shader_playground.zig` | Vulkan/GLFW S³ renderer | Canonical graphical demo |
-| `src/demos/worlds/` | Raylib four-space educational demo | Active, separate |
+| `src/demos/worlds/` | Four-space frontend, camera uploads, and tracer checks | Shared Vulkan renderer |
 
 The old raylib/OpenGL S³ frontend and its handwritten GLSL math were removed.
 `demo-spherical` now runs the Vulkan renderer. There is one graphical S³
-implementation, authored in Zig against zmath and compiled to SPIR-V.
+implementation, authored in Zig against zmath and compiled to SPIR-V. Both
+`demo-spherical` and the spherical mode in `demo-worlds` use it.
 
 ## Geometry
 
@@ -90,7 +91,33 @@ fragment depth over representative camera poses.
 
 ## `demo-worlds`
 
-The worlds demo remains raylib because it is a separate educational executable,
-not an alternate S³ renderer. Its spherical mode consumes the same semantic
-scene core. Euclidean, isometric, and hyperbolic modes retain their own backend
-math and controls.
+The worlds executable is a thin entry point into the same Vulkan/GLFW frontend.
+Its spherical mode uses the same JSON world, persistent vertex/index buffers,
+and ground/mesh shader pipelines as `demo-spherical`. The CPU S³ tracer is only
+an oracle for headless checks, never the graphical path.
+
+Euclidean and isometric slab tracing and hyperbolic Klein tracing run in
+`src/shaders/worlds.frag.zig`. The shader reuses the backend-free kernels in
+`src/demos/worlds/space.zig`; camera packing and shading live in `render.zig`.
+Hyperbolic inverse sinh uses the native SPIR-V GLSL extended instruction,
+while CPU checks retain `std.math.asinh`.
+
+Worlds frame uploads append a 16-byte projection record to the canonical
+80-byte spherical frame prefix. Camera uniforms and presentation-wait semaphores
+remain per-swapchain-image; acquire semaphores and submission fences use frame
+slots. The render-pass dependency orders reuse of the shared depth attachment.
+Switching worlds selects precreated pipelines and rerecords commands only on
+the switch; moving the camera does not rebuild or upload meshes. Resize rebuilds
+swapchain resources for the active mode.
+
+Keys 1–4 (including keypad keys), Tab, and the GPU-rendered mouse selectors
+switch worlds. W/S/A/D, arrows, and R retain movement, look, and reset controls;
+isometric mode uses Q/E and the scroll wheel. World names and hints appear in
+the window title. The former per-frame CPU-traced statistics HUD is removed.
+
+`zig build demo-worlds -- --world spherical --benchmark 300` selects a mode and
+runs a frame benchmark. `ZMATH_DEMO_WORLD`, `ZMATH_DEMO_FRAMES`, and the capture
+variables `ZMATH_DEMO_CAPTURE`, `ZMATH_DEMO_WALK`, and `ZMATH_DEMO_PITCH` remain
+available. PNG capture reads back the rendered swapchain image, not a CPU tracer
+frame. `--pose WALK YAW PITCH` overrides the capture pose. Both frontends support
+`ZMATH_DEMO_CAPTURE` for same-pose rendering comparisons.

@@ -1,21 +1,20 @@
-//! Worlds demo kernel: one first-hit ray-tracing shell over four spaces.
+//! Worlds geometry and controls, shared by GPU shaders and CPU checks.
 //!
-//! Modes share the canonical spherical-game vocabulary (six face colors, a
-//! checker ground, first-hit tracing) so the geometries can be compared
-//! 1:1 at the press of a key:
+//! Flat and hyperbolic first-hit kernels run in the worlds fragment shader.
+//! Spherical tracing remains a CPU oracle; graphical S3 uses the canonical
+//! persistent Vulkan mesh. The modes are:
 //!
 //! 1. `euclidean`  - flat space, pinhole perspective camera.
 //! 2. `isometric`  - flat space, orthographic axonometric camera.
-//! 3. `spherical`  - S3, wraps the canonical `spherical_game` scene as-is.
+//! 3. `spherical`  - S3 scene state and exact CPU tracer oracle.
 //! 4. `hyperbolic` - H3 rendered through the Beltrami-Klein model: the
 //!    Hyperbolica reference engine's own hyperbolic projection. Geodesics
 //!    are straight chords and totally-geodesic planes are Euclidean planes
 //!    cutting the Klein ball, so the per-pixel tracer is flat linear
 //!    algebra; hyperbolicity lives in the metric (depth, checker, walking).
 //!
-//! Curvature is a runtime value here: the mode union tag selects which
-//! metric and projection the pixel loop dispatches to (one predictable
-//! branch per pixel).
+//! The mode tag selects the camera and GPU pipeline at a world switch.
+//! `Renderer` remains the backend-free reference used by headless tests.
 const std = @import("std");
 const zmath = @import("zmath");
 const scene = @import("spherical_scene");
@@ -151,31 +150,35 @@ pub const flat = struct {
     /// Axis-aligned box by the slab method; entry and exit faces exact.
     fn traceBox(origin: [3]f32, dir: [3]f32) BoxRange {
         var range = BoxRange{};
-        for (0..3) |axis| {
+        inline for (0..3) |axis| {
             const d = dir[axis];
             const lo = cube_center[axis] - cube_half[axis] - origin[axis];
             const hi = cube_center[axis] + cube_half[axis] - origin[axis];
             if (@abs(d) < 1e-8) {
                 if (lo > 0 or hi < 0) return range; // parallel, outside slab
-                continue;
-            }
-            var t1 = lo / d;
-            var t2 = hi / d;
-            var face_lo = face_pairs[axis].lo;
-            var face_hi = face_pairs[axis].hi;
-            if (t1 > t2) {
-                std.mem.swap(f32, &t1, &t2);
-                std.mem.swap(Face, &face_lo, &face_hi);
-            }
-            if (t1 > range.t_enter) {
-                range.t_enter = t1;
-                range.enter_face = face_lo;
-                range.enter_axis = axis;
-            }
-            if (t2 < range.t_exit) {
-                range.t_exit = t2;
-                range.exit_face = face_hi;
-                range.exit_axis = axis;
+            } else {
+                var t1 = lo / d;
+                var t2 = hi / d;
+                var face_lo = face_pairs[axis].lo;
+                var face_hi = face_pairs[axis].hi;
+                if (t1 > t2) {
+                    const t = t1;
+                    t1 = t2;
+                    t2 = t;
+                    const face = face_lo;
+                    face_lo = face_hi;
+                    face_hi = face;
+                }
+                if (t1 > range.t_enter) {
+                    range.t_enter = t1;
+                    range.enter_face = face_lo;
+                    range.enter_axis = axis;
+                }
+                if (t2 < range.t_exit) {
+                    range.t_exit = t2;
+                    range.exit_face = face_hi;
+                    range.exit_axis = axis;
+                }
             }
         }
         range.hit = range.t_enter <= range.t_exit and range.t_exit > 0;
@@ -478,6 +481,22 @@ pub const hyperbolic = struct {
         }
     };
 
+    // Use GLSL.std.450 Asinh (22) instead of lowering the CPU stdlib's
+    // float-bit decomposition through SPIR-V integer pointer casts.
+    fn inverseSinh(value: f32) f32 {
+        const arch = @import("builtin").cpu.arch;
+        if (arch == .spirv32 or arch == .spirv64) {
+            return asm (
+                \\%glsl = OpExtInstImport "GLSL.std.450"
+                \\%result = OpExtInst %float %glsl 22 %value
+                : [result] "" (-> f32),
+                : [float] "t" (f32),
+                  [value] "" (value),
+            );
+        }
+        return std.math.asinh(value);
+    }
+
     const Plane = struct {
         n: [3]f32, // inward normal (Klein space)
         c: f32, // inside: u·n >= c
@@ -486,7 +505,7 @@ pub const hyperbolic = struct {
     };
 
     fn boxPlanes() [6]Plane {
-        const k = boxKleinExtents();
+        const k = comptime boxKleinExtents();
         const cx = (k.x_near + k.x_far) / 2.0;
         const hx = (k.x_far - k.x_near) / 2.0;
         return .{
@@ -633,8 +652,8 @@ pub const hyperbolic = struct {
                     // hyperboloid point is (u, 1)/lambda_hit, so
                     // <P, e_i> = u_i * lambda_hit and dist = r·asinh(...).
                     cell = .{
-                        radius * std.math.asinh(uh[0] * lambda_hit),
-                        radius * std.math.asinh(uh[1] * lambda_hit),
+                        radius * inverseSinh(uh[0] * lambda_hit),
+                        radius * inverseSinh(uh[1] * lambda_hit),
                     };
                     brightness = @abs(d[2]) * inv_len;
                 } else {

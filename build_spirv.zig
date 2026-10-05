@@ -94,6 +94,7 @@ pub const SpirvSteps = struct {
     raw: *std.Build.Step,
     compare: *std.Build.Step,
     spherical: *std.Build.Step,
+    worlds: *std.Build.Step,
 };
 
 pub fn addSpirvSteps(
@@ -277,6 +278,51 @@ pub fn addSpirvSteps(
         .pair_step = spirv_spherical_step,
     });
 
+    const spirv_geometry = b.addModule("geometry-worlds-spirv", .{
+        .root_source_file = b.path("src/geometry.zig"),
+        .target = spirv_target,
+        .imports = &.{.{ .name = "ga", .module = spirv_ga }},
+    });
+    const spirv_zmath = b.addModule("zmath-worlds-spirv", .{
+        .root_source_file = b.path("src/root.zig"),
+        .target = spirv_target,
+        .imports = &.{
+            .{ .name = "ga", .module = spirv_ga },
+            .{ .name = "parse", .module = spirv_parse },
+            .{ .name = "geometry", .module = spirv_geometry },
+        },
+    });
+    const spirv_scene = b.addModule("scene-worlds-spirv", .{
+        .root_source_file = b.path("src/demos/spherical_game/scene.zig"),
+        .target = spirv_target,
+        .imports = &.{.{ .name = "zmath", .module = spirv_zmath }},
+    });
+    const spirv_worlds_render = b.addModule("render-worlds-spirv", .{
+        .root_source_file = b.path("src/demos/worlds/render.zig"),
+        .target = spirv_target,
+        .imports = &.{
+            .{ .name = "zmath", .module = spirv_zmath },
+            .{ .name = "spherical_scene", .module = spirv_scene },
+        },
+    });
+    const worlds_frag = b.addObject(.{
+        .name = "worlds.frag",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/shaders/worlds.frag.zig"),
+            .target = spirv_target,
+            .optimize = optimize,
+            .strip = true,
+            .imports = &.{.{ .name = "worlds_render", .module = spirv_worlds_render }},
+        }),
+        .use_llvm = use_llvm_spirv,
+        .use_lld = false,
+    });
+    const worlds_fragment = optimizeSpirv(b, worlds_frag.getEmittedBin(), "worlds.frag.opt.spv");
+    const install_worlds_frag = b.addInstallFile(worlds_fragment, "shaders/worlds.frag.spv");
+    const spirv_worlds_step = b.step("spirv-worlds", "Build validated GPU shaders for all four worlds");
+    spirv_worlds_step.dependOn(spirv_spherical_step);
+    spirv_worlds_step.dependOn(&install_worlds_frag.step);
+
     if (compare_spirv) {
         const compare_sizes_cmd = b.addSystemCommand(&.{ "sh", "-c", "wc -c zig-out/shaders/vga_passthrough_ga.vert.spv zig-out/shaders/vga_passthrough_raw.vert.spv" });
         compare_sizes_cmd.step.dependOn(&install_ga_vert.step);
@@ -289,5 +335,6 @@ pub fn addSpirvSteps(
         .raw = spirv_raw_step,
         .compare = spirv_compare_step,
         .spherical = spirv_spherical_step,
+        .worlds = spirv_worlds_step,
     };
 }

@@ -157,15 +157,16 @@ zig build fuzz-ga                      # GA algebra-law fuzz target
 ## Demos and shaders
 
 The graphical tooling is optional. Run it from the Nix devshell so Vulkan,
-GLFW, raylib, and `spirv-opt` are available.
+GLFW and `spirv-opt` are available. A Vulkan 1.2-capable driver is required.
 
 ```sh
 zig build demo-spherical-build         # build the Vulkan S³ scene
 zig build demo-spherical               # run the Vulkan S³ scene
 zig build demo-spherical-check         # headless S³ geometry checks
-zig build demo-worlds-build            # build the raylib four-space demo
-zig build demo-worlds                  # run it, keys 1–4 switch spaces
-zig build demo-worlds-check            # headless worlds checks
+zig build demo-worlds-build            # build the Vulkan four-space demo
+zig build demo-worlds                  # run it, keys 1–4/Tab switch spaces
+zig build demo-worlds-check            # headless worlds/camera/capture checks
+zig build spirv-worlds                 # validate shaders for all four spaces
 zig build spirv-vga                    # build GA SPIR-V shaders
 zig build spirv-raw                    # build raw-SPIR-V baselines
 zig build spirv-compare                # compare shader sizes

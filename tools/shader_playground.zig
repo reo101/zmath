@@ -3,6 +3,10 @@ const std = @import("std");
 const c = @import("vulkan_glfw");
 const object_scene = @import("object_scene");
 const spherical_scene = @import("spherical_scene");
+const worlds_render = @import("worlds_render");
+const space = worlds_render.space;
+const png_capture = @import("png_capture.zig");
+const worlds_frag_path = "zig-out/shaders/worlds.frag.spv";
 
 const window_width = 960;
 const window_height = 640;
@@ -571,6 +575,10 @@ const App = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     world: spherical_scene.Scene,
+    worlds_mode: ?space.Mode = null,
+    requested_world: ?space.Kind = null,
+    scroll_delta: f32 = 0,
+    capture_path: ?[]const u8 = null,
     object_block: ObjectGpuBlock,
     mesh_data: MeshData,
     mesh_triangle_count: usize,
@@ -601,6 +609,8 @@ const App = struct {
     graphics_pipeline: c.VkPipeline = null,
     mesh_pipeline_layout: c.VkPipelineLayout = null,
     mesh_pipeline: c.VkPipeline = null,
+    worlds_pipeline_layout: c.VkPipelineLayout = null,
+    worlds_pipeline: c.VkPipeline = null,
 
     command_pool: c.VkCommandPool = null,
     command_buffers: []c.VkCommandBuffer = &.{},
@@ -613,6 +623,8 @@ const App = struct {
     object_buffer_memory: c.VkDeviceMemory = null,
     frame_buffer: c.VkBuffer = null,
     frame_buffer_memory: c.VkDeviceMemory = null,
+    capture_buffer: c.VkBuffer = null,
+    capture_buffer_memory: c.VkDeviceMemory = null,
     frame_stride: c.VkDeviceSize = 0,
     descriptor_set_layout: c.VkDescriptorSetLayout = null,
     descriptor_pool: c.VkDescriptorPool = null,
@@ -620,7 +632,7 @@ const App = struct {
     images_in_flight: []c.VkFence = &.{},
 
     image_available: [max_frames_in_flight]c.VkSemaphore = @splat(null),
-    render_finished: [max_frames_in_flight]c.VkSemaphore = @splat(null),
+    render_finished: []c.VkSemaphore = &.{}, // Presentation waits belong to swapchain images, not frame slots.
     in_flight: [max_frames_in_flight]c.VkFence = @splat(null),
     current_frame: usize = 0,
 
@@ -636,8 +648,9 @@ const App = struct {
     fps_last_update: f64 = 0.0,
     vert_mtime: i128 = 0,
     frag_mtime: i128 = 0,
+    worlds_frag_mtime: i128 = 0,
 
-    pub fn init(allocator: std.mem.Allocator, io: std.Io, vert_path: []const u8, frag_path: []const u8, mesh_vert_path: ?[]const u8, mesh_frag_path: ?[]const u8, benchmark_frames: u32, world: spherical_scene.Scene, compare: bool) !App {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, vert_path: []const u8, frag_path: []const u8, mesh_vert_path: ?[]const u8, mesh_frag_path: ?[]const u8, benchmark_frames: u32, world: spherical_scene.Scene, compare: bool, worlds_mode: ?space.Mode, capture_path: ?[]const u8) !App {
         const object_text = try std.Io.Dir.cwd().readFileAlloc(io, default_object_path, allocator, .limited(16 * 1024 * 1024));
         defer allocator.free(object_text);
         const parsed = try object_scene.parse(allocator, object_text);
@@ -654,6 +667,8 @@ const App = struct {
             .allocator = allocator,
             .io = io,
             .world = world,
+            .worlds_mode = worlds_mode,
+            .capture_path = capture_path,
             .object_block = object_block,
             .mesh_data = mesh_data,
             .mesh_triangle_count = mesh_triangles.len,
@@ -671,6 +686,7 @@ const App = struct {
         try app.initVulkan();
         app.vert_mtime = fileMtime(app.io, vert_path) catch 0;
         app.frag_mtime = fileMtime(app.io, frag_path) catch 0;
+        if (worlds_mode != null) app.worlds_frag_mtime = fileMtime(app.io, worlds_frag_path) catch 0;
         return app;
     }
 
@@ -690,7 +706,6 @@ const App = struct {
 
         for (0..max_frames_in_flight) |i| {
             if (self.image_available[i] != null) c.vkDestroySemaphore(self.device, self.image_available[i], null);
-            if (self.render_finished[i] != null) c.vkDestroySemaphore(self.device, self.render_finished[i], null);
             if (self.in_flight[i] != null) c.vkDestroyFence(self.device, self.in_flight[i], null);
         }
 
@@ -703,14 +718,21 @@ const App = struct {
     }
 
     pub fn run(self: *App) !void {
+        c.glfwSetWindowUserPointer(self.window, self);
+        self.updateWindowTitle();
+        if (self.worlds_mode != null) std.debug.print("worlds: Vulkan GPU rendering, 1-4/Tab switch, click selectors, Q/E rotate isometric, wheel zoom\n", .{});
         std.debug.print("shader playground\n", .{});
         std.debug.print("  vertex:   {s}\n", .{self.vert_path});
         std.debug.print("  fragment: {s}\n", .{self.frag_path});
         std.debug.print("  mesh triangles: {d}, persistent vertices: {d}, indices: {d}\n", .{ self.mesh_triangle_count, self.mesh_vertex_count, self.mesh_index_count });
         std.debug.print("  controls: W/S walk, A/D strafe, arrows look, R reset, Esc quit\n", .{});
         std.debug.print("Run this in another terminal for live SPIR-V rebuilds:\n", .{});
-        std.debug.print("  zig build --watch spirv-raw     # driver-valid raw baseline\n", .{});
-        std.debug.print("  zig build --watch spirv-vga     # GA shaders, currently useful for compiler/driver debugging\n\n", .{});
+        if (self.worlds_mode != null) {
+            std.debug.print("  zig build --watch spirv-worlds\n\n", .{});
+        } else {
+            std.debug.print("  zig build --watch spirv-raw     # driver-valid raw baseline\n", .{});
+            std.debug.print("  zig build --watch spirv-vga     # GA shaders, currently useful for compiler/driver debugging\n\n", .{});
+        }
 
         var dirty = true;
         self.benchmark_started_at = c.glfwGetTime();
@@ -725,9 +747,9 @@ const App = struct {
             if (self.benchmark_frames > 0) dirty = true;
             if (self.framebuffer_resized) dirty = true;
             if (try self.reloadShadersIfChanged()) dirty = true;
-            if (try self.updateInput(delta_time)) dirty = true;
+            if (self.capture_path == null and try self.updateInput(delta_time)) dirty = true;
             if (dirty) {
-                try self.drawFrame();
+                if (!try self.drawFrame()) continue;
                 self.rendered_frames += 1;
                 self.fps_frames += 1;
                 dirty = false;
@@ -746,6 +768,7 @@ const App = struct {
                     std.debug.print("\r{d: >5.0} fps  ", .{fps});
                     self.fps_frames = 0;
                     self.fps_last_update = now;
+                    self.updateWindowTitle();
                 }
             }
         }
@@ -757,6 +780,8 @@ const App = struct {
             c.glfwSetWindowShouldClose(self.window, c.GLFW_TRUE);
             return false;
         }
+
+        if (self.worlds_mode != null) return self.updateWorldsInput(delta_time);
 
         const speed_scale = spherical_scene.Scene.speedScaleForGap(self.world.conjugateGap());
         const move = 2.2 * speed_scale * delta_time;
@@ -801,6 +826,65 @@ const App = struct {
         return changed;
     }
 
+    fn updateWorldsInput(self: *App, dt: f32) !bool {
+        var changed = false;
+        if (self.requested_world) |kind| {
+            self.requested_world = null;
+            self.worlds_mode = space.Mode.init(kind);
+            try vkCheck(c.vkDeviceWaitIdle(self.device));
+            try self.recreateCommandBuffers();
+            self.updateWindowTitle();
+            changed = true;
+        }
+        const mode = &self.worlds_mode.?;
+        if (self.keyDown(c.GLFW_KEY_R)) {
+            mode.* = space.Mode.init(std.meta.activeTag(mode.*));
+            changed = true;
+        }
+        const forward = self.keyAxis(c.GLFW_KEY_W, c.GLFW_KEY_S);
+        const strafe = self.keyAxis(c.GLFW_KEY_D, c.GLFW_KEY_A);
+        const yaw = if (mode.* == .isometric) self.keyAxis(c.GLFW_KEY_Q, c.GLFW_KEY_E) else self.keyAxis(c.GLFW_KEY_LEFT, c.GLFW_KEY_RIGHT);
+        const pitch = self.keyAxis(c.GLFW_KEY_UP, c.GLFW_KEY_DOWN);
+        const zoom = self.scroll_delta;
+        self.scroll_delta = 0;
+        if (forward == 0 and strafe == 0 and yaw == 0 and pitch == 0 and zoom == 0) return changed;
+        switch (mode.*) {
+            .euclidean => |*view| {
+                view.* = view.walkForward(forward * 4 * dt).strafeRight(strafe * 4 * dt).yawBy(yaw * 1.6 * dt).pitchBy(pitch * 1.6 * dt);
+            },
+            .isometric => |*view| {
+                view.* = view.pan(strafe * 8 * dt, forward * 8 * dt).yawBy(yaw * 1.4 * dt);
+                if (zoom != 0) view.* = view.zoom(@max(0.1, 1 + 0.12 * zoom));
+            },
+            .spherical => |*world| {
+                const move = 2.2 * spherical_scene.Scene.speedScaleForGap(world.conjugateGap()) * dt;
+                if (forward != 0) world.walkForward(forward * move);
+                if (strafe != 0) world.strafeRight(strafe * move);
+                if (yaw != 0) world.yaw(yaw * 1.35 * dt);
+                if (pitch != 0) world.pitch(-pitch * 1.35 * dt);
+            },
+            .hyperbolic => |*pose| {
+                if (forward != 0) pose.* = pose.walkForward(forward * 2.2 * dt);
+                if (strafe != 0) pose.* = pose.strafeRight(strafe * 2.2 * dt);
+                if (yaw != 0) pose.* = pose.yaw(yaw * 1.35 * dt);
+                if (pitch != 0) pose.* = pose.pitch(pitch * 1.35 * dt);
+            },
+        }
+        return true;
+    }
+
+    fn updateWindowTitle(self: *App) void {
+        if (self.worlds_mode) |mode| {
+            var buffer: [256]u8 = undefined;
+            const title = std.mem.printSentinel(&buffer, "zmath worlds: {s} | {s}", .{ @tagName(std.meta.activeTag(mode)), mode.hint() }, 0) catch return;
+            c.glfwSetWindowTitle(self.window, title);
+        }
+    }
+
+    fn keyAxis(self: *App, positive: c_int, negative: c_int) f32 {
+        return @as(f32, if (self.keyDown(positive)) 1 else 0) - @as(f32, if (self.keyDown(negative)) 1 else 0);
+    }
+
     fn keyDown(self: *App, key: c_int) bool {
         return c.glfwGetKey(self.window, key) == c.GLFW_PRESS;
     }
@@ -811,9 +895,15 @@ const App = struct {
 
         c.glfwWindowHint(c.GLFW_CLIENT_API, c.GLFW_NO_API);
         c.glfwWindowHint(c.GLFW_RESIZABLE, c.GLFW_TRUE);
+        if (self.capture_path != null) c.glfwWindowHint(c.GLFW_VISIBLE, c.GLFW_FALSE);
         self.window = c.glfwCreateWindow(window_width, window_height, "zmath SPIR-V playground", null, null) orelse return error.GlfwCreateWindowFailed;
         c.glfwSetWindowUserPointer(self.window, self);
         _ = c.glfwSetFramebufferSizeCallback(self.window, framebufferResizeCallback);
+        if (self.worlds_mode != null) {
+            _ = c.glfwSetKeyCallback(self.window, worldKeyCallback);
+            _ = c.glfwSetScrollCallback(self.window, worldScrollCallback);
+            _ = c.glfwSetMouseButtonCallback(self.window, worldMouseCallback);
+        }
     }
 
     fn initVulkan(self: *App) !void {
@@ -827,14 +917,7 @@ const App = struct {
         try self.createImageViews();
         try self.createRenderPass();
         try self.createDepthResources();
-        const bundle = try self.createGraphicsPipeline();
-        self.pipeline_layout = bundle.layout;
-        self.graphics_pipeline = bundle.pipeline;
-        if (self.mesh_vert_path != null and self.mesh_frag_path != null) {
-            const mesh_bundle = try self.createMeshPipeline();
-            self.mesh_pipeline_layout = mesh_bundle.layout;
-            self.mesh_pipeline = mesh_bundle.pipeline;
-        }
+        try self.createPipelines();
         try self.createFramebuffers();
         try self.createCommandPool();
         try self.createVertexBuffer();
@@ -857,7 +940,7 @@ const App = struct {
             .applicationVersion = c.VK_MAKE_VERSION(0, 1, 0),
             .pEngineName = engine_name,
             .engineVersion = c.VK_MAKE_VERSION(0, 1, 0),
-            .apiVersion = c.VK_API_VERSION_1_0,
+            .apiVersion = c.VK_API_VERSION_1_2,
         };
 
         const create_info = c.VkInstanceCreateInfo{
@@ -898,6 +981,9 @@ const App = struct {
     }
 
     fn isDeviceSuitable(self: *App, device: c.VkPhysicalDevice) !bool {
+        var properties: c.VkPhysicalDeviceProperties = undefined;
+        c.vkGetPhysicalDeviceProperties(device, &properties);
+        if (properties.apiVersion < c.VK_API_VERSION_1_2) return false;
         const indices = try self.findQueueFamilies(device);
         if (!indices.complete()) return false;
         if (!try self.checkDeviceExtensionSupport(device)) return false;
@@ -1055,7 +1141,7 @@ const App = struct {
         var properties: c.VkPhysicalDeviceProperties = undefined;
         c.vkGetPhysicalDeviceProperties(self.physical_device, &properties);
         const alignment = properties.limits.minUniformBufferOffsetAlignment;
-        self.frame_stride = std.mem.alignForward(c.VkDeviceSize, @sizeOf(FrameGpu), @max(alignment, 1));
+        self.frame_stride = std.mem.alignForward(c.VkDeviceSize, self.frameSize(), @max(alignment, 1));
         try self.createBuffer(
             self.frame_stride * self.swapchain_images.len,
             c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -1094,7 +1180,7 @@ const App = struct {
 
         const object_info = c.VkDescriptorBufferInfo{ .buffer = self.object_buffer, .offset = 0, .range = @sizeOf(ObjectGpuBlock) };
         for (self.descriptor_sets, 0..) |descriptor_set, i| {
-            const frame_info = c.VkDescriptorBufferInfo{ .buffer = self.frame_buffer, .offset = self.frame_stride * i, .range = @sizeOf(FrameGpu) };
+            const frame_info = c.VkDescriptorBufferInfo{ .buffer = self.frame_buffer, .offset = self.frame_stride * i, .range = self.frameSize() };
             const writes = [_]c.VkWriteDescriptorSet{
                 .{
                     .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -1124,8 +1210,25 @@ const App = struct {
             c.vkUpdateDescriptorSets(self.device, writes.len, &writes, 0, null);
         }
 
+        if (self.capture_path != null) {
+            var buffer: c.VkBuffer = null;
+            var memory: c.VkDeviceMemory = null;
+            try self.createBuffer(self.captureSize(), c.VK_BUFFER_USAGE_TRANSFER_DST_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &buffer, &memory);
+            self.capture_buffer = buffer;
+            self.capture_buffer_memory = memory;
+        }
         self.images_in_flight = try self.allocator.alloc(c.VkFence, self.swapchain_images.len);
         @memset(self.images_in_flight, null);
+        self.render_finished = try self.allocator.alloc(c.VkSemaphore, self.swapchain_images.len);
+        @memset(self.render_finished, null);
+        const semaphore_info = c.VkSemaphoreCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+        };
+        for (self.render_finished) |*semaphore| {
+            try vkCheck(c.vkCreateSemaphore(self.device, &semaphore_info, null, semaphore));
+        }
     }
 
     fn createSwapchain(self: *App) !void {
@@ -1133,6 +1236,13 @@ const App = struct {
         defer support.deinit(self.allocator);
 
         const surface_format = chooseSwapSurfaceFormat(support.formats);
+        if (self.capture_path != null) {
+            if (support.capabilities.supportedUsageFlags & c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT == 0) return error.UnsupportedCaptureTransfer;
+            switch (surface_format.format) {
+                c.VK_FORMAT_B8G8R8A8_SRGB, c.VK_FORMAT_B8G8R8A8_UNORM, c.VK_FORMAT_R8G8B8A8_SRGB, c.VK_FORMAT_R8G8B8A8_UNORM => {},
+                else => return error.UnsupportedCaptureFormat,
+            }
+        }
         const present_mode = chooseSwapPresentMode(support.present_modes);
         const extent = chooseSwapExtent(self.window, support.capabilities);
 
@@ -1156,7 +1266,7 @@ const App = struct {
             .imageColorSpace = surface_format.colorSpace,
             .imageExtent = extent,
             .imageArrayLayers = 1,
-            .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .imageUsage = @as(c.VkImageUsageFlags, c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) | (if (self.capture_path != null) @as(c.VkImageUsageFlags, c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT) else 0),
             .imageSharingMode = sharing_mode,
             .queueFamilyIndexCount = queue_family_index_count,
             .pQueueFamilyIndices = queue_family_index_ptr,
@@ -1254,9 +1364,9 @@ const App = struct {
         const dependency = c.VkSubpassDependency{
             .srcSubpass = c.VK_SUBPASS_EXTERNAL,
             .dstSubpass = 0,
-            .srcStageMask = c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | c.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-            .dstStageMask = c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | c.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-            .srcAccessMask = 0,
+            .srcStageMask = c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | c.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | c.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+            .dstStageMask = c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | c.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | c.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+            .srcAccessMask = c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | c.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
             .dstAccessMask = c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | c.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
             .dependencyFlags = 0,
         };
@@ -1276,14 +1386,30 @@ const App = struct {
     }
 
     fn createGraphicsPipeline(self: *App) !PipelineBundle {
-        return self.createPipeline(self.vert_path, self.frag_path, false);
+        return self.createPipeline(self.vert_path, self.frag_path, false, false);
     }
 
     fn createMeshPipeline(self: *App) !PipelineBundle {
-        return self.createPipeline(self.mesh_vert_path.?, self.mesh_frag_path.?, true);
+        return self.createPipeline(self.mesh_vert_path.?, self.mesh_frag_path.?, true, false);
     }
 
-    fn createPipeline(self: *App, vert_path: []const u8, frag_path: []const u8, mesh: bool) !PipelineBundle {
+    fn createPipelines(self: *App) !void {
+        const ground = try self.createGraphicsPipeline();
+        self.pipeline_layout = ground.layout;
+        self.graphics_pipeline = ground.pipeline;
+        if (self.mesh_vert_path != null and self.mesh_frag_path != null) {
+            const mesh = try self.createMeshPipeline();
+            self.mesh_pipeline_layout = mesh.layout;
+            self.mesh_pipeline = mesh.pipeline;
+        }
+        if (self.worlds_mode != null) {
+            const worlds = try self.createPipeline(self.vert_path, worlds_frag_path, false, true);
+            self.worlds_pipeline_layout = worlds.layout;
+            self.worlds_pipeline = worlds.pipeline;
+        }
+    }
+
+    fn createPipeline(self: *App, vert_path: []const u8, frag_path: []const u8, mesh: bool, blend: bool) !PipelineBundle {
         const vert_words = try readSpirvWords(self.allocator, self.io, vert_path);
         defer self.allocator.free(vert_words);
         const frag_words = try readSpirvWords(self.allocator, self.io, frag_path);
@@ -1390,12 +1516,12 @@ const App = struct {
             .alphaToOneEnable = c.VK_FALSE,
         };
         const color_blend_attachment = c.VkPipelineColorBlendAttachmentState{
-            .blendEnable = c.VK_FALSE,
-            .srcColorBlendFactor = c.VK_BLEND_FACTOR_ONE,
-            .dstColorBlendFactor = c.VK_BLEND_FACTOR_ZERO,
+            .blendEnable = if (blend) c.VK_TRUE else c.VK_FALSE,
+            .srcColorBlendFactor = if (blend) c.VK_BLEND_FACTOR_SRC_ALPHA else c.VK_BLEND_FACTOR_ONE,
+            .dstColorBlendFactor = if (blend) c.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA else c.VK_BLEND_FACTOR_ZERO,
             .colorBlendOp = c.VK_BLEND_OP_ADD,
             .srcAlphaBlendFactor = c.VK_BLEND_FACTOR_ONE,
-            .dstAlphaBlendFactor = c.VK_BLEND_FACTOR_ZERO,
+            .dstAlphaBlendFactor = if (blend) c.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA else c.VK_BLEND_FACTOR_ZERO,
             .alphaBlendOp = c.VK_BLEND_OP_ADD,
             .colorWriteMask = c.VK_COLOR_COMPONENT_R_BIT | c.VK_COLOR_COMPONENT_G_BIT | c.VK_COLOR_COMPONENT_B_BIT | c.VK_COLOR_COMPONENT_A_BIT,
         };
@@ -1427,8 +1553,8 @@ const App = struct {
             .sType = c.VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
             .pNext = null,
             .flags = 0,
-            .depthTestEnable = c.VK_TRUE,
-            .depthWriteEnable = c.VK_TRUE,
+            .depthTestEnable = if (blend) c.VK_FALSE else c.VK_TRUE,
+            .depthWriteEnable = if (blend) c.VK_FALSE else c.VK_TRUE,
             .depthCompareOp = if (mesh) c.VK_COMPARE_OP_LESS else c.VK_COMPARE_OP_ALWAYS,
             .depthBoundsTestEnable = c.VK_FALSE,
             .stencilTestEnable = c.VK_FALSE,
@@ -1717,7 +1843,19 @@ const App = struct {
         };
     }
 
+    fn frameSize(self: *App) usize {
+        return if (self.worlds_mode != null) @sizeOf(worlds_render.Frame) else @sizeOf(FrameGpu);
+    }
+
     fn updateFrameBuffer(self: *App, image_index: usize) !void {
+        const offset = self.frame_stride * image_index;
+        var mapped: ?*anyopaque = null;
+        try vkCheck(c.vkMapMemory(self.device, self.frame_buffer_memory, offset, self.frameSize(), 0, &mapped));
+        defer c.vkUnmapMemory(self.device, self.frame_buffer_memory);
+        if (self.worlds_mode) |mode| {
+            @as(*worlds_render.Frame, @ptrCast(@alignCast(mapped.?))).* = worlds_render.Frame.init(mode, @floatFromInt(self.swapchain_extent.width), @floatFromInt(self.swapchain_extent.height));
+            return;
+        }
         const frame = self.currentFrame();
         const gpu_frame = FrameGpu{
             .viewport = .{ frame.width, frame.height, frame.radius, frame.tan_half_fov },
@@ -1726,11 +1864,7 @@ const App = struct {
             .up = frame.up,
             .forward = frame.forward,
         };
-        const offset = self.frame_stride * image_index;
-        var mapped: ?*anyopaque = null;
-        try vkCheck(c.vkMapMemory(self.device, self.frame_buffer_memory, offset, @sizeOf(FrameGpu), 0, &mapped));
         @as(*FrameGpu, @ptrCast(@alignCast(mapped.?))).* = gpu_frame;
-        c.vkUnmapMemory(self.device, self.frame_buffer_memory);
     }
 
     fn recordCommandBuffers(self: *App) !void {
@@ -1757,11 +1891,14 @@ const App = struct {
                 .pClearValues = &clear_values,
             };
             c.vkCmdBeginRenderPass(command_buffer, &render_pass_info, c.VK_SUBPASS_CONTENTS_INLINE);
-            c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.graphics_pipeline);
+            const spherical = self.worlds_mode == null or self.worlds_mode.? == .spherical;
+            const pipeline = if (spherical) self.graphics_pipeline else self.worlds_pipeline;
+            const layout = if (spherical) self.pipeline_layout else self.worlds_pipeline_layout;
+            c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             c.vkCmdBindDescriptorSets(
                 command_buffer,
                 c.VK_PIPELINE_BIND_POINT_GRAPHICS,
-                self.pipeline_layout,
+                layout,
                 0,
                 1,
                 &self.descriptor_sets[i],
@@ -1769,7 +1906,7 @@ const App = struct {
                 null,
             );
             c.vkCmdDraw(command_buffer, 3, 1, 0, 0);
-            if (self.mesh_pipeline != null and self.mesh_index_count > 0) {
+            if (spherical and self.mesh_pipeline != null and self.mesh_index_count > 0) {
                 c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.mesh_pipeline);
                 c.vkCmdBindDescriptorSets(
                     command_buffer,
@@ -1786,7 +1923,13 @@ const App = struct {
                 c.vkCmdBindIndexBuffer(command_buffer, self.index_buffer, 0, c.VK_INDEX_TYPE_UINT32);
                 c.vkCmdDrawIndexed(command_buffer, self.mesh_index_count, 1, 0, 0, 0);
             }
+            if (spherical and self.worlds_mode != null) {
+                c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.worlds_pipeline);
+                c.vkCmdBindDescriptorSets(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.worlds_pipeline_layout, 0, 1, &self.descriptor_sets[i], 0, null);
+                c.vkCmdDraw(command_buffer, 3, 1, 0, 0);
+            }
             c.vkCmdEndRenderPass(command_buffer);
+            if (self.capture_path != null) self.recordCapture(command_buffer, self.swapchain_images[i]);
             try vkCheck(c.vkEndCommandBuffer(command_buffer));
         }
     }
@@ -1813,19 +1956,67 @@ const App = struct {
         };
         for (0..max_frames_in_flight) |i| {
             try vkCheck(c.vkCreateSemaphore(self.device, &semaphore_info, null, &self.image_available[i]));
-            try vkCheck(c.vkCreateSemaphore(self.device, &semaphore_info, null, &self.render_finished[i]));
             try vkCheck(c.vkCreateFence(self.device, &fence_info, null, &self.in_flight[i]));
         }
     }
 
-    fn drawFrame(self: *App) !void {
+    fn captureSize(self: *App) usize {
+        return @as(usize, self.swapchain_extent.width) * self.swapchain_extent.height * 4;
+    }
+
+    fn recordCapture(self: *App, command_buffer: c.VkCommandBuffer, image: c.VkImage) void {
+        var barrier = c.VkImageMemoryBarrier{
+            .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .pNext = null,
+            .srcAccessMask = c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            .dstAccessMask = c.VK_ACCESS_TRANSFER_READ_BIT,
+            .oldLayout = c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            .newLayout = c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            .srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
+            .image = image,
+            .subresourceRange = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 },
+        };
+        c.vkCmdPipelineBarrier(command_buffer, c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, c.VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, null, 0, null, 1, &barrier);
+        const region = c.VkBufferImageCopy{
+            .bufferOffset = 0,
+            .bufferRowLength = 0,
+            .bufferImageHeight = 0,
+            .imageSubresource = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1 },
+            .imageOffset = .{ .x = 0, .y = 0, .z = 0 },
+            .imageExtent = .{ .width = self.swapchain_extent.width, .height = self.swapchain_extent.height, .depth = 1 },
+        };
+        c.vkCmdCopyImageToBuffer(command_buffer, image, c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, self.capture_buffer, 1, &region);
+        barrier.srcAccessMask = c.VK_ACCESS_TRANSFER_READ_BIT;
+        barrier.dstAccessMask = 0;
+        barrier.oldLayout = c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.newLayout = c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        c.vkCmdPipelineBarrier(command_buffer, c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, null, 0, null, 1, &barrier);
+    }
+
+    fn writeCapture(self: *App) !void {
+        const bgra = switch (self.swapchain_image_format) {
+            c.VK_FORMAT_B8G8R8A8_SRGB, c.VK_FORMAT_B8G8R8A8_UNORM => true,
+            c.VK_FORMAT_R8G8B8A8_SRGB, c.VK_FORMAT_R8G8B8A8_UNORM => false,
+            else => return error.UnsupportedCaptureFormat,
+        };
+        var mapped: ?*anyopaque = null;
+        try vkCheck(c.vkMapMemory(self.device, self.capture_buffer_memory, 0, self.captureSize(), 0, &mapped));
+        defer c.vkUnmapMemory(self.device, self.capture_buffer_memory);
+        const pixels = @as([*]const u8, @ptrCast(mapped.?))[0..self.captureSize()];
+        const png = try png_capture.encode(self.allocator, self.swapchain_extent.width, self.swapchain_extent.height, pixels, bgra);
+        defer self.allocator.free(png);
+        try std.Io.Dir.cwd().writeFile(self.io, .{ .sub_path = self.capture_path.?, .data = png });
+    }
+
+    fn drawFrame(self: *App) !bool {
         try vkCheck(c.vkWaitForFences(self.device, 1, &self.in_flight[self.current_frame], c.VK_TRUE, std.math.maxInt(u64)));
 
         var image_index: u32 = 0;
         const acquire_result = c.vkAcquireNextImageKHR(self.device, self.swapchain, std.math.maxInt(u64), self.image_available[self.current_frame], null, &image_index);
         if (acquire_result == c.VK_ERROR_OUT_OF_DATE_KHR) {
             try self.recreateSwapchain();
-            return;
+            return false;
         }
         try vkCheckAllowSuboptimal(acquire_result);
 
@@ -1838,7 +2029,7 @@ const App = struct {
 
         const wait_semaphores = [_]c.VkSemaphore{self.image_available[self.current_frame]};
         const wait_stages = [_]c.VkPipelineStageFlags{c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-        const signal_semaphores = [_]c.VkSemaphore{self.render_finished[self.current_frame]};
+        const signal_semaphores = [_]c.VkSemaphore{self.render_finished[image_index]};
         const submit_info = c.VkSubmitInfo{
             .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
             .pNext = null,
@@ -1863,6 +2054,10 @@ const App = struct {
             .pImageIndices = &image_index,
             .pResults = null,
         };
+        if (self.capture_path != null) {
+            try vkCheck(c.vkWaitForFences(self.device, 1, &self.in_flight[self.current_frame], c.VK_TRUE, std.math.maxInt(u64)));
+            try self.writeCapture();
+        }
         const present_result = c.vkQueuePresentKHR(self.present_queue, &present_info);
         if (present_result == c.VK_ERROR_OUT_OF_DATE_KHR or present_result == c.VK_SUBOPTIMAL_KHR or self.framebuffer_resized) {
             self.framebuffer_resized = false;
@@ -1872,12 +2067,14 @@ const App = struct {
         }
 
         self.current_frame = (self.current_frame + 1) % max_frames_in_flight;
+        return true;
     }
 
     fn reloadShadersIfChanged(self: *App) !bool {
         const new_vert_mtime = fileMtime(self.io, self.vert_path) catch return false;
         const new_frag_mtime = fileMtime(self.io, self.frag_path) catch return false;
-        if (new_vert_mtime == self.vert_mtime and new_frag_mtime == self.frag_mtime) return false;
+        const new_worlds_mtime = if (self.worlds_mode != null) fileMtime(self.io, worlds_frag_path) catch return false else 0;
+        if (new_vert_mtime == self.vert_mtime and new_frag_mtime == self.frag_mtime and new_worlds_mtime == self.worlds_frag_mtime) return false;
 
         std.debug.print("detected shader update; reloading...\n", .{});
         try vkCheck(c.vkDeviceWaitIdle(self.device));
@@ -1887,13 +2084,29 @@ const App = struct {
             return false;
         };
 
+        var new_worlds: ?PipelineBundle = null;
+        if (self.worlds_mode != null) {
+            new_worlds = self.createPipeline(self.vert_path, worlds_frag_path, false, true) catch |err| {
+                c.vkDestroyPipeline(self.device, new_bundle.pipeline, null);
+                c.vkDestroyPipelineLayout(self.device, new_bundle.layout, null);
+                std.debug.print("worlds shader reload failed: {s}; keeping previous pipelines\n", .{@errorName(err)});
+                return false;
+            };
+        }
         c.vkDestroyPipeline(self.device, self.graphics_pipeline, null);
         c.vkDestroyPipelineLayout(self.device, self.pipeline_layout, null);
+        if (new_worlds) |bundle| {
+            c.vkDestroyPipeline(self.device, self.worlds_pipeline, null);
+            c.vkDestroyPipelineLayout(self.device, self.worlds_pipeline_layout, null);
+            self.worlds_pipeline = bundle.pipeline;
+            self.worlds_pipeline_layout = bundle.layout;
+        }
         self.graphics_pipeline = new_bundle.pipeline;
         self.pipeline_layout = new_bundle.layout;
         try self.recreateCommandBuffers();
         self.vert_mtime = new_vert_mtime;
         self.frag_mtime = new_frag_mtime;
+        self.worlds_frag_mtime = new_worlds_mtime;
         std.debug.print("shader reload ok\n", .{});
         return true;
     }
@@ -1914,14 +2127,7 @@ const App = struct {
         try self.createImageViews();
         try self.createRenderPass();
         try self.createDepthResources();
-        const bundle = try self.createGraphicsPipeline();
-        self.pipeline_layout = bundle.layout;
-        self.graphics_pipeline = bundle.pipeline;
-        if (self.mesh_vert_path != null and self.mesh_frag_path != null) {
-            const mesh_bundle = try self.createMeshPipeline();
-            self.mesh_pipeline_layout = mesh_bundle.layout;
-            self.mesh_pipeline = mesh_bundle.pipeline;
-        }
+        try self.createPipelines();
         try self.createFramebuffers();
         try self.createCommandBuffers();
     }
@@ -1936,6 +2142,10 @@ const App = struct {
         self.descriptor_pool = null;
         self.allocator.free(self.descriptor_sets);
         self.descriptor_sets = &.{};
+        if (self.capture_buffer != null) c.vkDestroyBuffer(self.device, self.capture_buffer, null);
+        if (self.capture_buffer_memory != null) c.vkFreeMemory(self.device, self.capture_buffer_memory, null);
+        self.capture_buffer = null;
+        self.capture_buffer_memory = null;
         if (self.frame_buffer != null) c.vkDestroyBuffer(self.device, self.frame_buffer, null);
         self.frame_buffer = null;
         if (self.frame_buffer_memory != null) c.vkFreeMemory(self.device, self.frame_buffer_memory, null);
@@ -1943,12 +2153,21 @@ const App = struct {
         self.frame_stride = 0;
         self.allocator.free(self.images_in_flight);
         self.images_in_flight = &.{};
+        for (self.render_finished) |semaphore| {
+            if (semaphore != null) c.vkDestroySemaphore(self.device, semaphore, null);
+        }
+        self.allocator.free(self.render_finished);
+        self.render_finished = &.{};
 
         for (self.framebuffers) |framebuffer| c.vkDestroyFramebuffer(self.device, framebuffer, null);
         self.allocator.free(self.framebuffers);
         self.framebuffers = &.{};
 
         if (self.graphics_pipeline != null) c.vkDestroyPipeline(self.device, self.graphics_pipeline, null);
+        if (self.worlds_pipeline != null) c.vkDestroyPipeline(self.device, self.worlds_pipeline, null);
+        if (self.worlds_pipeline_layout != null) c.vkDestroyPipelineLayout(self.device, self.worlds_pipeline_layout, null);
+        self.worlds_pipeline = null;
+        self.worlds_pipeline_layout = null;
         if (self.mesh_pipeline != null) c.vkDestroyPipeline(self.device, self.mesh_pipeline, null);
         if (self.mesh_pipeline_layout != null) c.vkDestroyPipelineLayout(self.device, self.mesh_pipeline_layout, null);
         self.graphics_pipeline = null;
@@ -1997,6 +2216,43 @@ fn fillObjectBlock(block: *ObjectGpuBlock, file: object_scene.File) !void {
         }
     }
     for (file.materials, 0..) |material, index| block.colors[index] = material.color;
+}
+
+fn worldKeyCallback(window: ?*c.GLFWwindow, key: c_int, scancode: c_int, action: c_int, mods: c_int) callconv(.c) void {
+    _ = scancode;
+    _ = mods;
+    if (action != c.GLFW_PRESS) return;
+    const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(window) orelse return));
+    app.requested_world = switch (key) {
+        c.GLFW_KEY_1, c.GLFW_KEY_KP_1 => .euclidean,
+        c.GLFW_KEY_2, c.GLFW_KEY_KP_2 => .isometric,
+        c.GLFW_KEY_3, c.GLFW_KEY_KP_3 => .spherical,
+        c.GLFW_KEY_4, c.GLFW_KEY_KP_4 => .hyperbolic,
+        c.GLFW_KEY_TAB => @fromBackingInt(@as(u2, @intCast((@as(u32, @backingInt(app.requested_world orelse std.meta.activeTag(app.worlds_mode.?))) + 1) % 4))),
+        else => app.requested_world,
+    };
+}
+
+fn worldScrollCallback(window: ?*c.GLFWwindow, x: f64, y: f64) callconv(.c) void {
+    _ = x;
+    const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(window) orelse return));
+    app.scroll_delta += @floatCast(y);
+}
+
+fn worldMouseCallback(window: ?*c.GLFWwindow, button: c_int, action: c_int, mods: c_int) callconv(.c) void {
+    _ = mods;
+    if (button != c.GLFW_MOUSE_BUTTON_LEFT or action != c.GLFW_PRESS) return;
+    const app: *App = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(window) orelse return));
+    var x: f64 = 0;
+    var y: f64 = 0;
+    var width: c_int = 0;
+    var height: c_int = 0;
+    c.glfwGetCursorPos(window, &x, &y);
+    c.glfwGetWindowSize(window, &width, &height);
+    if (width <= 0 or height <= 0) return;
+    const px: f32 = @floatCast(x * @as(f64, @floatFromInt(app.swapchain_extent.width)) / @as(f64, @floatFromInt(width)));
+    const py: f32 = @floatCast(y * @as(f64, @floatFromInt(app.swapchain_extent.height)) / @as(f64, @floatFromInt(height)));
+    if (worlds_render.selectorKind(px, py)) |kind| app.requested_world = kind;
 }
 
 fn framebufferResizeCallback(window: ?*c.GLFWwindow, width: c_int, height: c_int) callconv(.c) void {
@@ -2064,33 +2320,85 @@ fn vkError(result: c.VkResult) anyerror {
 }
 
 pub fn main(init: std.process.Init) !void {
-    const allocator = init.gpa;
+    try runFrontend(init, false);
+}
 
+pub fn runWorlds(init: std.process.Init) !void {
+    try runFrontend(init, true);
+}
+
+fn worldKind(name: []const u8) !space.Kind {
+    inline for (@typeInfo(space.Kind).@"enum".field_names) |field| {
+        if (std.mem.eql(u8, name, field)) return @field(space.Kind, field);
+    }
+    return error.InvalidWorld;
+}
+
+fn runFrontend(init: std.process.Init, worlds: bool) !void {
     var args = std.process.Args.Iterator.init(init.minimal.args);
     _ = args.next();
-    const vert_path = args.next() orelse default_vert_path;
-    const frag_path = args.next() orelse default_frag_path;
-    const mesh_vert_path = args.next();
-    const mesh_frag_path = args.next();
+    const vert_path = if (worlds) "zig-out/shaders/spherical_ground.vert.spv" else args.next() orelse default_vert_path;
+    const frag_path = if (worlds) "zig-out/shaders/spherical_ground.frag.spv" else args.next() orelse default_frag_path;
+    const mesh_vert_path = if (worlds) "zig-out/shaders/spherical_mesh.vert.spv" else args.next();
+    const mesh_frag_path = if (worlds) "zig-out/shaders/spherical_mesh.frag.spv" else args.next();
     var benchmark_frames: u32 = 0;
-    var world = spherical_scene.Scene.init();
+    var kind: space.Kind = .euclidean;
+    if (worlds) {
+        if (init.environ_map.get("ZMATH_DEMO_WORLD")) |value| kind = try worldKind(value);
+        if (init.environ_map.get("ZMATH_DEMO_FRAMES")) |value| benchmark_frames = try std.fmt.parseInt(u32, value, 10);
+    }
     var compare = false;
+    var pose: ?[3]f32 = null;
     while (args.next()) |flag| {
         if (std.mem.eql(u8, flag, "--benchmark")) {
             benchmark_frames = try std.fmt.parseInt(u32, args.next() orelse return error.InvalidArgument, 10);
         } else if (std.mem.eql(u8, flag, "--compare")) {
             compare = true;
+        } else if (worlds and std.mem.eql(u8, flag, "--world")) {
+            kind = try worldKind(args.next() orelse return error.InvalidArgument);
         } else if (std.mem.eql(u8, flag, "--pose")) {
-            const walk = try std.fmt.parseFloat(f32, args.next() orelse return error.InvalidArgument);
-            const yaw = try std.fmt.parseFloat(f32, args.next() orelse return error.InvalidArgument);
-            const pitch = try std.fmt.parseFloat(f32, args.next() orelse return error.InvalidArgument);
-            world.walkForward(walk);
-            if (yaw != 0.0) world.yaw(yaw);
-            if (pitch != 0.0) world.pitch(pitch);
+            pose = .{
+                try std.fmt.parseFloat(f32, args.next() orelse return error.InvalidArgument),
+                try std.fmt.parseFloat(f32, args.next() orelse return error.InvalidArgument),
+                try std.fmt.parseFloat(f32, args.next() orelse return error.InvalidArgument),
+            };
         } else return error.InvalidArgument;
     }
-
-    var app = try App.init(allocator, init.io, vert_path, frag_path, mesh_vert_path, mesh_frag_path, benchmark_frames, world, compare);
+    var world = spherical_scene.Scene.init();
+    var mode: ?space.Mode = if (worlds) space.Mode.init(kind) else null;
+    const capture_path = init.environ_map.get("ZMATH_DEMO_CAPTURE");
+    if (capture_path != null) {
+        if (mode) |*selected| {
+            const defaults = space.Mode.captureDefaults(kind);
+            const walk = if (init.environ_map.get("ZMATH_DEMO_WALK")) |value| try std.fmt.parseFloat(f32, value) else defaults.walk;
+            const pitch = if (init.environ_map.get("ZMATH_DEMO_PITCH")) |value| try std.fmt.parseFloat(f32, value) else defaults.pitch;
+            selected.applyCapture(walk, pitch);
+        }
+        benchmark_frames = 1;
+    }
+    if (pose) |values| {
+        if (mode) |*selected| {
+            selected.* = space.Mode.init(kind);
+            selected.applyCapture(values[0], 0);
+            switch (selected.*) {
+                .euclidean => |*view| view.* = view.yawBy(values[1]).pitchBy(-values[2]),
+                .isometric => |*view| view.* = view.yawBy(values[1]),
+                .spherical => |*sphere| {
+                    if (values[1] != 0) sphere.yaw(values[1]);
+                    if (values[2] != 0) sphere.pitch(values[2]);
+                },
+                .hyperbolic => |*view| {
+                    if (values[1] != 0) view.* = view.yaw(values[1]);
+                    if (values[2] != 0) view.* = view.pitch(-values[2]);
+                },
+            }
+        } else {
+            world.walkForward(values[0]);
+            if (values[1] != 0) world.yaw(values[1]);
+            if (values[2] != 0) world.pitch(values[2]);
+        }
+    }
+    var app = try App.init(init.gpa, init.io, vert_path, frag_path, mesh_vert_path, mesh_frag_path, benchmark_frames, world, compare, mode, capture_path);
     defer app.deinit();
     try app.run();
 }
