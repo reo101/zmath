@@ -59,6 +59,25 @@ Signature caveats (all pinned by tests):
   weight duals collapse to the metric-free complement in our primitives;
   the combinators are incidence bookkeeping only in that representation.
 
+## Bivector exponentials
+
+`exp()` returns an even carrier for a finite bivector `B` whose computed square
+is a finite scalar. It accepts any metric, including degenerate ones:
+
+| Square | Exponential |
+| --- | --- |
+| `B² = -θ² < 0` | `cos(θ) + B*sin(θ)/θ` |
+| `B² = 0` | `1 + B`, including nonzero null generators |
+| `B² = θ² > 0` | `cosh(θ) + B*sinh(θ)/θ` |
+
+The restriction concerns coefficient values, not carrier support; full carriers
+containing only a bivector are accepted. Non-bivector values, non-finite inputs
+or squares, and nonzero nonscalar square coefficients panic at runtime and
+produce a diagnostic at comptime. This is not a general multivector exponential.
+Hyperbolic results can overflow the coefficient type's representable range.
+All floating coefficient types remain accepted; `f32`/`f64` use the standard
+hyperbolic routines, with near-zero/compensated formulas for other types.
+
 ## Expressions
 
 The expression compiler follows the same names:

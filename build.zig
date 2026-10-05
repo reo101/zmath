@@ -387,6 +387,37 @@ fn addTests(
     compile_fail_expression_hodge_dual.expect_errors = .{ .contains = "Hodge duality requires a non-degenerate metric; use complement duality instead" };
     test_step.dependOn(&compile_fail_expression_hodge_dual.step);
 
+    const ExponentialInputCase = enum {
+        non_bivector,
+        nonscalar_square,
+        nan_coefficient,
+        infinite_coefficient,
+        non_finite_square,
+    };
+    inline for (std.meta.tags(ExponentialInputCase)) |input_case| {
+        const options = b.addOptions();
+        options.addOption(ExponentialInputCase, "input_case", input_case);
+        const compile_fail_exponential = b.addObject(.{
+            .name = b.fmt("zmath-compile-fail-exponential-{s}", .{@tagName(input_case)}),
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("tools/compile_fail/exponential_unsupported.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "zmath", .module = modules.zmath },
+                    .{ .name = "build_options", .module = options.createModule() },
+                },
+            }),
+        });
+        compile_fail_exponential.expect_errors = .{ .contains = switch (input_case) {
+            .non_bivector => "exp() requires a bivector",
+            .nonscalar_square => "exp() requires a scalar bivector square",
+            .nan_coefficient, .infinite_coefficient => "exp() requires finite coefficients",
+            .non_finite_square => "exp() requires a finite bivector square",
+        } };
+        test_step.dependOn(&compile_fail_exponential.step);
+    }
+
     const MetricMismatchOperation = enum {
         add,
         sub,

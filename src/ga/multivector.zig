@@ -1442,63 +1442,66 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             return rev.scale(@as(T, 1) / denominator);
         }
 
-        /// Returns the exponential exp(self) as an even multivector.
-        /// Currently only implemented for bivectors in Euclidean space
-        /// where B^2 is a negative scalar.
+        /// Returns exp(B) as an even multivector for finite bivectors with a
+        /// finite scalar square. Negative, zero, and positive squares use
+        /// trigonometric, nilpotent (1+B), and hyperbolic formulas respectively.
+        /// Panics for unsupported values; hyperbolic coefficients may overflow.
         pub fn exp(self: Self) EvenType {
             if (comptime !isFloatType(T)) {
                 @compileError("exp() currently requires floating-point coefficients");
             }
-            // For a bivector B, if B^2 = -theta^2 (scalar), then
-            // exp(B) = cos(theta) + (B/theta) * sin(theta)
+            const coefficients = self.coeffsArray();
+            inline for (blade_masks, 0..) |mask, i| {
+                if (!std.math.isFinite(coefficients[i])) @panic("exp() requires finite coefficients");
+                if (blade_ops.bladeGrade(mask) != 2 and coefficients[i] != 0) @panic("exp() requires a bivector");
+            }
+
             const b2_mv = self.gp(self);
-            const b2 = b2_mv.scalarCoeff();
-
-            // Check if it's a pure scalar
-            var is_pure_scalar = true;
-            const B2Mv = @TypeOf(b2_mv);
             const b2_coeffs = b2_mv.coeffsArray();
-            inline for (B2Mv.blades, 0..) |mask, i| {
-                if (mask.bitset.mask != 0) {
-                    if (b2_coeffs[i] != 0) is_pure_scalar = false;
-                }
+            inline for (@TypeOf(b2_mv).blades, 0..) |mask, i| {
+                if (!std.math.isFinite(b2_coeffs[i])) @panic("exp() requires a finite bivector square");
+                if (mask.bitset.mask != 0 and b2_coeffs[i] != 0) @panic("exp() requires a scalar bivector square");
             }
-
-            if (is_pure_scalar and b2 <= 0) {
+            const b2 = b2_mv.scalarCoeff();
+            var scalar: T = 1;
+            var scale_factor: T = 1;
+            if (b2 < 0) {
                 const theta = @sqrt(-b2);
-
-                if (theta == 0) {
-                    const Result = EvenType;
-                    var res_coeffs = std.mem.zeroes([Result.stored_blade_count]T);
-                    const scalar_idx = Result.getBladeIndex(BladeMask.init(0));
-                    if (scalar_idx < Result.stored_blade_count) res_coeffs[scalar_idx] = 1;
-                    return Result.init(res_coeffs);
+                scalar = @cos(theta);
+                scale_factor = @sin(theta) / theta;
+            } else if (b2 > 0) {
+                const theta = @sqrt(b2);
+                if (comptime T == f32 or T == f64) {
+                    scalar = std.math.cosh(theta);
+                    scale_factor = std.math.sinh(theta) / theta;
+                } else if (b2 < @sqrt(std.math.floatEps(T))) {
+                    // Avoid subtracting nearly equal exponentials near zero.
+                    scalar = 1 + b2 / 2 + b2 * b2 / 24;
+                    scale_factor = 1 + b2 / 6 + b2 * b2 / 120;
+                } else if (theta < 1) {
+                    const exponential = @exp(theta);
+                    const increment = exponential - 1;
+                    scalar = 1 + increment * increment / (2 * exponential);
+                    // Compensate exp rounding rather than divide its error by theta.
+                    scale_factor = (increment / @log(exponential)) * (1 + 1 / exponential) / 2;
+                } else {
+                    // Shift before exponentiation to avoid premature overflow.
+                    const positive_half = @exp(theta - @as(T, std.math.ln2));
+                    const negative_half = @exp(-theta - @as(T, std.math.ln2));
+                    scalar = positive_half + negative_half;
+                    scale_factor = (positive_half - negative_half) / theta;
                 }
-
-                const c = @cos(theta);
-                const s = @sin(theta);
-
-                // Result = cos(theta) + (B/theta) * sin(theta)
-                const Result = EvenType;
-                var res_coeffs = std.mem.zeroes([Result.stored_blade_count]T);
-                const scalar_idx = Result.getBladeIndex(BladeMask.init(0));
-                if (scalar_idx < Result.stored_blade_count) res_coeffs[scalar_idx] = c;
-
-                inline for (blade_masks) |mask| {
-                    if (mask.bitset.mask != 0) {
-                        const result_idx = Result.getBladeIndex(mask);
-                        if (result_idx < Result.stored_blade_count) {
-                            res_coeffs[result_idx] = self.coeff(mask) * (s / theta);
-                        }
-                    }
-                }
-
-                return Result.init(res_coeffs);
             }
 
-            // Fallback for general case or non-Euclidean could be power series,
-            // but that's complex for a general sparse carrier.
-            @panic("exp() only implemented for Euclidean bivectors with B^2 <= 0");
+            const Result = EvenType;
+            var result_coefficients = std.mem.zeroes([Result.stored_blade_count]T);
+            result_coefficients[Result.getBladeIndex(BladeMask.init(0))] = scalar;
+            inline for (blade_masks) |mask| {
+                if (comptime blade_ops.bladeGrade(mask) == 2) {
+                    result_coefficients[Result.getBladeIndex(mask)] = self.coeff(mask) * scale_factor;
+                }
+            }
+            return Result.init(result_coefficients);
         }
 
         /// Returns whether two multivectors are coefficient-wise equal.
@@ -2287,4 +2290,80 @@ test "multivector setCoeff modifies values correctly" {
 
     try std.testing.expectEqual(@as(f32, 10.0), v.coeffNamed("e1"));
     try std.testing.expectEqual(@as(f32, 20.0), v.coeffNamed("e2"));
+}
+
+test "bivector exponential retains projective null generators" {
+    inline for (.{ f32, f64 }) |T| {
+        const P2 = Basis(T, .{ .p = 2, .r = 1 });
+        const generator = P2.signedBlade("e13").scale(2);
+        try std.testing.expectEqual(@as(T, 0), generator.gp(generator).scalarCoeff());
+        try std.testing.expect(generator.exp().eql(P2.Scalar.init(.{1}).add(generator)));
+        try std.testing.expect(generator.cast(P2.Full).exp().eql(generator.exp()));
+        try std.testing.expect(P2.Bivector.zero().exp().eql(P2.Scalar.init(.{1})));
+        const constant = comptime P2.signedBlade("e13").scale(2).exp();
+        try std.testing.expect(constant.eql(generator.exp()));
+    }
+}
+
+test "bivector exponential supports rotation and boost generators" {
+    inline for (.{ f32, f64 }) |T| {
+        const E3 = Basis(T, .euclidean(3));
+        const Mixed = Basis(T, .{ .p = 2, .q = 1 });
+        for ([_]T{ 0, 0.5, -0.5, 1e-8 }) |angle| {
+            const rotation = E3.signedBlade("e12").scale(angle).exp();
+            const mixed_rotation = Mixed.signedBlade("e12").scale(angle).exp();
+            const generator = Mixed.signedBlade("e13").scale(angle);
+            const boost = generator.exp();
+            const tolerance = 16 * std.math.floatEps(T);
+            try std.testing.expectApproxEqRel(@cos(angle), rotation.scalarCoeff(), tolerance);
+            try std.testing.expectApproxEqRel(@sin(angle), rotation.coeffNamed("e12"), tolerance);
+            try std.testing.expectEqual(rotation.scalarCoeff(), mixed_rotation.scalarCoeff());
+            try std.testing.expectEqual(rotation.coeffNamed("e12"), mixed_rotation.coeffNamed("e12"));
+            try std.testing.expectApproxEqRel(std.math.cosh(angle), boost.scalarCoeff(), tolerance);
+            try std.testing.expectApproxEqRel(std.math.sinh(angle), boost.coeffNamed("e13"), tolerance);
+            const identity = boost.gp(generator.negate().exp());
+            inline for (@TypeOf(identity).blades) |mask| {
+                try std.testing.expectApproxEqAbs(@as(T, if (mask.bitset.mask == 0) 1 else 0), identity.coeff(mask), tolerance);
+            }
+        }
+        const constant = comptime Mixed.signedBlade("e13").scale(0.5).exp();
+        try std.testing.expectApproxEqRel(std.math.cosh(@as(T, 0.5)), constant.scalarCoeff(), 16 * std.math.floatEps(T));
+    }
+}
+
+test "bivector exponential retains other floating coefficient types" {
+    inline for (.{ f16, f80, f128 }) |T| {
+        const Mixed = Basis(T, .{ .p = 1, .q = 1 });
+        var angle: T = 0.5;
+        std.mem.doNotOptimizeAway(&angle);
+        const boost = Mixed.signedBlade("e12").scale(angle).exp();
+        const rotation = Basis(T, .euclidean(2)).signedBlade("e12").scale(angle).exp();
+        const tolerance = 16 * std.math.floatEps(T);
+        try std.testing.expectApproxEqRel(@as(T, 0.8775825618903727161162815826038296520), rotation.scalarCoeff(), tolerance);
+        try std.testing.expectApproxEqRel(@as(T, 0.4794255386042030002732879352155713881), rotation.coeffNamed("e12"), tolerance);
+        try std.testing.expectApproxEqRel(@as(T, 1.1276259652063807852262251614026720125), boost.scalarCoeff(), tolerance);
+        try std.testing.expectApproxEqRel(@as(T, 0.5210953054937473616224256264114915591), boost.coeffNamed("e12"), tolerance);
+        var small_angle: T = std.math.floatEps(T);
+        std.mem.doNotOptimizeAway(&small_angle);
+        const small_boost = Mixed.signedBlade("e12").scale(small_angle).exp();
+        try std.testing.expectApproxEqRel(@as(T, 1), small_boost.scalarCoeff(), tolerance);
+        try std.testing.expectApproxEqRel(small_angle, small_boost.coeffNamed("e12"), tolerance);
+        const constant = comptime Mixed.signedBlade("e12").scale(0.5).exp();
+        try std.testing.expectApproxEqRel(boost.scalarCoeff(), constant.scalarCoeff(), tolerance);
+        for ([_]T{ 0.5, 2 }) |factor| {
+            var boundary_angle = @sqrt(factor * @sqrt(std.math.floatEps(T)));
+            std.mem.doNotOptimizeAway(&boundary_angle);
+            const boundary_square = boundary_angle * boundary_angle;
+            const boundary_boost = Mixed.signedBlade("e12").scale(boundary_angle).exp();
+            const expected_scalar = 1 + boundary_square / 2 + boundary_square * boundary_square / 24 + boundary_square * boundary_square * boundary_square / 720;
+            const expected_blade = boundary_angle * (1 + boundary_square / 6 + boundary_square * boundary_square / 120 + boundary_square * boundary_square * boundary_square / 5040);
+            try std.testing.expectApproxEqRel(expected_scalar, boundary_boost.scalarCoeff(), tolerance);
+            try std.testing.expectApproxEqRel(expected_blade, boundary_boost.coeffNamed("e12"), tolerance);
+        }
+        var large_angle: T = 2;
+        std.mem.doNotOptimizeAway(&large_angle);
+        const large_boost = Mixed.signedBlade("e12").scale(large_angle).exp();
+        try std.testing.expectApproxEqRel(@as(T, 3.7621956910836314595622134777737461083), large_boost.scalarCoeff(), tolerance);
+        try std.testing.expectApproxEqRel(@as(T, 3.6268604078470187676682139828012617049), large_boost.coeffNamed("e12"), tolerance);
+    }
 }
