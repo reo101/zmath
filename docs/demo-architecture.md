@@ -7,6 +7,7 @@
 | `src/geometry/spherical_game.zig` | Shared `Cl(4,0)` S³ kernels | Canonical |
 | `src/demos/spherical_game/scene.zig` | Backend-free S³ scene and exact tracer oracle | Canonical |
 | `src/demos/spherical_game/object_scene.zig` | Data-defined S³ half-space scene format | Canonical |
+| `tools/spherical_mesh.zig` | Backend-free half-space mesh construction | Shared renderer/test implementation |
 | `tools/shader_playground.zig` | Vulkan/GLFW S³ renderer | Canonical graphical demo |
 | `src/demos/worlds/` | Four-space frontend, camera uploads, and tracer checks | Shared Vulkan renderer |
 
@@ -34,13 +35,19 @@ test reference, not the graphical rendering path.
 ## Vulkan renderer
 
 `tools/shader_playground.zig` creates the S³ mesh once from
-`assets/spherical/world.s3obj.json`:
+`assets/spherical/world.s3obj.json` through `tools/spherical_mesh.zig`:
 
 1. Face vertices come from the GA null-vector construction
    `a ^ b ^ c` followed by the Hodge dual.
 2. Great-sphere faces are subdivided on S³.
 3. Vertices are deduplicated only when point, color, and face plane match.
 4. Vertex and index buffers are uploaded once into device-local memory.
+
+The mesher supports vertex-bounded objects with four to six faces, including
+tetrahedra and triangular prisms. The scene format also accepts other half-space
+sets, but hemispheres, lunes, and vertex-degenerate geometry require a different
+meshing algorithm. These return `UnsupportedMeshGeometry` rather than disappear
+silently; failure of any object rejects the complete mesh.
 
 The current scene has 387,072 triangles, 206,010 persistent vertices, and
 1,161,216 indices.
@@ -75,7 +82,9 @@ extent, so the spherical screen fills the current framebuffer.
 
 ## Tests and checks
 
-- `zig build test`: GA, scene, object-format, and renderer-support tests.
+- `zig build test`: GA, scene, object-format, headless mesh, and renderer-support
+  tests. Mesh regressions check bounded tetrahedra/prisms, explicit unsupported
+  geometry errors, allocation cleanup, and the canonical asset's triangle count.
 - `zig build demo-spherical-check`: S³ scene geometry tests only.
 - `zig build spirv-spherical`: Zig-authored spherical SPIR-V modules, validated
   against Vulkan 1.2 before installation.

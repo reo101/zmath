@@ -325,6 +325,20 @@ fn addTests(
     });
     test_step.dependOn(&b.addRunArtifact(spherical_object_scene_tests).step);
 
+    const spherical_mesh_tests = b.addTest(.{
+        .name = "zmath-spherical-mesh",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/spherical_mesh.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "object_scene", .module = modules.object_scene },
+                .{ .name = "spherical_scene", .module = modules.spherical_scene },
+            },
+        }),
+    });
+    test_step.dependOn(&b.addRunArtifact(spherical_mesh_tests).step);
+
     const spherical_game_check_step = b.step("demo-spherical-check", "Run headless S3 spherical-game demo checks");
     spherical_game_check_step.dependOn(&spherical_game_scene_run.step);
 

@@ -3,6 +3,7 @@ const std = @import("std");
 const c = @import("vulkan_glfw");
 const object_scene = @import("object_scene");
 const spherical_scene = @import("spherical_scene");
+const spherical_mesh = @import("spherical_mesh.zig");
 const worlds_render = @import("worlds_render");
 const space = worlds_render.space;
 const png_capture = @import("png_capture.zig");
@@ -11,7 +12,6 @@ const worlds_frag_path = "zig-out/shaders/worlds.frag.spv";
 const window_width = 960;
 const window_height = 640;
 const max_frames_in_flight = 2;
-const mesh_subdivision_depth = 4;
 
 const MaxFaces = 384;
 const MaxObjects = 64;
@@ -78,59 +78,7 @@ const MeshData = struct {
     }
 };
 
-const MeshTriangle = struct {
-    points: [3]Point,
-    color: [4]f32,
-    plane: Point,
-    object_index: usize,
-};
-
-const FacePoint = struct {
-    point: Point,
-    angle: f32,
-};
-
-fn normalizePoint(point: Point) ?Point {
-    const length = @sqrt(@max(point.scalarProduct(point), 0.0));
-    if (length < 1e-6) return null;
-    return point.scale(1.0 / length);
-}
-
-fn nullVector(a: Point, b: Point, c_: Point) ?Point {
-    return normalizePoint(a.wedge(b).wedge(c_).hodgeDual());
-}
-
-fn faceContains(point: Point, normals: [6]Point, faces: []const object_scene.Face) bool {
-    for (faces, 0..) |face, i| {
-        const side = spherical_scene.dot(point, normals[i]);
-        if (if (face.positive) side < -1e-4 else side > 1e-4) return false;
-    }
-    return true;
-}
-
-fn appendSubdividedTriangle(
-    triangles: *std.ArrayList(MeshTriangle),
-    allocator: std.mem.Allocator,
-    a: Point,
-    b: Point,
-    c_: Point,
-    color: [4]f32,
-    plane: Point,
-    object_index: usize,
-    depth: u32,
-) !void {
-    if (depth == 0) {
-        try triangles.append(allocator, .{ .points = .{ a, b, c_ }, .color = color, .plane = plane, .object_index = object_index });
-        return;
-    }
-    const ab = normalizePoint(a.add(b)) orelse return;
-    const bc = normalizePoint(b.add(c_)) orelse return;
-    const ca = normalizePoint(c_.add(a)) orelse return;
-    try appendSubdividedTriangle(triangles, allocator, a, ab, ca, color, plane, object_index, depth - 1);
-    try appendSubdividedTriangle(triangles, allocator, ab, b, bc, color, plane, object_index, depth - 1);
-    try appendSubdividedTriangle(triangles, allocator, ca, bc, c_, color, plane, object_index, depth - 1);
-    try appendSubdividedTriangle(triangles, allocator, ab, bc, ca, color, plane, object_index, depth - 1);
-}
+const MeshTriangle = spherical_mesh.Triangle;
 
 fn projectPoint(frame: SphericalFrame, point: Point) ?[3]f32 {
     const projection = spherical_scene.rasterProjection(
@@ -164,72 +112,6 @@ fn frameDirection(frame: SphericalFrame, uv: [2]f32) Direction {
 fn planeDepth(frame: SphericalFrame, dir: Direction, plane: Point) f32 {
     const intersection = spherical_scene.greatSphereIntersection(frame.origin, dir, plane);
     return (1.0 - intersection.cos_angle) * 0.5;
-}
-
-fn buildMeshTriangles(allocator: std.mem.Allocator, file: object_scene.File) ![]MeshTriangle {
-    var triangles: std.ArrayList(MeshTriangle) = .empty;
-    errdefer triangles.deinit(allocator);
-
-    for (file.objects, 0..) |object, object_index| {
-        if (object.faces.len != 6) continue;
-        var normals: [6]Point = undefined;
-        for (object.faces, 0..) |face, i| normals[i] = object.transformNormal(face.normal);
-
-        for (object.faces, 0..) |face, face_index| {
-            var points: [8]FacePoint = undefined;
-            var point_count: usize = 0;
-            var j: usize = 0;
-            while (j < 6) : (j += 1) {
-                if (j == face_index) continue;
-                var k = j + 1;
-                while (k < 6) : (k += 1) {
-                    if (k == face_index) continue;
-                    const candidate = nullVector(normals[face_index], normals[j], normals[k]) orelse continue;
-                    for ([_]f32{ 1.0, -1.0 }) |sign| {
-                        const point = candidate.scale(sign);
-                        if (!faceContains(point, normals, object.faces)) continue;
-                        var duplicate = false;
-                        for (points[0..point_count]) |existing| {
-                            if (spherical_scene.dot(existing.point, point) > 0.9999) duplicate = true;
-                        }
-                        if (!duplicate and point_count < points.len) {
-                            points[point_count] = .{ .point = point, .angle = 0.0 };
-                            point_count += 1;
-                        }
-                    }
-                }
-            }
-            if (point_count < 3) continue;
-
-            var center_sum = Point.zero();
-            for (points[0..point_count]) |point| center_sum = center_sum.add(point.point);
-            const center = normalizePoint(center_sum) orelse continue;
-            const radial = points[0].point.sub(center.scale(spherical_scene.dot(points[0].point, center)));
-            const e1 = normalizePoint(radial) orelse continue;
-            const e2 = nullVector(normals[face_index], center, e1) orelse continue;
-            for (points[0..point_count]) |*point| {
-                point.angle = std.math.atan2(spherical_scene.dot(point.point, e2), spherical_scene.dot(point.point, e1));
-            }
-            std.mem.sort(FacePoint, points[0..point_count], {}, struct {
-                fn lessThan(_: void, left: FacePoint, right: FacePoint) bool {
-                    return left.angle < right.angle;
-                }
-            }.lessThan);
-
-            const material = file.materials[face.material];
-            const color = .{
-                material.color[0] * (0.55 + 0.45 * material.tone),
-                material.color[1] * (0.55 + 0.45 * material.tone),
-                material.color[2] * (0.55 + 0.45 * material.tone),
-                material.color[3],
-            };
-            for (0..point_count) |i| {
-                const next = (i + 1) % point_count;
-                try appendSubdividedTriangle(&triangles, allocator, center, points[i].point, points[next].point, color, normals[face_index], object_index, mesh_subdivision_depth);
-            }
-        }
-    }
-    return try triangles.toOwnedSlice(allocator);
 }
 
 fn buildMeshData(allocator: std.mem.Allocator, triangles: []const MeshTriangle) !MeshData {
@@ -658,7 +540,7 @@ const App = struct {
         var object_block: ObjectGpuBlock = undefined;
         @memset(std.mem.asBytes(&object_block), 0);
         try fillObjectBlock(&object_block, parsed.value);
-        const mesh_triangles = try buildMeshTriangles(allocator, parsed.value);
+        const mesh_triangles = try spherical_mesh.buildTriangles(allocator, parsed.value);
         defer allocator.free(mesh_triangles);
         try meshSelfCheck(mesh_triangles, compare);
         const mesh_data = try buildMeshData(allocator, mesh_triangles);
