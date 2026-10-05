@@ -77,6 +77,12 @@ The expression compiler follows the same names:
 | postfix `\hodge`, `\hodgeDual` | Hodge dual |
 | postfix `^-1` | inverse for constant expressions |
 
+Hodge operators require a non-degenerate metric. Runtime expression compilation
+returns `error.UndefinedHodgeDual` for unsupported Hodge use, including constant
+operands; comptime compilation reports the same restriction as a diagnostic.
+Ordinary arithmetic and complement duality remain available in projective
+metrics. Unsupported Hodge nodes are rejected before evaluation.
+
 ## PGA model
 
 Projective Euclidean (PGA-style) models use `Cl(n, 0, 1)` with named basis

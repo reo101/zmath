@@ -225,6 +225,7 @@ pub const RuntimeCompileError = blade_parsing.SignedBladeParseError || error{
     UnexpectedTrailingInput,
     InverseRequiresConstant,
     UndefinedInverse,
+    UndefinedHodgeDual,
     InvalidNumericLiteral,
 };
 
@@ -489,8 +490,9 @@ fn ParserTypes(comptime T: type, comptime sig: blades.MetricSignature) type {
     };
 }
 
-fn parserErrorMessage(err: RuntimeCompileError) []const u8 {
+fn parserErrorMessage(err: (RuntimeCompileError || error{ExpressionTooLarge})) []const u8 {
     return switch (err) {
+        error.ExpressionTooLarge => "expression is too large",
         error.UnexpectedToken => "unexpected token",
         error.UnsupportedExponent => "only postfix `^-1` is supported after `^`",
         error.UnterminatedPlaceholder => "unterminated placeholder",
@@ -498,6 +500,7 @@ fn parserErrorMessage(err: RuntimeCompileError) []const u8 {
         error.UnexpectedTrailingInput => "unexpected trailing input",
         error.InverseRequiresConstant => "postfix `^-1` currently requires a fully constant operand",
         error.UndefinedInverse => "expression inverse is undefined for this value",
+        error.UndefinedHodgeDual => "Hodge duality requires a non-degenerate metric; use complement duality instead",
         error.InvalidNumericLiteral => "invalid numeric literal",
         inline else => @errorName(err),
     };
@@ -694,6 +697,7 @@ fn parserBuildHodgeDual(
     self: anytype,
     child: usize,
 ) @TypeOf(self.*).ParserError!usize {
+    if (comptime sig.isDegenerate()) return error.UndefinedHodgeDual;
     if (self.nodeInfo(child).constant) |constant| {
         return parserConstantNode(T, sig, self, constant.hodgeDual());
     }
@@ -1589,7 +1593,8 @@ fn evalNodeRuntimeArgs(
         .left_contraction => |binary| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.lhs, args)).leftContraction(try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.rhs, args)).cast(Full),
         .right_contraction => |binary| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.lhs, args)).rightContraction(try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, binary.rhs, args)).cast(Full),
         .complement_dual => |child| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, child, args)).complementDual().cast(Full),
-        .hodge_dual => |child| (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, child, args)).hodgeDual().cast(Full),
+        // Compilation rejects Hodge nodes under degenerate signatures.
+        .hodge_dual => |child| if (comptime sig.isNonDegenerate()) (try evalNodeRuntimeArgs(T, sig, placeholder_names, nodes, child, args)).hodgeDual().cast(Full) else unreachable,
     };
 }
 
@@ -1616,7 +1621,7 @@ fn evalNodeRuntimeSlots(
         .left_contraction => |binary| (try evalNodeRuntimeSlots(T, sig, nodes, binary.lhs, slot_values)).leftContraction(try evalNodeRuntimeSlots(T, sig, nodes, binary.rhs, slot_values)).cast(Full),
         .right_contraction => |binary| (try evalNodeRuntimeSlots(T, sig, nodes, binary.lhs, slot_values)).rightContraction(try evalNodeRuntimeSlots(T, sig, nodes, binary.rhs, slot_values)).cast(Full),
         .complement_dual => |child| (try evalNodeRuntimeSlots(T, sig, nodes, child, slot_values)).complementDual().cast(Full),
-        .hodge_dual => |child| (try evalNodeRuntimeSlots(T, sig, nodes, child, slot_values)).hodgeDual().cast(Full),
+        .hodge_dual => |child| if (comptime sig.isNonDegenerate()) (try evalNodeRuntimeSlots(T, sig, nodes, child, slot_values)).hodgeDual().cast(Full) else unreachable,
     };
 }
 
@@ -2478,4 +2483,73 @@ test "runtime exact typed evaluation rejects non-zero omitted coefficients" {
         multivector.ExactCastError.ExcludedCoefficientNonZero,
         expr.evalAs(Basis.Vector, .{}),
     );
+}
+
+test "runtime projective expressions support named slots and exact carriers" {
+    inline for (comptime .{
+        blades.MetricSignature{ .p = 2, .r = 1 },
+        blades.MetricSignature{ .p = 3, .r = 1 },
+        blades.MetricSignature{ .p = 1, .q = 1, .r = 1 },
+    }) |sig| {
+        const options = blade_parsing.SignedBladeNamingOptions.fromSignature(sig);
+        const Basis = multivector.Basis(f32, sig);
+        const Full = multivector.FullMultivector(f32, sig);
+        const expected = Basis.e(1).add(Basis.e(2));
+
+        var constant = try compileRuntime(f32, sig, options, std.testing.allocator, "e1 + e2");
+        defer constant.deinit();
+        try std.testing.expect((try constant.eval(.{})).eql(expected));
+        try std.testing.expect((try constant.evalAs(Basis.Vector, .{})).eql(expected));
+        try std.testing.expect((try constant.evalSlots(&.{})).eql(expected));
+        try std.testing.expect((try constant.evalSlotsAs(Basis.Vector, &.{})).eql(expected));
+
+        var named = try compileRuntime(f32, sig, options, std.testing.allocator, "e1 + {v}");
+        defer named.deinit();
+        const slots = [_]Full{Basis.e(2).cast(Full)};
+        try std.testing.expect((try named.eval(.{ .v = Basis.e(2) })).eql(expected));
+        try std.testing.expect((try named.evalAs(Basis.Vector, .{ .v = Basis.e(2) })).eql(expected));
+        try std.testing.expect((try named.evalSlots(&slots)).eql(expected));
+        try std.testing.expect((try named.evalSlotsAs(Basis.Vector, &slots)).eql(expected));
+
+        var complement = try compileRuntime(f32, sig, options, std.testing.allocator, "{v} \\dual");
+        defer complement.deinit();
+        try std.testing.expect((try complement.eval(.{ .v = Basis.e(2) })).eql(Basis.e(2).complementDual()));
+        try std.testing.expect((try complement.evalSlots(&slots)).eql(Basis.e(2).complementDual()));
+    }
+
+    const sig: blades.MetricSignature = .{ .p = 3, .r = 1 };
+    const options = comptime blade_parsing.SignedBladeNamingOptions.withBasisSpans(.init(.{
+        .positive = .range(1, 3),
+        .degenerate = .singleton(0),
+    }));
+    const Basis = multivector.BasisWithNamingOptions(f32, sig, options);
+    var named_axis = try compileRuntime(f32, sig, options, std.testing.allocator, "e0 + 2*{v}");
+    defer named_axis.deinit();
+    try std.testing.expect((try named_axis.evalAs(Basis.Vector, .{ .v = Basis.e(1) })).eql(Basis.e(0).add(Basis.e(1).scale(2))));
+}
+
+test "runtime projective expressions reject Hodge duality during compilation" {
+    const sig: blades.MetricSignature = .{ .p = 3, .r = 1 };
+    const options = blade_parsing.SignedBladeNamingOptions.fromSignature(sig);
+    for ([_][]const u8{ "e1 \\hodge", "{v} \\hodge", "{v} \\hodgeDual", "0 * ({v} \\hodge)", "0 \\hodge" }) |source| {
+        try std.testing.expectError(error.UndefinedHodgeDual, compileRuntime(f32, sig, options, std.testing.allocator, source));
+    }
+}
+
+test "runtime nondegenerate expressions retain constant and placeholder Hodge duality" {
+    inline for (comptime .{ blades.MetricSignature.euclidean(3), blades.MetricSignature{ .p = 2, .q = 1 } }) |sig| {
+        const options = blade_parsing.SignedBladeNamingOptions.fromSignature(sig);
+        const Basis = multivector.Basis(f32, sig);
+        const Full = multivector.FullMultivector(f32, sig);
+        const axis = if (comptime sig.q == 0) Basis.e(1) else Basis.e(3);
+        const expected = Basis.signedBlade(if (comptime sig.q == 0) "e23" else "-e12");
+        var constant = try compileRuntime(f32, sig, options, std.testing.allocator, if (sig.q == 0) "e1 \\hodge" else "e3 \\hodge");
+        defer constant.deinit();
+        try std.testing.expect((try constant.eval(.{})).eql(expected));
+        var named = try compileRuntime(f32, sig, options, std.testing.allocator, "{v} \\hodgeDual");
+        defer named.deinit();
+        const slots = [_]Full{axis.cast(Full)};
+        try std.testing.expect((try named.eval(.{ .v = axis })).eql(expected));
+        try std.testing.expect((try named.evalSlots(&slots)).eql(expected));
+    }
 }

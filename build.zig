@@ -246,6 +246,23 @@ fn addLocalVulkanPlaygroundSteps(
     ga_step.dependOn(&run_ga.step);
 }
 
+fn createTestModule(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.lang.Optimize,
+    source: *std.Build.Module,
+) *std.Build.Module {
+    const test_module = b.createModule(.{
+        .root_source_file = source.root_source_file,
+        .target = target,
+        .optimize = optimize,
+    });
+    for (source.import_table.keys(), source.import_table.values()) |name, imported| {
+        test_module.addImport(name, if (imported == source) test_module else imported);
+    }
+    return test_module;
+}
+
 fn addTests(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
@@ -262,7 +279,10 @@ fn addTests(
         .{ "geometry-module", modules.geometry },
         .{ "zmath-module", modules.zmath },
     }) |entry| {
-        const tests = b.addTest(.{ .name = entry[0], .root_module = entry[1] });
+        const tests = b.addTest(.{
+            .name = entry[0],
+            .root_module = createTestModule(b, target, optimize, entry[1]),
+        });
         const run = b.addRunArtifact(tests);
         run.setName("run test " ++ entry[0]);
         test_step.dependOn(&run.step);
@@ -324,7 +344,7 @@ fn addTests(
     test_step.dependOn(&worlds_space_run.step);
     const worlds_render_tests = b.addTest(.{
         .name = "zmath-worlds-render",
-        .root_module = modules.worlds_render,
+        .root_module = createTestModule(b, target, optimize, modules.worlds_render),
     });
     const worlds_render_run = b.addRunArtifact(worlds_render_tests);
     test_step.dependOn(&worlds_render_run.step);
@@ -354,6 +374,18 @@ fn addTests(
     });
     compile_fail_hodge_dual.expect_errors = .{ .contains = "complement duality" };
     test_step.dependOn(&compile_fail_hodge_dual.step);
+
+    const compile_fail_expression_hodge_dual = b.addObject(.{
+        .name = "zmath-compile-fail-expression-hodge-dual-degenerate",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/compile_fail/expression_hodge_dual_degenerate.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "zmath", .module = modules.zmath }},
+        }),
+    });
+    compile_fail_expression_hodge_dual.expect_errors = .{ .contains = "Hodge duality requires a non-degenerate metric; use complement duality instead" };
+    test_step.dependOn(&compile_fail_expression_hodge_dual.step);
 
     const MetricMismatchOperation = enum {
         add,

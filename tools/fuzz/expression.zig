@@ -151,6 +151,7 @@ fn fuzzRandomRuntimeExpression(smith: *std.testing.Smith) !void {
         error.UnexpectedTrailingInput,
         error.InverseRequiresConstant,
         error.UndefinedInverse,
+        error.UndefinedHodgeDual,
         error.InvalidNumericLiteral,
         => return,
         error.OutOfMemory => return err,
