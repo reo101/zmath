@@ -252,6 +252,9 @@ fn assertCompatibleMultivector(comptime Lhs: type, comptime Rhs: type) void {
     if (Rhs.dimensions != Lhs.dimensions) {
         @compileError("multivector dimensions must match");
     }
+    if (!std.meta.eql(Lhs.metric_signature, Rhs.metric_signature)) {
+        @compileError("multivector metric signatures must match");
+    }
     if (Rhs.Coefficient != Lhs.Coefficient) {
         @compileError("cross-coefficient multivector operations are not implemented yet");
     }
@@ -789,7 +792,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             }
 
             const coeffs_array = self.coeffsArray();
-            if (comptime Self.has_all_blades) {
+            if (comptime Self.has_all_blades and blade_ops.areStrictlyAscendingUnique(blade_masks)) {
                 return coeffs_array[mask.index()];
             }
 
@@ -930,7 +933,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             comptime assertCompatibleMultivector(Self, Rhs);
 
             const Result = Rebind(&blade_ops.unionBladeMasks(dimensions, blade_masks, Rhs.blades));
-            if (!@inComptime() and comptime (blade_ops.sameBladeSet(blade_masks, Rhs.blades) and use_simd)) {
+            if (!@inComptime() and comptime (blade_ops.sameBladeSet(blade_masks, Rhs.blades) and blade_ops.sameBladeSet(blade_masks, Result.blades) and use_simd)) {
                 const lhs_lanes = storageToSimd(T, Self.stored_blade_count, self.coeffs);
                 const rhs_lanes = storageToSimd(T, Self.stored_blade_count, rhs.coeffs);
                 return Result.init(simdToCoeffs(T, Self.stored_blade_count, lhs_lanes + rhs_lanes));
@@ -951,7 +954,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             comptime assertCompatibleMultivector(Self, Rhs);
 
             const Result = Rebind(&blade_ops.unionBladeMasks(dimensions, blade_masks, Rhs.blades));
-            if (!@inComptime() and comptime (blade_ops.sameBladeSet(blade_masks, Rhs.blades) and use_simd)) {
+            if (!@inComptime() and comptime (blade_ops.sameBladeSet(blade_masks, Rhs.blades) and blade_ops.sameBladeSet(blade_masks, Result.blades) and use_simd)) {
                 const lhs_lanes = storageToSimd(T, Self.stored_blade_count, self.coeffs);
                 const rhs_lanes = storageToSimd(T, Self.stored_blade_count, rhs.coeffs);
                 return Result.init(simdToCoeffs(T, Self.stored_blade_count, lhs_lanes - rhs_lanes));

@@ -20,7 +20,8 @@ export fn main() callconv(.spirv_vertex) void {
     const local = Vec4.init(.{ x, 0.0, normal.coeffNamed("e3"), 1.0 });
     gl_position.* = local;
     const copied = gl_position.*;
-    gl_position.* = copied.scale(0.5);
+    const reordered = copied.swizzleVector("wzyx");
+    gl_position.* = reordered.add(reordered).sub(reordered).scale(0.5);
     const coefficients = gl_position.coeffs;
     gl_position.coeffs = coefficients;
     gl_position.coeffs[std.spirv.vertex_index % 4] = x;

@@ -171,3 +171,87 @@ test "constant curvature camera frames are tangent and orthonormal" {
         try std.testing.expectApproxEqAbs(@as(f32, 1.0), constant_curvature.dot(metric, frame.forward, frame.forward), 1e-4);
     }
 }
+
+test "permuted full carrier lookups follow declared blade order" {
+    const E1 = zmath.ga.Algebra(.euclidean(1)).Instantiate(f32);
+    const Permuted = E1.Multivector(&.{ .init(1), .init(0) });
+    const value = comptime Permuted.init(.{ 7, 3 });
+    try std.testing.expect(Permuted.has_all_blades);
+    try std.testing.expectEqual(@as(f32, 3), value.scalarCoeff());
+    try std.testing.expectEqual(@as(f32, 7), value.coeff(.init(1)));
+    try std.testing.expectEqual(value.coeffNamed("e1"), value.basisCoeff(1));
+    try std.testing.expectEqual(value.coeffNamed("e1"), value.coeff(.init(1)));
+    try std.testing.expectEqual(@as(f32, 3), comptime value.scalarCoeff());
+    try std.testing.expectEqual(@as(f32, 7), comptime value.coeff(.init(1)));
+
+    var updated = value;
+    try updated.setCoeffOrError(.init(0), 5);
+    try std.testing.expectEqual(@as(f32, 5), updated.scalarCoeff());
+    try std.testing.expectEqual(@as(f32, 7), updated.coeff(.init(1)));
+}
+
+test "permuted full carrier operations match canonical references" {
+    const E2 = zmath.ga.Algebra(.euclidean(2)).Instantiate(f32);
+    const reference = comptime E2.Full.init(.{ 1, 2, 3, 4 });
+    const other = comptime E2.Full.init(.{ 4, 3, 2, 1 });
+    inline for (comptime .{
+        &[_]zmath.ga.blades.BladeMask{ .init(3), .init(2), .init(1), .init(0) },
+        &[_]zmath.ga.blades.BladeMask{ .init(2), .init(0), .init(3), .init(1) },
+    }) |masks| {
+        const Permuted = E2.Multivector(masks);
+        const value = comptime reference.cast(Permuted);
+        const rhs = comptime other.cast(Permuted);
+        try std.testing.expect(value.eql(reference));
+        inline for (E2.Full.blades) |mask| {
+            try std.testing.expectEqual(reference.coeff(mask), value.coeff(mask));
+        }
+        try std.testing.expectEqualSlices(f32, &reference.coeffs, &value.cast(E2.Full).coeffs);
+        try std.testing.expect(value.castExact(E2.Full).eql(reference));
+        try std.testing.expect(value.gradePart(1).eql(reference.gradePart(1)));
+        try std.testing.expect(value.reverse().eql(reference.reverse()));
+        try std.testing.expect(value.gp(rhs).eql(reference.gp(other)));
+        try std.testing.expect(value.wedge(rhs).eql(reference.wedge(other)));
+        try std.testing.expectEqual(reference.scalarProduct(other), value.scalarProduct(rhs));
+        try std.testing.expect(value.add(rhs).eql(reference.add(other)));
+        try std.testing.expect(value.sub(rhs).eql(reference.sub(other)));
+        try std.testing.expect((comptime value.add(rhs)).eql(reference.add(other)));
+        try std.testing.expect((comptime value.sub(rhs)).eql(reference.sub(other)));
+        try std.testing.expect(value.add(other).eql(reference.add(other)));
+        try std.testing.expect(value.sub(other).eql(reference.sub(other)));
+    }
+}
+
+test "swizzled carrier arithmetic preserves basis coefficients at runtime and comptime" {
+    inline for (comptime .{ zmath.ga.MetricSignature.euclidean(3), zmath.ga.MetricSignature{ .p = 2, .q = 1 } }) |signature| {
+        const Algebra = zmath.ga.Algebra(signature).Instantiate(f32);
+        const vector = comptime Algebra.Vector.init(.{ 1, 2, 3 });
+        inline for (.{ "xyz", "xzy", "yxz", "yzx", "zxy", "zyx", "zy", "yx", "xz", "zx" }) |pattern| {
+            const value = comptime vector.swizzleVector(pattern);
+            const reference = value.cast(Algebra.Vector);
+            const expected_sum = reference.scale(2);
+            const expected_difference = reference.scale(0.75);
+            try std.testing.expect(value.add(value).eql(expected_sum));
+            try std.testing.expect(value.sub(value.scale(0.25)).eql(expected_difference));
+            try std.testing.expect((comptime value.add(value)).eql(expected_sum));
+            try std.testing.expect((comptime value.sub(value.scale(0.25))).eql(expected_difference));
+            try std.testing.expect(value.add(reference).eql(expected_sum));
+            try std.testing.expect(value.sub(reference.scale(0.25)).eql(expected_difference));
+            try std.testing.expectEqual(reference.scalarProduct(reference), value.scalarProduct(value));
+            try std.testing.expect(value.gp(value).eql(reference.gp(reference)));
+            try std.testing.expect(value.gradePart(1).eql(reference));
+        }
+    }
+}
+
+test "same metric carriers with different naming remain compatible" {
+    const E2 = zmath.ga.Algebra(.euclidean(2)).Instantiate(f32);
+    const naming = comptime zmath.ga.NamingOptions.withBasisNames(.fromSignature(.euclidean(2)), .{ "u", "v" });
+    const Named = zmath.ga.AlgebraWithNamingOptions(.euclidean(2), naming).Instantiate(f32);
+    const lhs = E2.Vector.init(.{ 1, 2 });
+    const rhs = Named.Vector.init(.{ 3, 4 });
+    try std.testing.expectEqual(@as(f32, 4), lhs.add(rhs).coeffNamed("e1"));
+    try std.testing.expectEqual(@as(f32, 6), lhs.add(rhs).coeffNamed("e2"));
+    try std.testing.expectEqual(@as(f32, 11), lhs.gp(rhs).scalarCoeff());
+    try std.testing.expectEqual(@as(f32, 11), lhs.scalarProduct(rhs));
+    try std.testing.expect(lhs.eql(Named.Vector.init(.{ 1, 2 })));
+}

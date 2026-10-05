@@ -68,10 +68,13 @@ pub const File = struct {
                 if (@abs(center_norm_sq - 1.0) > 1e-3) return error.NonUnitBoundCenter;
                 if (bound.cos_radius < -1.0 or bound.cos_radius > 1.0) return error.InvalidBoundRadius;
             }
-            if (object.transform) |rotor| {
-                var norm_sq: f32 = 0.0;
-                for (rotor) |coefficient| norm_sq += coefficient * coefficient;
-                if (@abs(norm_sq - 1.0) > 1e-3) return error.NonUnitRotor;
+            if (object.transform) |coefficients| {
+                const rotor = sg.Rotor.init(coefficients);
+                const identity = rotor.gp(rotor.reverse());
+                inline for (@TypeOf(identity).blades, identity.coeffsArray()) |mask, coefficient| {
+                    const expected: f32 = if (mask.toInt() == 0) 1 else 0;
+                    if (!std.math.isFinite(coefficient) or @abs(coefficient - expected) > 1e-3) return error.NonUnitRotor;
+                }
             }
             for (object.faces) |face| {
                 const length = @sqrt(
@@ -167,4 +170,51 @@ test "parses a data-defined triangular prism" {
     defer parsed.deinit();
     try std.testing.expectEqual(@as(usize, 1), parsed.value.objects.len);
     try std.testing.expectEqual(@as(usize, 5), parsed.value.objects[0].faces.len);
+}
+
+test "scene validation requires the Spin4 rotor identity" {
+    var materials = [_]Material{.{ .name = "material", .color = .{ 1, 1, 1, 1 } }};
+    var faces = [_]Face{.{ .normal = .{ 1, 0, 0, 0 } }};
+    var objects = [_]Object{.{
+        .name = "object",
+        .kind = .halfspaces,
+        .faces = &faces,
+    }};
+    const file = File{
+        .version = 1,
+        .space = .spherical,
+        .radius = 6,
+        .materials = &materials,
+        .objects = &objects,
+    };
+    const coefficient = @sqrt(@as(f32, 0.5));
+    objects[0].transform = .{ coefficient, 0, 0, 0, 0, 0, 0, coefficient };
+    try std.testing.expectError(error.NonUnitRotor, file.validate());
+    objects[0].transform = .{ 2, 0, 0, 0, 0, 0, 0, 0 };
+    try std.testing.expectError(error.NonUnitRotor, file.validate());
+    objects[0].transform = .{ std.math.nan(f32), 0, 0, 0, 0, 0, 0, 0 };
+    try std.testing.expectError(error.NonUnitRotor, file.validate());
+    objects[0].transform = .{ std.math.inf(f32), 0, 0, 0, 0, 0, 0, 0 };
+    try std.testing.expectError(error.NonUnitRotor, file.validate());
+
+    const first = sg.rotorBetween(
+        sg.Point.init(.{ 1, 0, 0, 0 }),
+        sg.Point.init(.{ 0, 1, 0, 0 }),
+        0.7,
+    );
+    const second = sg.rotorBetween(
+        sg.Point.init(.{ 0, 0, 1, 0 }),
+        sg.Point.init(.{ 0, 0, 0, 1 }),
+        -0.4,
+    );
+    const rotor = first.gp(second).cast(sg.Rotor);
+    objects[0].transform = rotor.coeffsArray();
+    try file.validate();
+    inline for (sg.Point.blades) |mask| {
+        const point = sg.h.basisBlade(mask).cast(sg.Point);
+        const transformed_point = objects[0].transformPoint(point.coeffsArray());
+        const transformed_normal = objects[0].transformNormal(point.coeffsArray());
+        try std.testing.expectApproxEqAbs(@as(f32, 1), transformed_point.scalarNormSquared(), 1e-5);
+        try std.testing.expectApproxEqAbs(@as(f32, 1), transformed_normal.scalarNormSquared(), 1e-5);
+    }
 }

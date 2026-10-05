@@ -355,6 +355,42 @@ fn addTests(
     compile_fail_hodge_dual.expect_errors = .{ .contains = "complement duality" };
     test_step.dependOn(&compile_fail_hodge_dual.step);
 
+    const MetricMismatchOperation = enum {
+        add,
+        sub,
+        gp,
+        degenerate_gp,
+        gp_grade,
+        wedge,
+        left_contraction,
+        right_contraction,
+        dot,
+        scalar_product,
+        eql,
+        join,
+        anti_geometric,
+        anti_dot,
+        sandwich,
+    };
+    inline for (std.meta.tags(MetricMismatchOperation)) |operation| {
+        const options = b.addOptions();
+        options.addOption(MetricMismatchOperation, "operation", operation);
+        const compile_fail_metric = b.addObject(.{
+            .name = b.fmt("zmath-compile-fail-metric-{s}", .{@tagName(operation)}),
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("tools/compile_fail/metric_mismatch.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "zmath", .module = modules.zmath },
+                    .{ .name = "build_options", .module = options.createModule() },
+                },
+            }),
+        });
+        compile_fail_metric.expect_errors = .{ .contains = "multivector metric signatures must match" };
+        test_step.dependOn(&compile_fail_metric.step);
+    }
+
     const expression_fuzz_tests = b.addTest(.{
         .name = "zmath-expression-fuzz",
         .root_module = b.createModule(.{
