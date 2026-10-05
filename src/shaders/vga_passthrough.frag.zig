@@ -17,7 +17,7 @@ pub const out_color = @extern(*addrspace(.output) @Vector(4, f32), .{
     .decoration = .{ .location = 0 },
 });
 
-export fn main() callconv(.spirv_fragment) void {
+export fn main() callconv(.{ .spirv_fragment = .{} }) void {
     const color: Vec(3) = .initStorage(in_color.*);
     const color_xy = color.swizzleVector("xy");
     const rgb = color.swizzle("xyz");

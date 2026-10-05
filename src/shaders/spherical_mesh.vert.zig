@@ -14,7 +14,7 @@ const frame = @extern(*addrspace(.uniform) const s3.FrameData, .{
 pub const out_color = @extern(*addrspace(.output) RawVec4, .{ .name = "color", .decoration = .{ .location = 0 } });
 pub const out_plane = @extern(*addrspace(.output) RawVec4, .{ .name = "plane", .decoration = .{ .location = 1 } });
 
-pub const gl_position = std.gpu.position_out;
+pub const gl_position = std.spirv.position_out;
 
 export fn main() callconv(.spirv_vertex) void {
     const projection = s3.rasterProjection(

@@ -222,10 +222,10 @@ pub const ViewStats = struct {
     ground: usize = 0,
     fence: usize = 0,
     cube: usize = 0,
-    faces: [@typeInfo(Face).@"enum".fields.len]usize = @splat(0),
+    faces: [@typeInfo(Face).@"enum".field_names.len]usize = @splat(0),
 
     pub fn faceHits(self: ViewStats, face: Face) usize {
-        return self.faces[@intFromEnum(face)];
+        return self.faces[@backingInt(face)];
     }
 
     pub fn cubeFraction(self: ViewStats) f32 {
@@ -999,7 +999,7 @@ pub const Scene = struct {
                     .fence => stats.fence += 1,
                     .cube => |face| {
                         stats.cube += 1;
-                        stats.faces[@intFromEnum(face)] += 1;
+                        stats.faces[@backingInt(face)] += 1;
                     },
                 }
             }
@@ -1161,7 +1161,7 @@ test "center ray hits the cube front face near the expected distance" {
     try std.testing.expect(hit.distance(default_radius) < default_cube_distance);
     try std.testing.expectApproxEqAbs(
         @as(f32, 0.0),
-        sg.dot(hit.point, scene.cube.planes[@intFromEnum(Face.front)].inward_normal),
+        sg.dot(hit.point, scene.cube.planes[@backingInt(Face.front)].inward_normal),
         1e-4,
     );
 }

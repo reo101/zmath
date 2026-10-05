@@ -760,7 +760,7 @@ pub fn sampleStats(mode: Mode, width: usize, height: usize) ViewStats {
                 .sky => {},
                 .cube => |face| {
                     stats.cube += 1;
-                    stats.faces[@intFromEnum(face)] += 1;
+                    stats.faces[@backingInt(face)] += 1;
                 },
             }
         }

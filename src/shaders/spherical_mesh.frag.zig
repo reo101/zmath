@@ -21,14 +21,14 @@ pub const out_color = @extern(*addrspace(.output) RawVec4, .{
     .decoration = .{ .location = 0 },
 });
 
-export fn main() callconv(.spirv_fragment) void {
-    const pixel = std.gpu.frag_coord;
+export fn main() callconv(.{ .spirv_fragment = .{} }) void {
+    const pixel = std.spirv.frag_coord;
     const uv = @Vector(2, f32){
         (pixel[0] / frame.viewport[0]) * 2.0 - 1.0,
         (1.0 - pixel[1] / frame.viewport[1]) * 2.0 - 1.0,
     };
     if (s3.screenRadiusSquared(uv) > 1.0) {
-        std.gpu.frag_depth = 1.0;
+        std.spirv.frag_depth = 1.0;
         out_color.* = in_color.*;
         return;
     }
@@ -36,8 +36,6 @@ export fn main() callconv(.spirv_fragment) void {
     const origin = s3.vector(frame.origin);
     const dir = s3.direction(uv, frame.viewport[3], s3.vector(frame.forward), s3.vector(frame.right), s3.vector(frame.up));
     const intersection = s3.greatSphereIntersection(origin, dir, s3.vector(in_plane.*));
-    std.gpu.frag_depth = (1.0 - intersection.cos_angle) * 0.5;
+    std.spirv.frag_depth = (1.0 - intersection.cos_angle) * 0.5;
     out_color.* = in_color.*;
 }
-
-pub const depth_replacing = std.gpu.executionMode(main, .depth_replacing);

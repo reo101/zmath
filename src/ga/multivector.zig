@@ -111,38 +111,14 @@ fn XyzwStorageFields(comptime T: type, comptime lane_count: usize) type {
 }
 
 fn SimdStorageFor(comptime T: type, comptime lane_count: usize) type {
-    return extern union {
+    return struct {
         raw: @Vector(lane_count, T),
         xyzw: XyzwStorageFields(T, lane_count),
     };
 }
 
-fn StorageFor(comptime T: type, comptime lane_count: usize) type {
-    return if (comptime canUseLaneWiseSimd(T, lane_count)) @Vector(lane_count, T) else [lane_count]T;
-}
-
-inline fn coeffsToStorage(comptime T: type, comptime lane_count: usize, coeffs: [lane_count]T) StorageFor(T, lane_count) {
-    return if (comptime canUseLaneWiseSimd(T, lane_count)) coeffsToSimd(T, lane_count, coeffs) else coeffs;
-}
-
-inline fn rawToStorage(comptime T: type, comptime lane_count: usize, raw: @Vector(lane_count, T)) StorageFor(T, lane_count) {
-    return if (comptime canUseLaneWiseSimd(T, lane_count)) raw else simdToCoeffs(T, lane_count, raw);
-}
-
-inline fn storageToCoeffs(comptime T: type, comptime lane_count: usize, storage: StorageFor(T, lane_count)) [lane_count]T {
-    return if (comptime canUseLaneWiseSimd(T, lane_count)) simdToCoeffs(T, lane_count, storage) else storage;
-}
-
-inline fn coeffsToSimd(comptime T: type, comptime lane_count: usize, coeffs: [lane_count]T) @Vector(lane_count, T) {
-    var vector: @Vector(lane_count, T) = undefined;
-    inline for (0..lane_count) |lane| {
-        vector[lane] = coeffs[lane];
-    }
-    return vector;
-}
-
-inline fn storageToSimd(comptime T: type, comptime lane_count: usize, storage: StorageFor(T, lane_count)) @Vector(lane_count, T) {
-    return if (comptime canUseLaneWiseSimd(T, lane_count)) storage else coeffsToSimd(T, lane_count, storage);
+inline fn storageToSimd(comptime T: type, comptime lane_count: usize, storage: [lane_count]T) @Vector(lane_count, T) {
+    return storage;
 }
 
 inline fn simdToCoeffs(comptime T: type, comptime lane_count: usize, vector: @Vector(lane_count, T)) [lane_count]T {
@@ -236,7 +212,7 @@ fn NamedPtrViewType(comptime T: type, comptime field_names: anytype) type {
 fn scalarProductSigns(comptime T: type, comptime masks: []const BladeMask, comptime sig: MetricSignature) [masks.len]T {
     var signs: [masks.len]T = undefined;
     inline for (masks, 0..) |mask, index| {
-        signs[index] = @intFromEnum(mask.geometricProductClassWithSignature(mask, sig));
+        signs[index] = @backingInt(mask.geometricProductClassWithSignature(mask, sig));
     }
     return signs;
 }
@@ -479,7 +455,8 @@ fn signedBladeImpl(
 ///
 /// This type is the core of the geometric algebra library. It provides:
 /// - **Storage**: Compact representation of multivectors as coefficients.
-///   Small floating-point carriers use Zig SIMD vectors directly.
+///   Small numeric carriers use aligned array storage on all targets, with
+///   lane-wise SIMD arithmetic at runtime and scalar arithmetic at comptime.
 /// - **Named Fields**: Value access to coefficients using basis-blade names
 ///   (e.g. `.named().e12`) for algebras with up to 5 dimensions.
 /// - **GA Operations**: Type-safe implementations of the geometric product (`.gp()`),
@@ -529,7 +506,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         /// Whether this multivector can use lane-wise SIMD in hot operations.
         pub const use_simd = canUseLaneWiseSimd(T, stored_blade_count);
         /// The underlying storage type.
-        pub const Storage = StorageFor(T, stored_blade_count);
+        pub const Storage = [stored_blade_count]T;
         /// Field names used by `Named` in coefficient storage order.
         /// Only populated for algebras with up to 5 dimensions.
         pub const named_field_names = if (dimensions <= 5) names: {
@@ -559,7 +536,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         pub const NamedPtrView = if (dimensions <= 5) NamedPtrViewType(T, named_field_names) else extern struct {};
 
         /// Compact storage of all represented coefficients.
-        coeffs: Storage,
+        coeffs: Storage align(if (use_simd) @alignOf(@Vector(stored_blade_count, T)) else @alignOf(Storage)),
 
         pub const Self = @This();
 
@@ -615,13 +592,18 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             }
         }
 
-        /// Returns a union view over raw SIMD storage and generated `x/y/z/w` fields.
+        /// Returns raw SIMD storage and a generated `x/y/z/w` value snapshot.
         pub inline fn storageView(self: Self) SimdStorageFor(T, stored_blade_count) {
             if (comptime isSpirvTarget()) {
-                @compileError("storageView() is unavailable on SPIR-V; union views generate invalid logical-pointer IR");
+                @compileError("storageView() is unavailable on SPIR-V; use swizzle() or named() instead");
             }
             comptime assertXyzwVectorCarrier();
-            return .{ .raw = storageToSimd(T, stored_blade_count, self.coeffs) };
+            const raw = storageToSimd(T, stored_blade_count, self.coeffs);
+            var xyzw: XyzwStorageFields(T, stored_blade_count) = undefined;
+            inline for (@typeInfo(@TypeOf(xyzw)).@"struct".field_names, 0..) |field_name, lane| {
+                @field(xyzw, field_name) = raw[lane];
+            }
+            return .{ .raw = raw, .xyzw = xyzw };
         }
 
         /// Returns a SIMD vector swizzle of `x`, `y`, `z`, and `w` components.
@@ -637,6 +619,17 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         /// components are rejected because a multivector cannot store the same
         /// basis blade twice.
         pub inline fn swizzleVector(self: Self, comptime pattern: []const u8) Rebind(&swizzleBladeMasks(dimensions, pattern)) {
+            if (@inComptime()) {
+                comptime assertXyzwVectorCarrier();
+                if (pattern.len == 0 or pattern.len > 4) {
+                    @compileError("swizzle pattern length must be between 1 and 4");
+                }
+                var coefficients: [pattern.len]T = undefined;
+                inline for (pattern, 0..) |component, index| {
+                    coefficients[index] = self.coeffs[@intCast(xyzwComponentIndex(stored_blade_count, component))];
+                }
+                return .init(coefficients);
+            }
             const lanes = self.swizzle(pattern);
             if (comptime canUseLaneWiseSimd(T, pattern.len)) {
                 return .initStorage(lanes);
@@ -674,25 +667,22 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
 
         /// Returns the coefficients as a standard array for indexing.
         pub inline fn coeffsArray(self: Self) [stored_blade_count]T {
-            return storageToCoeffs(T, stored_blade_count, self.coeffs);
+            return self.coeffs;
         }
 
         /// Initializes the multivector from coefficients in `blades` order.
         pub inline fn init(coeffs: [stored_blade_count]T) Self {
-            return .initStorage(coeffsToStorage(T, stored_blade_count, coeffs));
+            return .{ .coeffs = coeffs };
         }
 
         /// Initializes the multivector from its underlying coefficient storage.
         pub inline fn initStorage(coeffs: anytype) Self {
             const Coeffs = @TypeOf(coeffs);
             if (comptime Coeffs == Storage) {
-                return .{ .coeffs = coeffs };
+                return .init(coeffs);
             }
             if (comptime canUseLaneWiseSimd(T, stored_blade_count) and Coeffs == @Vector(stored_blade_count, T)) {
-                return .{ .coeffs = rawToStorage(T, stored_blade_count, coeffs) };
-            }
-            if (comptime Coeffs == [stored_blade_count]T) {
-                return .{ .coeffs = coeffsToStorage(T, stored_blade_count, coeffs) };
+                return .init(simdToCoeffs(T, stored_blade_count, coeffs));
             }
             @compileError("initStorage() expects this carrier's Storage, raw SIMD vector, or coefficient array");
         }
@@ -705,7 +695,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
         /// Constructs a compile-time signed blade using this carrier's coefficient type.
         pub fn signedBlade(comptime name: []const u8) Rebind(&.{blade_parsing.parseSignedBlade(name, dimensions, naming_options, true).mask}) {
             const spec = comptime blade_parsing.parseSignedBlade(name, dimensions, naming_options, true);
-            return Rebind(&.{spec.mask}).init(.{@intFromEnum(spec.sign)});
+            return Rebind(&.{spec.mask}).init(.{@backingInt(spec.sign)});
         }
 
         /// Constructs a compile-time signed blade using naming options.
@@ -714,7 +704,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             comptime opts: blade_parsing.SignedBladeNamingOptions,
         ) Rebind(&.{blade_parsing.parseSignedBlade(name, dimensions, opts, true).mask}) {
             const spec = comptime blade_parsing.parseSignedBlade(name, dimensions, opts, true);
-            return .init(.{@intFromEnum(spec.sign)});
+            return .init(.{@backingInt(spec.sign)});
         }
 
         /// Constructs a signed blade from runtime internal one-based basis indices.
@@ -787,9 +777,6 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
 
         inline fn coeffAtStoredIndex(self: Self, comptime index: usize) T {
             if (comptime index >= stored_blade_count) return coeffZero(T);
-            if (comptime canUseLaneWiseSimd(T, stored_blade_count)) {
-                return storageToSimd(T, stored_blade_count, self.coeffs)[index];
-            }
             return self.coeffs[index];
         }
 
@@ -877,7 +864,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
 
             var coeffs_array = self.coeffsArray();
             coeffs_array[index] = value;
-            self.coeffs = coeffsToStorage(T, stored_blade_count, coeffs_array);
+            self.coeffs = coeffs_array;
         }
 
         /// Sets the coefficient of a blade mask if it is stored in this carrier.
@@ -894,7 +881,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
 
         /// Returns `-self`.
         pub fn negate(self: Self) Self {
-            if (comptime canUseLaneWiseSimd(T, Self.stored_blade_count)) {
+            if (!@inComptime() and use_simd) {
                 const lanes = storageToSimd(T, Self.stored_blade_count, self.coeffs);
                 return .init(simdToCoeffs(T, Self.stored_blade_count, -lanes));
             }
@@ -908,7 +895,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
 
         /// Returns `self` scaled by `scalar`.
         pub fn scale(self: Self, scalar: T) Self {
-            if (comptime canUseLaneWiseSimd(T, Self.stored_blade_count)) {
+            if (!@inComptime() and use_simd) {
                 const lanes = storageToSimd(T, Self.stored_blade_count, self.coeffs);
                 return .init(simdToCoeffs(T, Self.stored_blade_count, lanes * @as(@Vector(Self.stored_blade_count, T), @splat(scalar))));
             }
@@ -922,7 +909,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
 
         /// Returns `self / scalar`.
         pub fn divide(self: Self, scalar: T) Self {
-            if (comptime canUseLaneWiseSimd(T, Self.stored_blade_count)) {
+            if (!@inComptime() and use_simd) {
                 const lanes = storageToSimd(T, Self.stored_blade_count, self.coeffs);
                 return .init(simdToCoeffs(T, Self.stored_blade_count, lanes / @as(@Vector(Self.stored_blade_count, T), @splat(scalar))));
             }
@@ -943,7 +930,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             comptime assertCompatibleMultivector(Self, Rhs);
 
             const Result = Rebind(&blade_ops.unionBladeMasks(dimensions, blade_masks, Rhs.blades));
-            if (comptime blade_ops.sameBladeSet(blade_masks, Rhs.blades) and canUseLaneWiseSimd(T, Self.stored_blade_count)) {
+            if (!@inComptime() and comptime (blade_ops.sameBladeSet(blade_masks, Rhs.blades) and use_simd)) {
                 const lhs_lanes = storageToSimd(T, Self.stored_blade_count, self.coeffs);
                 const rhs_lanes = storageToSimd(T, Self.stored_blade_count, rhs.coeffs);
                 return Result.init(simdToCoeffs(T, Self.stored_blade_count, lhs_lanes + rhs_lanes));
@@ -964,7 +951,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             comptime assertCompatibleMultivector(Self, Rhs);
 
             const Result = Rebind(&blade_ops.unionBladeMasks(dimensions, blade_masks, Rhs.blades));
-            if (comptime blade_ops.sameBladeSet(blade_masks, Rhs.blades) and canUseLaneWiseSimd(T, Self.stored_blade_count)) {
+            if (!@inComptime() and comptime (blade_ops.sameBladeSet(blade_masks, Rhs.blades) and use_simd)) {
                 const lhs_lanes = storageToSimd(T, Self.stored_blade_count, self.coeffs);
                 const rhs_lanes = storageToSimd(T, Self.stored_blade_count, rhs.coeffs);
                 return Result.init(simdToCoeffs(T, Self.stored_blade_count, lhs_lanes - rhs_lanes));
@@ -997,7 +984,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
                             if (comptime lhs_mask.toInt() ^ rhs_mask.toInt() != result_mask.toInt()) continue;
 
                             const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, sig);
-                            result_coeffs[result_index] += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @intFromEnum(sign);
+                            result_coeffs[result_index] += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @backingInt(sign);
                         }
                     }
                 }
@@ -1007,7 +994,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
                         const result_index = comptime Result.getBladeIndex(BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt()));
                         const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, sig);
 
-                        result_coeffs[result_index] += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @intFromEnum(sign);
+                        result_coeffs[result_index] += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @backingInt(sign);
                     }
                 }
             }
@@ -1032,7 +1019,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
                     if (comptime result_index == Result.missing_blade_index) continue;
 
                     const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, sig);
-                    result_coeffs[result_index] += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @intFromEnum(sign);
+                    result_coeffs[result_index] += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @backingInt(sign);
                 }
             }
 
@@ -1062,7 +1049,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
                     const result_index = comptime Result.getBladeIndex(BladeMask.init(lhs_mask.toInt() ^ rhs_mask.toInt()));
                     const sign = lhs_mask.geometricProductSign(rhs_mask);
                     std.debug.assert(result_index < Result.stored_blade_count);
-                    result_coeffs[result_index] += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @intFromEnum(sign);
+                    result_coeffs[result_index] += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @backingInt(sign);
                 }
             }
 
@@ -1087,7 +1074,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
                     const result_index = comptime Result.getBladeIndex(BladeMask.init(lhs_mask.bitset.xorWith(rhs_mask.bitset).mask));
                     const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, sig);
                     std.debug.assert(result_index < Result.stored_blade_count);
-                    result_coeffs[result_index] += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @intFromEnum(sign);
+                    result_coeffs[result_index] += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @backingInt(sign);
                 }
             }
 
@@ -1112,7 +1099,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
                     const result_index = comptime Result.getBladeIndex(BladeMask.init(lhs_mask.bitset.xorWith(rhs_mask.bitset).mask));
                     const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, sig);
                     std.debug.assert(result_index < Result.stored_blade_count);
-                    result_coeffs[result_index] += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @intFromEnum(sign);
+                    result_coeffs[result_index] += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @backingInt(sign);
                 }
             }
 
@@ -1155,7 +1142,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
                     const result_index = Result.getBladeIndex(result_mask);
                     const sign = lhs_mask.geometricProductClassWithSignature(rhs_mask, sig);
                     std.debug.assert(result_index < Result.stored_blade_count);
-                    result_coeffs[result_index] += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @intFromEnum(sign);
+                    result_coeffs[result_index] += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @backingInt(sign);
                 }
             }
 
@@ -1167,14 +1154,14 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             const Rhs = @TypeOf(rhs);
             comptime assertCompatibleMultivector(Self, Rhs);
 
-            if (comptime blade_ops.sameBladeSet(blade_masks, Rhs.blades) and canUseLaneWiseSimd(T, Self.stored_blade_count)) {
+            if (!@inComptime() and comptime (blade_ops.sameBladeSet(blade_masks, Rhs.blades) and use_simd)) {
                 const lhs_lanes = storageToSimd(T, Self.stored_blade_count, self.coeffs);
                 const rhs_lanes = storageToSimd(T, Self.stored_blade_count, rhs.coeffs);
                 if (comptime scalarProductSignsArePositive(blade_masks, sig)) {
                     return @reduce(.Add, lhs_lanes * rhs_lanes);
                 }
                 const signs = comptime scalarProductSigns(T, blade_masks, sig);
-                const sign_lanes = comptime coeffsToSimd(T, Self.stored_blade_count, signs);
+                const sign_lanes: @Vector(Self.stored_blade_count, T) = signs;
                 return @reduce(.Add, lhs_lanes * rhs_lanes * sign_lanes);
             }
 
@@ -1186,7 +1173,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
                 const rhs_index = Rhs.getBladeIndex(lhs_mask);
                 if (rhs_index == Rhs.missing_blade_index) continue;
 
-                result += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @intFromEnum(lhs_mask.geometricProductClassWithSignature(lhs_mask, sig));
+                result += lhs_coeffs[lhs_index] * rhs_coeffs[rhs_index] * @backingInt(lhs_mask.geometricProductClassWithSignature(lhs_mask, sig));
             }
 
             return result;
@@ -1290,7 +1277,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
                 const target_mask = BladeMask.init(mask.bitset.mask ^ pseudoscalar_mask);
                 const result_idx = Result.getBladeIndex(target_mask);
                 const sign = mask.geometricProductSign(BladeMask.init(pseudoscalar_mask));
-                result_coeffs[result_idx] = self_coeffs[i] * @intFromEnum(sign);
+                result_coeffs[result_idx] = self_coeffs[i] * @backingInt(sign);
             }
             return Result.init(result_coeffs);
         }
@@ -1321,7 +1308,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
                 const result_idx = comptime Result.getBladeIndex(target_mask);
                 const orientation_sign = comptime mask.geometricProductSign(target_mask);
                 const metric_sign = comptime metricSignForMask(T, sig, mask);
-                result_coeffs[result_idx] = self_coeffs[i] * @intFromEnum(orientation_sign) * metric_sign;
+                result_coeffs[result_idx] = self_coeffs[i] * @backingInt(orientation_sign) * metric_sign;
             }
             return Result.init(result_coeffs);
         }
@@ -1517,7 +1504,7 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             comptime assertCompatibleMultivector(Self, Rhs);
 
             if (comptime blade_ops.sameBladeSet(blade_masks, Rhs.blades)) {
-                if (comptime canUseLaneWiseSimd(T, Self.stored_blade_count)) {
+                if (!@inComptime() and use_simd) {
                     const lhs_lanes = storageToSimd(T, Self.stored_blade_count, self.coeffs);
                     const rhs_lanes = storageToSimd(T, Self.stored_blade_count, rhs.coeffs);
                     return @reduce(.And, lhs_lanes == rhs_lanes);
@@ -1919,7 +1906,7 @@ pub fn BasisWithNamingOptions(
         /// Returns a compile-time signed blade such as `e12` or `e_10_2`.
         pub fn signedBlade(comptime name: []const u8) Mv(&.{blade_parsing.parseSignedBlade(name, dimensions, naming_options, true).mask}) {
             const spec = comptime blade_parsing.parseSignedBlade(name, dimensions, naming_options, true);
-            return Mv(&.{spec.mask}).init(.{@intFromEnum(spec.sign)});
+            return Mv(&.{spec.mask}).init(.{@backingInt(spec.sign)});
         }
 
         /// Returns a compile-time signed blade under explicit naming options.
@@ -1928,7 +1915,7 @@ pub fn BasisWithNamingOptions(
             comptime override_options: blade_parsing.SignedBladeNamingOptions,
         ) Mv(&.{blade_parsing.parseSignedBlade(name, dimensions, override_options, true).mask}) {
             const spec = comptime blade_parsing.parseSignedBlade(name, dimensions, override_options, true);
-            return Mv(&.{spec.mask}).init(.{@intFromEnum(spec.sign)});
+            return Mv(&.{spec.mask}).init(.{@backingInt(spec.sign)});
         }
 
         /// Returns a runtime signed blade from internal one-based basis indices.
@@ -2266,7 +2253,8 @@ test "vga helpers enable SIMD operations when appropriate" {
     const v = Vec2.init(.{ 1.0, 2.0 });
 
     try std.testing.expect(Vec2.use_simd);
-    try std.testing.expectEqual(@Vector(2, f32), @TypeOf(v.coeffs));
+    try std.testing.expectEqual([2]f32, @TypeOf(v.coeffs));
+    try std.testing.expectEqual(@Vector(2, f32){ 2.0, 4.0 }, @as(@Vector(2, f32), v.scale(2.0).coeffs));
 }
 
 test "multivector magnitude and wedge helpers" {

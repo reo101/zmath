@@ -3,7 +3,7 @@ const std = @import("std");
 pub const SpirvShaderPair = struct {
     const Config = struct {
         target: std.Build.ResolvedTarget,
-        optimize: std.builtin.OptimizeMode,
+        optimize: std.lang.Optimize,
         use_llvm: bool,
         imports: []const std.Build.Module.Import,
         pair_step: *std.Build.Step,
@@ -56,32 +56,37 @@ pub const SpirvShaderPair = struct {
 
 fn optimizeSpirv(b: *std.Build, input: std.Build.LazyPath, basename: []const u8) std.Build.LazyPath {
     const disassemble = b.addSystemCommand(&.{"spirv-dis"});
-    disassemble.addFileArg(input);
+    disassemble.addFileArg2(input, .{});
     disassemble.addArg("-o");
-    const assembly = disassemble.addOutputFileArg(b.fmt("{s}.spvasm", .{basename}));
+    const assembly = disassemble.addOutputFileArg2(b.fmt("{s}.spvasm", .{basename}), .{});
 
     const patch = b.addSystemCommand(&.{"python3"});
-    patch.addFileArg(b.path("tools/patch_spirv_storage_blocks.py"));
-    patch.addFileArg(assembly);
+    patch.addFileArg2(b.path("tools/patch_spirv_storage_blocks.py"), .{});
+    patch.addFileArg2(assembly, .{});
     patch.addArg("-o");
-    const patched_assembly = patch.addOutputFileArg(b.fmt("{s}.patched.spvasm", .{basename}));
+    const patched_assembly = patch.addOutputFileArg2(b.fmt("{s}.patched.spvasm", .{basename}), .{});
 
     const assemble = b.addSystemCommand(&.{ "spirv-as", "--target-env", "vulkan1.2" });
-    assemble.addFileArg(patched_assembly);
+    assemble.addFileArg2(patched_assembly, .{});
     assemble.addArg("-o");
-    const patched = assemble.addOutputFileArg(b.fmt("{s}.patched.spv", .{basename}));
+    const patched = assemble.addOutputFileArg2(b.fmt("{s}.patched.spv", .{basename}), .{});
 
     const optimize_cmd = b.addSystemCommand(&.{
         "spirv-opt",
-        "--skip-validation",
         "--eliminate-dead-functions",
         "--eliminate-dead-code-aggressive",
         "--eliminate-local-single-block",
         "--eliminate-local-single-store",
     });
-    optimize_cmd.addFileArg(patched);
+    optimize_cmd.addFileArg2(patched, .{});
     optimize_cmd.addArg("-o");
-    return optimize_cmd.addOutputFileArg(basename);
+    const optimized = optimize_cmd.addOutputFileArg2(basename, .{});
+    const validate = b.addSystemCommand(&.{ "spirv-val", "--target-env", "vulkan1.2" });
+    validate.addFileArg2(optimized, .{});
+    validate.expectExitCode(0);
+    const validated = b.addWriteFiles();
+    validated.step.dependOn(&validate.step);
+    return validated.addCopyFile(optimized, basename);
 }
 
 pub const SpirvSteps = struct {
@@ -93,7 +98,7 @@ pub const SpirvSteps = struct {
 
 pub fn addSpirvSteps(
     b: *std.Build,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     use_llvm_spirv: bool,
     compare_spirv: bool,
 ) SpirvSteps {
@@ -180,6 +185,22 @@ pub fn addSpirvSteps(
         .imports = &spirv_shader_imports,
         .pair_step = spirv_step,
     });
+
+    const vector_interface = b.addObject(.{
+        .name = "vector-interface.vert",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/tests/vector_interface.vert.zig"),
+            .target = spirv_target,
+            .optimize = optimize,
+            .strip = true,
+            .imports = &spirv_shader_imports,
+        }),
+        .use_llvm = use_llvm_spirv,
+        .use_lld = false,
+    });
+    const spirv_check_step = b.step("spirv-check", "Validate typed vector interface loads, stores, and member access");
+    const checked_interface = optimizeSpirv(b, vector_interface.getEmittedBin(), "vector-interface.vert.spv");
+    checked_interface.addStepDependencies(spirv_check_step);
 
     const raw_shader_imports = [_]std.Build.Module.Import{.{
         .name = "build_options",

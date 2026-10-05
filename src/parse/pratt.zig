@@ -77,7 +77,7 @@ pub fn bindingPowerFor(tag: anytype, table: anytype) ?BindingPower {
 
     // Fallback to array indexing if it's a raw array
     if (comptime info == .array) {
-        return table[@intFromEnum(tag)];
+        return table[@backingInt(tag)];
     }
 
     @compileError("Unsupported table type: " ++ @typeName(TableType));

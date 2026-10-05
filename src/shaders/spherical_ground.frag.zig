@@ -44,15 +44,15 @@ fn groundColor(point: s3.Vector) RawVec4 {
     return .{ 46.0 / 255.0, 54.0 / 255.0, 50.0 / 255.0, 1.0 };
 }
 
-export fn main() callconv(.spirv_fragment) void {
-    const pixel = std.gpu.frag_coord;
+export fn main() callconv(.{ .spirv_fragment = .{} }) void {
+    const pixel = std.spirv.frag_coord;
     const uv = @Vector(2, f32){
         (pixel[0] / frame.viewport[0]) * 2.0 - 1.0,
         (1.0 - pixel[1] / frame.viewport[1]) * 2.0 - 1.0,
     };
     if (s3.screenRadiusSquared(uv) > 1.0) {
         out_color.* = .{ 4.0 / 255.0, 6.0 / 255.0, 10.0 / 255.0, 1.0 };
-        std.gpu.frag_depth = 1.0;
+        std.spirv.frag_depth = 1.0;
         return;
     }
 
@@ -63,7 +63,5 @@ export fn main() callconv(.spirv_fragment) void {
     const tangent = dir.scale(intersection.cos_angle).sub(origin.scale(intersection.sin_angle));
     const brightness = @abs(tangent.scalarProduct(s3.ground_normal));
     out_color.* = groundColor(point) * @as(RawVec4, @splat(0.6 + 0.4 * brightness));
-    std.gpu.frag_depth = (1.0 - intersection.cos_angle) * 0.5;
+    std.spirv.frag_depth = (1.0 - intersection.cos_angle) * 0.5;
 }
-
-pub const depth_replacing = std.gpu.executionMode(main, .depth_replacing);

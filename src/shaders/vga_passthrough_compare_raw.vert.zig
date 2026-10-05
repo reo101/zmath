@@ -1,5 +1,5 @@
 const std = @import("std");
-const gpu = std.gpu;
+const spirv = std.spirv;
 
 /// Vertex output color at location 0.
 pub const out_color = @extern(*addrspace(.output) @Vector(3, f32), .{
@@ -8,10 +8,10 @@ pub const out_color = @extern(*addrspace(.output) @Vector(3, f32), .{
 });
 
 /// Built-in output for clip-space position.
-pub const gl_position = gpu.position_out;
+pub const gl_position = spirv.position_out;
 
 export fn main() callconv(.spirv_vertex) void {
-    const pos: @Vector(2, f32) = switch (gpu.vertex_index) {
+    const pos: @Vector(2, f32) = switch (spirv.vertex_index) {
         0 => .{ -0.85, -0.85 },
         1 => .{ 0.85, -0.85 },
         else => .{ 0.0, 0.85 },

@@ -1,5 +1,6 @@
 const std = @import("std");
 const build_spirv = @import("build_spirv.zig");
+const Translator = @import("translate_c").Translator;
 
 const Modules = struct {
     meta: *std.Build.Module,
@@ -33,21 +34,21 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the usage example");
     const run_cmd = b.addRunArtifact(example);
     run_step.dependOn(&run_cmd.step);
-    if (b.args) |args| run_cmd.addArgs(args);
+    run_cmd.addPassthruArgs();
 
     const bench = b.addExecutable(.{
         .name = "zmath-bench",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/bench.zig"),
             .target = target,
-            .optimize = .ReleaseFast,
+            .optimize = .fast,
             .imports = &.{.{ .name = "zmath", .module = modules.zmath }},
         }),
     });
 
-    const bench_step = b.step("bench-simd", "Run SIMD micro-benchmarks (ReleaseFast)");
+    const bench_step = b.step("bench-simd", "Run SIMD micro-benchmarks (fast)");
     const bench_run = b.addRunArtifact(bench);
-    if (b.args) |args| bench_run.addArgs(args);
+    bench_run.addPassthruArgs();
     bench_step.dependOn(&bench_run.step);
 
     addSphericalGameToolSteps(b, target, modules);
@@ -129,7 +130,7 @@ fn addSphericalGameToolSteps(
         .root_module = b.createModule(.{
             .root_source_file = b.path("tools/generate_spherical_world.zig"),
             .target = target,
-            .optimize = .ReleaseFast,
+            .optimize = .fast,
             .imports = &.{.{ .name = "spherical_scene", .module = modules.spherical_scene }},
         }),
     });
@@ -140,25 +141,32 @@ fn addSphericalGameToolSteps(
 fn addWorldsDemoSteps(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     modules: Modules,
 ) void {
+    const raylib_translate: Translator = .init(b.dependency("translate_c", .{}), .{
+        .c_source_file = b.path("tools/raylib.h"),
+        .target = target,
+        .optimize = if (optimize == .debug) .fast else optimize,
+    });
+    addEnvIncludePaths(b, &raylib_translate, "C_INCLUDE_PATH");
+    addEnvIncludePaths(b, &raylib_translate, "CPATH");
+
     const exe = b.addExecutable(.{
         .name = "zmath-demo-worlds",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/demos/worlds/main.zig"),
             .target = target,
             // Per-pixel ray tracing needs optimization; Debug is unusable.
-            .optimize = if (optimize == .Debug) .ReleaseFast else optimize,
+            .optimize = if (optimize == .debug) .fast else optimize,
             .link_libc = true,
             .imports = &.{
                 .{ .name = "zmath", .module = modules.zmath },
                 .{ .name = "spherical_scene", .module = modules.spherical_scene },
+                .{ .name = "raylib", .module = raylib_translate.mod },
             },
         }),
     });
-    addEnvModuleIncludePaths(b, exe.root_module, "C_INCLUDE_PATH");
-    addEnvModuleIncludePaths(b, exe.root_module, "CPATH");
     exe.root_module.linkSystemLibrary("raylib", .{});
 
     const build_step = b.step("demo-worlds-build", "Build the raylib worlds demo (euclidean/isometric/spherical/hyperbolic)");
@@ -171,20 +179,20 @@ fn addWorldsDemoSteps(
 fn addLocalVulkanPlaygroundSteps(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     use_llvm_spirv: bool,
     compare_spirv: bool,
     modules: Modules,
 ) void {
     const spirv_steps = build_spirv.addSpirvSteps(b, optimize, use_llvm_spirv, compare_spirv);
 
-    const vulkan_glfw_translate = b.addTranslateC(.{
-        .root_source_file = b.path("tools/vulkan_glfw.h"),
+    const vulkan_glfw_translate: Translator = .init(b.dependency("translate_c", .{}), .{
+        .c_source_file = b.path("tools/vulkan_glfw.h"),
         .target = target,
         .optimize = optimize,
     });
-    addEnvIncludePaths(b, vulkan_glfw_translate, "C_INCLUDE_PATH");
-    addEnvIncludePaths(b, vulkan_glfw_translate, "CPATH");
+    addEnvIncludePaths(b, &vulkan_glfw_translate, "C_INCLUDE_PATH");
+    addEnvIncludePaths(b, &vulkan_glfw_translate, "CPATH");
 
     const shader_playground_exe = b.addExecutable(.{
         .name = "zmath-shader-playground",
@@ -195,7 +203,7 @@ fn addLocalVulkanPlaygroundSteps(
             .link_libc = true,
             .imports = &.{ .{
                 .name = "vulkan_glfw",
-                .module = vulkan_glfw_translate.createModule(),
+                .module = vulkan_glfw_translate.mod,
             }, .{
                 .name = "object_scene",
                 .module = modules.object_scene,
@@ -215,7 +223,7 @@ fn addLocalVulkanPlaygroundSteps(
     run_raw.step.dependOn(spirv_steps.raw);
     const raw_step = b.step("shader-playground", "Run the Vulkan SPIR-V shader playground with raw shaders");
     raw_step.dependOn(&run_raw.step);
-    if (b.args) |args| run_raw.addArgs(args);
+    run_raw.addPassthruArgs();
 
     const run_spherical = b.addRunArtifact(shader_playground_exe);
     run_spherical.step.dependOn(spirv_steps.spherical);
@@ -225,7 +233,7 @@ fn addLocalVulkanPlaygroundSteps(
         "zig-out/shaders/spherical_mesh.vert.spv",
         "zig-out/shaders/spherical_mesh.frag.spv",
     });
-    if (b.args) |args| run_spherical.addArgs(args);
+    run_spherical.addPassthruArgs();
     const spherical_step = b.step("shader-playground-spherical", "Run the Zig-authored S3 rasterized spherical scene in Vulkan");
     spherical_step.dependOn(&run_spherical.step);
 
@@ -248,7 +256,7 @@ fn addLocalVulkanPlaygroundSteps(
 fn addTests(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     modules: Modules,
     example: *std.Build.Step.Compile,
     fuzz_use_llvm: bool,
@@ -366,20 +374,11 @@ fn addTests(
     fuzz_ga_step.dependOn(&b.addRunArtifact(ga_laws_tests).step);
 }
 
-fn addEnvIncludePaths(b: *std.Build, translate_c: *std.Build.Step.TranslateC, name: []const u8) void {
+fn addEnvIncludePaths(b: *std.Build, translate_c: *const Translator, name: []const u8) void {
     const value = b.graph.environ_map.get(name) orelse return;
     var it = std.mem.splitScalar(u8, value, ':');
     while (it.next()) |path| {
         if (path.len == 0) continue;
-        translate_c.addSystemIncludePath(.{ .cwd_relative = path });
-    }
-}
-
-fn addEnvModuleIncludePaths(b: *std.Build, module: *std.Build.Module, name: []const u8) void {
-    const value = b.graph.environ_map.get(name) orelse return;
-    var it = std.mem.splitScalar(u8, value, ':');
-    while (it.next()) |path| {
-        if (path.len == 0) continue;
-        module.addSystemIncludePath(.{ .cwd_relative = path });
+        translate_c.addSystemIncludePath(b.graph.cwdRelativePath(path));
     }
 }

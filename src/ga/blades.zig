@@ -6,7 +6,7 @@ const parser = @import("blade_parsing.zig");
 ///
 /// Bit `0` corresponds to `e1`, bit `1` to `e2`, and so on.
 pub const BladeMaskBytes = 2;
-pub const BladeMaskBitSet = std.bit_set.IntegerBitSet(BladeMaskBytes * 8);
+pub const BladeMaskBitSet = std.bit_set.Integer(BladeMaskBytes * 8);
 pub const BladeMaskInt = BladeMaskBitSet.MaskInt;
 
 /// Utilities for working with blade masks.
@@ -14,8 +14,8 @@ pub const BladeMask = struct {
     bitset: BladeMaskBitSet,
 
     comptime {
-        const this_size = @bitSizeOf(@This());
-        const target_size = @bitSizeOf(BladeMaskInt);
+        const this_size = @sizeOf(@This());
+        const target_size = @sizeOf(BladeMaskInt);
         if (this_size != target_size) {
             @compileError(std.fmt.comptimePrint("BladeMask must be exactly the same size as its underlying integer representation ({} != {})", .{ this_size, target_size }));
         }
@@ -303,8 +303,8 @@ pub const BasisIndexSpans = struct {
 
     pub fn mappedBasisCount(self: BasisIndexSpans) usize {
         var count: usize = 0;
-        inline for (std.meta.fields(ByClass)) |field| {
-            if (@field(self.by_class, field.name)) |span| {
+        inline for (@typeInfo(ByClass).@"struct".field_names) |field_name| {
+            if (@field(self.by_class, field_name)) |span| {
                 count += span.len();
             }
         }
@@ -567,7 +567,7 @@ pub const MetricSignature = struct {
 };
 
 /// Largest ambient dimensions that fits inside `BladeMask`.
-pub const max_supported_basis_vectors = @bitSizeOf(BladeMask) - 1;
+pub const max_supported_basis_vectors = @bitSizeOf(BladeMaskInt) - 1;
 
 /// Errors that can arise while rendering a blade mask through a writer interface.
 pub const WriteBladeMaskError = std.Io.Writer.Error || error{DimensionTooLarge};
@@ -1182,7 +1182,7 @@ pub fn bladeIndexByMask(
     validateDimensions(dimensions);
     @setEvalBranchQuota(1_000_000);
 
-    var result = [_]usize{blade_masks.len} ** bladeCount(dimensions);
+    var result: [bladeCount(dimensions)]usize = @splat(blade_masks.len);
     inline for (blade_masks, 0..) |mask, index| {
         result[mask.index()] = index;
     }
@@ -1273,9 +1273,9 @@ test "advanceFixedPopcountMask reports zero and high-bit transition behavior" {
     try std.testing.expect(!advanceFixedPopcountMask(&zero));
     try std.testing.expectEqual(BladeMask.init(0), zero);
 
-    var crossing_high_bit: BladeMask = .init((@as(BladeMaskInt, 1) << (@bitSizeOf(BladeMask) - 2)) | 0b1);
+    var crossing_high_bit: BladeMask = .init((@as(BladeMaskInt, 1) << (@bitSizeOf(BladeMaskInt) - 2)) | 0b1);
     try std.testing.expect(advanceFixedPopcountMask(&crossing_high_bit));
-    try std.testing.expectEqual(BladeMask.init((@as(BladeMaskInt, 1) << (@bitSizeOf(BladeMask) - 2)) | 0b10), crossing_high_bit);
+    try std.testing.expectEqual(BladeMask.init((@as(BladeMaskInt, 1) << (@bitSizeOf(BladeMaskInt) - 2)) | 0b10), crossing_high_bit);
     try std.testing.expectEqual(@as(usize, 2), bladeGrade(crossing_high_bit));
 }
 

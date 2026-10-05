@@ -129,7 +129,7 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
             comptime name: []const u8,
         ) Self.Multivector(T, &.{blade_parsing.parseSignedBlade(name, dimensions, naming, true).mask}) {
             const spec = comptime blade_parsing.parseSignedBlade(name, dimensions, naming, true);
-            return Self.basisBlade(T, spec.mask).scale(@intFromEnum(spec.sign));
+            return Self.basisBlade(T, spec.mask).scale(@backingInt(spec.sign));
         }
 
         /// Constructs a signed blade from internal basis indices.

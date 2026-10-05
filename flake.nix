@@ -17,7 +17,7 @@
     };
 
     zls = {
-      url = "github:zigtools/zls/0.16.0";
+      url = "github:zigtools/zls/master";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.zig-flake.follows = "zig-flake";
     };
@@ -38,7 +38,7 @@
             ...
           }:
           let
-            zig = inputs'.zig-flake.packages.zig_0_16_0;
+            zig = inputs'.zig-flake.packages.zig_0_17_0;
             nativeGraphicsInputs = [
               pkgs.glfw
               pkgs.libGL

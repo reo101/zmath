@@ -8,10 +8,7 @@ const std = @import("std");
 const space = @import("space.zig");
 const s3scene = @import("spherical_scene");
 
-const rl = @cImport({
-    @cInclude("stdlib.h");
-    @cInclude("raylib.h");
-});
+const rl = @import("raylib");
 
 const render_width = 960;
 const render_height = 540;
@@ -84,8 +81,8 @@ pub fn main() void {
 }
 
 fn kindFromName(name: []const u8) ?space.Kind {
-    inline for (@typeInfo(space.Kind).@"enum".fields) |field| {
-        if (std.mem.eql(u8, name, field.name)) return @field(space.Kind, field.name);
+    inline for (@typeInfo(space.Kind).@"enum".field_names) |field_name| {
+        if (std.mem.eql(u8, name, field_name)) return @field(space.Kind, field_name);
     }
     return null;
 }
@@ -140,8 +137,8 @@ fn update(world: *space.Mode, dt: f32) void {
         } else if (pending == rl.KEY_TAB) {
             // Layout-independent cycle: Tab survives keymaps that remap
             // digits (non-QWERTY layouts, kanata-style remappers, WMs).
-            const current: usize = @intFromEnum(std.meta.activeTag(world.*));
-            switchToWorld(world, @enumFromInt((current + 1) % 4));
+            const current: usize = @backingInt(std.meta.activeTag(world.*));
+            switchToWorld(world, @fromBackingInt(@intCast((current + 1) % 4)));
         } else if (pending == rl.KEY_R) {
             world.* = space.Mode.init(std.meta.activeTag(world.*));
         } else if (rl.getenv("ZMATH_DEMO_KEYLOG") != null) {
@@ -310,21 +307,22 @@ fn drawHud(world: *space.Mode) void {
     const stats = space.sampleStats(world.*, 64, 36);
 
     var title_buffer: [128]u8 = undefined;
-    const title = std.fmt.bufPrintZ(&title_buffer, "worlds demo - {s}", .{world.label()}) catch return;
+    const title = std.mem.printSentinel(&title_buffer, "worlds demo - {s}", .{world.label()}, 0) catch return;
 
     rl.DrawRectangle(16, 16, 660, 92, color(4, 7, 12, 205));
     rl.DrawRectangleLines(16, 16, 660, 92, color(130, 155, 180, 110));
     rl.DrawText(title, 30, 27, 22, color(246, 247, 241, 255));
 
     var hint_buffer: [128]u8 = undefined;
-    const hint = std.fmt.bufPrintZ(&hint_buffer, "{s}", .{world.hint()}) catch return;
+    const hint = std.mem.printSentinel(&hint_buffer, "{s}", .{world.hint()}, 0) catch return;
     rl.DrawText(hint, 30, 57, 16, color(190, 204, 220, 235));
 
     var buffer: [160]u8 = undefined;
-    const status = std.fmt.bufPrintZ(
+    const status = std.mem.printSentinel(
         &buffer,
         "faces {d}/5   frame cube {d:.0}%   {d} fps",
         .{ stats.visibleFaceCount(), stats.cubeFraction() * 100.0, rl.GetFPS() },
+        0,
     ) catch return;
     rl.DrawText(status, 30, 82, 16, color(150, 174, 201, 230));
 

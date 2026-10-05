@@ -21,8 +21,8 @@ pub fn hasDecls(comptime T: type, comptime names: []const []const u8) bool {
 pub fn hasField(comptime T: type, comptime name: []const u8) bool {
     return switch (@typeInfo(T)) {
         inline .@"struct", .@"union" => |info| blk: {
-            inline for (info.fields) |field| {
-                if (std.mem.eql(u8, field.name, name)) break :blk true;
+            inline for (info.field_names) |field_name| {
+                if (std.mem.eql(u8, field_name, name)) break :blk true;
             }
             break :blk false;
         },
@@ -50,8 +50,8 @@ pub fn hasDeclTypeOneOf(comptime T: type, comptime name: []const u8, comptime Ex
 pub fn hasFieldType(comptime T: type, comptime name: []const u8, comptime Expected: type) bool {
     return switch (@typeInfo(T)) {
         inline .@"struct", .@"union" => |info| blk: {
-            inline for (info.fields) |field| {
-                if (std.mem.eql(u8, field.name, name)) break :blk isType(field.type, Expected);
+            inline for (info.field_names, info.field_types) |field_name, field_type| {
+                if (std.mem.eql(u8, field_name, name)) break :blk isType(field_type, Expected);
             }
             break :blk false;
         },
@@ -77,8 +77,8 @@ pub fn isErrorSetType(comptime T: type) bool {
 fn fieldType(comptime T: type, comptime name: []const u8) type {
     return switch (@typeInfo(T)) {
         inline .@"struct", .@"union" => |info| blk: {
-            inline for (info.fields) |field| {
-                if (std.mem.eql(u8, field.name, name)) break :blk field.type;
+            inline for (info.field_names, info.field_types) |field_name, field_type| {
+                if (std.mem.eql(u8, field_name, name)) break :blk field_type;
             }
             unreachable;
         },

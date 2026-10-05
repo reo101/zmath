@@ -53,8 +53,10 @@ CPU, rewrite device-local meshes, wait for all frames, or rerecord commands.
 
 `src/shaders/spherical_ga.zig` is the ABI adapter:
 
-- Raw `@Vector` values are restricted to vertex attributes, UBO fields, colors,
-  and SPIR-V built-ins.
+- Raw `@Vector` values are restricted to vertex attributes, shader UBO fields,
+  colors, and SPIR-V built-ins. Native frame and vertex upload records retain
+  GA carriers for geometric fields and arrays for viewport and color data.
+  Compile-time checks enforce the existing upload sizes and field offsets.
 - Attributes and frame data convert immediately to zmath S³ vectors.
 - Shared projection, screen-direction, and great-sphere-intersection kernels
   come from `geometry.spherical_game`.
@@ -74,9 +76,12 @@ extent, so the spherical screen fills the current framebuffer.
 
 - `zig build test`: GA, scene, object-format, and renderer-support tests.
 - `zig build demo-spherical-check`: S³ scene geometry tests only.
-- `zig build spirv-spherical`: Zig-authored spherical SPIR-V modules.
+- `zig build spirv-spherical`: Zig-authored spherical SPIR-V modules, validated
+  against Vulkan 1.2 before installation.
 - `spirv-val --target-env vulkan1.2 zig-out/shaders/spherical_*.spv`:
   Vulkan module validation.
+- `zig build spirv-check`: direct carrier interface load/store/member-access
+  regression checks.
 - `zig build demo-spherical -- --benchmark N`: Vulkan renderer benchmark.
 
 The CPU tracer remains deliberately richer than the raster path. It validates

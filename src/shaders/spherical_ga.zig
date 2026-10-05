@@ -9,9 +9,7 @@ pub const FrameData = extern struct {
     up: RawVec4,
     forward: RawVec4,
 };
-// Zig 0.16 currently lowers these named fields in the opposite order.
-// This spelling produces Vulkan descriptor set 0, binding 1.
-pub const frame_descriptor_decoration: std.builtin.ExternOptions.Decoration = .{ .descriptor = .{ .set = 1, .binding = 0 } };
+pub const frame_descriptor_decoration: std.lang.ExternOptions.Decoration = .{ .descriptor = .{ .set = 0, .binding = 1 } };
 pub const E4 = spherical.h;
 pub const Vector = spherical.Point;
 pub const ground_normal = E4.Basis.e(3).cast(Vector);

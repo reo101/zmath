@@ -79,10 +79,10 @@ fn ensureArgsCompatible(comptime Args: type, comptime placeholder_names: []const
     const info = @typeInfo(Args).@"struct";
 
     if (info.is_tuple) {
-        if (info.fields.len != placeholder_names.len) {
+        if (info.field_names.len != placeholder_names.len) {
             @compileError(std.fmt.comptimePrint(
                 "expression expects {d} placeholder argument(s) but tuple has {d}",
-                .{ placeholder_names.len, info.fields.len },
+                .{ placeholder_names.len, info.field_names.len },
             ));
         }
         return;
@@ -119,8 +119,8 @@ else
 }
 
 fn hasRuntimePlaceholderField(comptime Args: type, name: []const u8) bool {
-    inline for (@typeInfo(Args).@"struct".fields) |field| {
-        if (std.mem.eql(u8, field.name, name)) return true;
+    inline for (@typeInfo(Args).@"struct".field_names) |field_name| {
+        if (std.mem.eql(u8, field_name, name)) return true;
     }
     return false;
 }
@@ -130,7 +130,7 @@ fn ensureArgsCompatibleRuntime(comptime Args: type, placeholder_names: []const [
     const info = @typeInfo(Args).@"struct";
 
     if (info.is_tuple) {
-        if (info.fields.len != placeholder_names.len) return error.PlaceholderCountMismatch;
+        if (info.field_names.len != placeholder_names.len) return error.PlaceholderCountMismatch;
         return;
     }
 
@@ -177,16 +177,16 @@ fn placeholderArgRuntimeToFull(
 
     const info = @typeInfo(Args).@"struct";
     if (info.is_tuple) {
-        inline for (info.fields, 0..) |field, index| {
-            if (index == slot) return promoteArg(T, sig, @field(args, field.name));
+        inline for (info.field_names, 0..) |field_name, index| {
+            if (index == slot) return promoteArg(T, sig, @field(args, field_name));
         }
         return error.PlaceholderCountMismatch;
     }
 
     const name = placeholder_names[slot];
-    inline for (info.fields) |field| {
-        if (std.mem.eql(u8, field.name, name)) {
-            return promoteArg(T, sig, @field(args, field.name));
+    inline for (info.field_names) |field_name| {
+        if (std.mem.eql(u8, field_name, name)) {
+            return promoteArg(T, sig, @field(args, field_name));
         }
     }
     return error.MissingPlaceholderArgument;
@@ -259,8 +259,8 @@ fn ConstantValue(comptime T: type, comptime sig: blades.MetricSignature) type {
 
         fn coeffFromSign(sign: blade_parsing.OrientationSign) T {
             return switch (@typeInfo(T)) {
-                .float, .comptime_float => @as(T, @floatFromInt(@intFromEnum(sign))),
-                .int, .comptime_int => @as(T, @intCast(@intFromEnum(sign))),
+                .float, .comptime_float => @as(T, @floatFromInt(@backingInt(sign))),
+                .int, .comptime_int => @as(T, @intCast(@backingInt(sign))),
                 else => unreachable,
             };
         }

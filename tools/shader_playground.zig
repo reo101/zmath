@@ -24,13 +24,12 @@ const SphericalFrame = struct {
     forward: Direction,
 };
 
-const RawVec4 = @Vector(4, f32);
 const FrameGpu = extern struct {
-    viewport: RawVec4,
-    origin: RawVec4,
-    right: RawVec4,
-    up: RawVec4,
-    forward: RawVec4,
+    viewport: [4]f32,
+    origin: Point,
+    right: Direction,
+    up: Direction,
+    forward: Direction,
 };
 
 const ObjectGpuBlock = extern struct {
@@ -49,10 +48,21 @@ const Point = spherical_scene.Point;
 const Direction = spherical_scene.Direction;
 
 const Vertex = extern struct {
-    point: RawVec4,
-    color: RawVec4,
-    plane: RawVec4,
+    point: Point,
+    color: [4]f32,
+    plane: Point,
 };
+
+comptime {
+    std.debug.assert(@sizeOf(FrameGpu) == 80);
+    for (.{ "viewport", "origin", "right", "up", "forward" }, 0..) |field, index| {
+        std.debug.assert(@offsetOf(FrameGpu, field) == index * 16);
+    }
+    std.debug.assert(@sizeOf(Vertex) == 48);
+    for (.{ "point", "color", "plane" }, 0..) |field, index| {
+        std.debug.assert(@offsetOf(Vertex, field) == index * 16);
+    }
+}
 
 const MeshData = struct {
     vertices: []Vertex,
@@ -229,11 +239,12 @@ fn buildMeshData(allocator: std.mem.Allocator, triangles: []const MeshTriangle) 
     for (triangles) |triangle| {
         for (triangle.points) |point| {
             const vertex = Vertex{
-                .point = @bitCast(point.coeffsArray()),
-                .color = @bitCast(triangle.color),
-                .plane = @bitCast(triangle.plane.coeffsArray()),
+                .point = point,
+                .color = triangle.color,
+                .plane = triangle.plane,
             };
-            const entry = try vertex_indices.getOrPut(@bitCast(vertex));
+            const key: *const [12]u32 = @ptrCast(&vertex);
+            const entry = try vertex_indices.getOrPut(key.*);
             if (!entry.found_existing) {
                 entry.value_ptr.* = @intCast(vertices.items.len);
                 try vertices.append(allocator, vertex);
@@ -608,9 +619,9 @@ const App = struct {
     descriptor_sets: []c.VkDescriptorSet = &.{},
     images_in_flight: []c.VkFence = &.{},
 
-    image_available: [max_frames_in_flight]c.VkSemaphore = [_]c.VkSemaphore{null} ** max_frames_in_flight,
-    render_finished: [max_frames_in_flight]c.VkSemaphore = [_]c.VkSemaphore{null} ** max_frames_in_flight,
-    in_flight: [max_frames_in_flight]c.VkFence = [_]c.VkFence{null} ** max_frames_in_flight,
+    image_available: [max_frames_in_flight]c.VkSemaphore = @splat(null),
+    render_finished: [max_frames_in_flight]c.VkSemaphore = @splat(null),
+    in_flight: [max_frames_in_flight]c.VkFence = @splat(null),
     current_frame: usize = 0,
 
     framebuffer_resized: bool = false,
@@ -1710,10 +1721,10 @@ const App = struct {
         const frame = self.currentFrame();
         const gpu_frame = FrameGpu{
             .viewport = .{ frame.width, frame.height, frame.radius, frame.tan_half_fov },
-            .origin = @bitCast(frame.origin.coeffsArray()),
-            .right = @bitCast(frame.right.coeffsArray()),
-            .up = @bitCast(frame.up.coeffsArray()),
-            .forward = @bitCast(frame.forward.coeffsArray()),
+            .origin = frame.origin,
+            .right = frame.right,
+            .up = frame.up,
+            .forward = frame.forward,
         };
         const offset = self.frame_stride * image_index;
         var mapped: ?*anyopaque = null;

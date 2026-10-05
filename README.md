@@ -13,7 +13,8 @@ produce it.
 
 ## Requirements
 
-Zig 0.16.0 or newer.
+Zig 0.17.0 or newer. `nix develop` provides the pinned compiler and a
+0.17-compatible ZLS development revision.
 
 ## Install
 
@@ -109,6 +110,23 @@ pub fn main() !void {
 Use `P3.prepare(motor)` when applying one motor to a batch of points or
 directions.
 
+## Carrier storage
+
+Carriers remain `extern struct` wrappers with coefficient arrays on all targets.
+Small numeric carriers retain vector alignment and explicit `@Vector` arithmetic
+at runtime; comptime operations use scalar/array paths. `Storage` and `coeffs`
+are arrays on both native and SPIR-V targets. `storageView()` returns independent
+raw-vector and named value snapshots, not a type-punning union.
+
+Typed shader interfaces such as `@extern(*addrspace(.output) Vec(4), ...)`
+remain supported through this project's SPIR-V build steps. The postpass repairs
+Zig's `Position` decoration into a float4 interface-block member, converting
+between the carrier's array and the interface vector. Every shader is checked
+with `spirv-val`. This preserves the carrier wrapper, not type
+identity with a raw SPIR-V vector. Direct loads, stores, and member accesses are
+supported; passing the interface pointer to other functions is not covered by
+the workaround.
+
 ## Conventions
 
 - `gp()` / `geometricProduct()` is the Clifford product.
@@ -126,7 +144,7 @@ syntax, RGA operations, and the PGA model.
 ```sh
 zig build test                         # all tests
 zig build run                          # usage example
-zig build bench-simd                   # full ReleaseFast micro-benchmark suite
+zig build bench-simd                   # full fast-mode micro-benchmark suite
 zig build bench-simd -- vec3           # one benchmark case
 zig build bench-simd -- rotate2
 zig build bench-simd -- rotor3
@@ -151,6 +169,7 @@ zig build demo-worlds-check            # headless worlds checks
 zig build spirv-vga                    # build GA SPIR-V shaders
 zig build spirv-raw                    # build raw-SPIR-V baselines
 zig build spirv-compare                # compare shader sizes
+zig build spirv-check                  # validate typed vector interface operations
 zig build spirv-spherical              # build Zig-authored S³ shaders
 zig build shader-playground-build      # build the Vulkan shader playground
 zig build shader-playground            # run raw shaders

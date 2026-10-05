@@ -236,7 +236,7 @@ pub fn debugAssertRotor(rotor: anytype, epsilon: @TypeOf(rotor).Coefficient) voi
     const RotorType = @TypeOf(rotor);
     comptime assertFloatRotor(RotorType);
 
-    if (@import("builtin").mode != .Debug) return;
+    if (@import("builtin").mode != .debug) return;
 
     const identity = rotor.gp(rotor.reverse());
     inline for (RotorType.blades) |mask| {

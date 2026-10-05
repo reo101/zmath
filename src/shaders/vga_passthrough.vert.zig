@@ -1,5 +1,5 @@
 const std = @import("std");
-const gpu = std.gpu;
+const spirv = std.spirv;
 const ga = @import("ga");
 
 fn Vec(n: usize) type {
@@ -16,7 +16,7 @@ pub const gl_position = @extern(*addrspace(.output) Vec(4), .{
 });
 
 export fn main() callconv(.spirv_vertex) void {
-    const position: Vec(2) = .initStorage(@as(@Vector(2, f32), switch (gpu.vertex_index) {
+    const position: Vec(2) = .initStorage(@as(@Vector(2, f32), switch (spirv.vertex_index) {
         0 => .{ -0.85, -0.85 },
         1 => .{ 0.85, -0.85 },
         else => .{ 0.0, 0.85 },
