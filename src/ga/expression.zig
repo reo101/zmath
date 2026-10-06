@@ -35,9 +35,7 @@ fn coerceScalar(comptime T: type, value: anytype) T {
     };
 }
 
-// NOTE: `Scalar.init(.{v}).cast(Full)` compiles down to the same code as
-// `Full.zero()` + raw `coeffs[0] = v` — LLVM eliminates the intermediate
-// struct and cast loop entirely.
+// Promote sparse scalar constants into the full expression-evaluation carrier.
 fn scalarConstant(comptime T: type, comptime sig: blades.MetricSignature, value: T) multivector.FullMultivector(T, sig) {
     return multivector.Scalar(T, sig).init(.{value}).cast(multivector.FullMultivector(T, sig));
 }
@@ -217,7 +215,14 @@ fn parseScalarLiteral(comptime T: type, comptime token: []const u8) T {
     };
 }
 
+/// Default runtime limits, including nodes discarded by constant folding.
+pub const runtime_source_limit = 64 * 1024;
+pub const runtime_node_limit = 4096;
+pub const runtime_depth_limit = 128;
+
 pub const RuntimeCompileError = blade_parsing.SignedBladeParseError || error{
+    ExpressionTooLarge,
+    ExpressionTooDeep,
     UnexpectedToken,
     UnsupportedExponent,
     UnterminatedPlaceholder,
@@ -486,13 +491,15 @@ fn ParserTypes(comptime T: type, comptime sig: blades.MetricSignature) type {
             constant: ?Const = null,
             scalar: ?T = null,
             is_zero: bool = false,
+            eval_depth: usize = 1,
         };
     };
 }
 
 fn parserErrorMessage(err: (RuntimeCompileError || error{ExpressionTooLarge})) []const u8 {
     return switch (err) {
-        error.ExpressionTooLarge => "expression is too large",
+        error.ExpressionTooLarge => "expression exceeds its source or node limit",
+        error.ExpressionTooDeep => "expression exceeds its parsing or evaluation depth limit",
         error.UnexpectedToken => "unexpected token",
         error.UnsupportedExponent => "only postfix `^-1` is supported after `^`",
         error.UnterminatedPlaceholder => "unterminated placeholder",
@@ -1246,7 +1253,7 @@ fn ParserPrattContext(
 
             return switch (operator_kind) {
                 .implicit_gp => blk: {
-                    const rhs = try pratt.parseExpression(Self, self, bp.right);
+                    const rhs = try parserParseExpression(T, sig, self.parser, bp.right);
                     break :blk parserBuildGp(T, sig, self.parser, lhs, rhs);
                 },
                 .inverse => blk: {
@@ -1263,7 +1270,7 @@ fn ParserPrattContext(
                 },
                 .gp, .divide, .wedge, .dot, .anti_geometric, .anti_dot, .left_contraction, .right_contraction, .join, .add, .sub => blk: {
                     try parserAdvance(T, sig, self.parser);
-                    const rhs = try pratt.parseExpression(Self, self, bp.right);
+                    const rhs = try parserParseExpression(T, sig, self.parser, bp.right);
                     break :blk switch (operator_kind) {
                         .gp => parserBuildGp(T, sig, self.parser, lhs, rhs),
                         .divide => parserBuildGp(T, sig, self.parser, lhs, try parserBuildInverse(T, sig, self.parser, rhs)),
@@ -1290,6 +1297,9 @@ fn parserParseExpression(
     self: anytype,
     min_bp: u8,
 ) @TypeOf(self.*).ParserError!usize {
+    if (self.resource_limited and self.parse_depth >= runtime_depth_limit) return error.ExpressionTooDeep;
+    self.parse_depth += 1;
+    defer self.parse_depth -= 1;
     const Context = ParserPrattContext(T, sig, @TypeOf(self.*));
     var context = Context{ .parser = self };
     return pratt.parseExpression(Context, &context, min_bp);
@@ -1498,6 +1508,9 @@ fn Compiler(
         current_start: usize = 0,
         position: usize = 0,
         storage: Storage,
+        resource_limited: bool = false,
+        parse_depth: usize = 0,
+        created_nodes: usize = 0,
 
         fn init(
             source: []const u8,
@@ -1516,7 +1529,20 @@ fn Compiler(
         }
 
         fn newNode(self: *Self, node: Node, info: NodeInfo) ParserError!usize {
-            return self.storage.newNode(node, info);
+            var checked_info = info;
+            if (self.resource_limited) {
+                if (self.created_nodes >= runtime_node_limit) return error.ExpressionTooLarge;
+                checked_info.eval_depth = switch (node) {
+                    .constant, .placeholder => 1,
+                    .negate, .complement_dual, .hodge_dual => |child| self.nodeInfo(child).eval_depth + 1,
+                    .scale => |scale| self.nodeInfo(scale.child).eval_depth + 1,
+                    .add, .gp, .wedge, .join, .dot, .anti_geometric, .anti_dot, .left_contraction, .right_contraction => |binary| @max(self.nodeInfo(binary.lhs).eval_depth, self.nodeInfo(binary.rhs).eval_depth) + 1,
+                };
+                if (checked_info.eval_depth > runtime_depth_limit) return error.ExpressionTooDeep;
+            }
+            const index = try self.storage.newNode(node, checked_info);
+            self.created_nodes += 1;
+            return index;
         }
 
         fn nodeInfo(self: Self, index: usize) NodeInfo {
@@ -1676,6 +1702,8 @@ pub fn RuntimeCompiledExpression(comptime T: type, comptime sig: blades.MetricSi
     };
 }
 
+/// Compiles with source, node, parsing-depth, and evaluation-depth limits.
+/// These are resource limits, not checked arithmetic or a security sandbox.
 pub fn compileRuntime(
     comptime T: type,
     comptime sig: blades.MetricSignature,
@@ -1683,6 +1711,30 @@ pub fn compileRuntime(
     allocator: std.mem.Allocator,
     source: []const u8,
 ) (std.mem.Allocator.Error || RuntimeCompileError)!RuntimeCompiledExpression(T, sig) {
+    return compileRuntimeImpl(T, sig, naming_options, allocator, source, true);
+}
+
+/// Trusted-input alternative without resource limits. Syntax and allocation
+/// errors remain checked; the caller must bound memory use and stack depth.
+pub fn compileRuntimeUnbounded(
+    comptime T: type,
+    comptime sig: blades.MetricSignature,
+    naming_options: blade_parsing.SignedBladeNamingOptions,
+    allocator: std.mem.Allocator,
+    source: []const u8,
+) (std.mem.Allocator.Error || RuntimeCompileError)!RuntimeCompiledExpression(T, sig) {
+    return compileRuntimeImpl(T, sig, naming_options, allocator, source, false);
+}
+
+fn compileRuntimeImpl(
+    comptime T: type,
+    comptime sig: blades.MetricSignature,
+    naming_options: blade_parsing.SignedBladeNamingOptions,
+    allocator: std.mem.Allocator,
+    source: []const u8,
+    comptime resource_limited: bool,
+) (std.mem.Allocator.Error || RuntimeCompileError)!RuntimeCompiledExpression(T, sig) {
+    if (resource_limited and source.len > runtime_source_limit) return error.ExpressionTooLarge;
     const Runtime = RuntimeCompiledExpression(T, sig);
     const Storage = DynamicCompilerStorage(T, sig);
     const CompilerImpl = Compiler(T, sig, Storage);
@@ -1691,6 +1743,7 @@ pub fn compileRuntime(
     errdefer allocator.free(owned_source);
 
     var compiler = CompilerImpl.init(owned_source, naming_options, Storage.init(allocator));
+    compiler.resource_limited = resource_limited;
     defer compiler.deinit();
 
     const compiled = try parserCompile(T, sig, &compiler);

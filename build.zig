@@ -203,6 +203,32 @@ fn addLocalVulkanPlaygroundSteps(
     const worlds_build = b.step("demo-worlds-build", "Build the Vulkan four-space demo");
     worlds_build.dependOn(&worlds_exe.step);
     worlds_build.dependOn(spirv_steps.worlds);
+    const parity_reference = b.addExecutable(.{
+        .name = "zmath-render-reference",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/render_reference.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "worlds_render", .module = modules.worlds_render }},
+        }),
+    });
+    const parity_self_check = b.addSystemCommand(&.{"python3"});
+    parity_self_check.addFileArg2(b.path("tools/check_render_parity.py"), .{});
+    parity_self_check.addArg("--self-test");
+    const parity_check_step = b.step("demo-worlds-parity-check", "Check the framebuffer parity decoder and comparator without a GPU");
+    parity_check_step.dependOn(&parity_self_check.step);
+    parity_check_step.dependOn(&parity_reference.step);
+    const parity_run = b.addSystemCommand(&.{"python3"});
+    parity_run.addFileArg2(b.path("tools/check_render_parity.py"), .{});
+    parity_run.addArg("--worlds");
+    parity_run.addFileArg2(worlds_exe.getEmittedBin(), .{});
+    parity_run.addArg("--reference");
+    parity_run.addFileArg2(parity_reference.getEmittedBin(), .{});
+    parity_run.step.dependOn(spirv_steps.worlds);
+    parity_run.step.dependOn(&parity_self_check.step);
+    const parity_step = b.step("demo-worlds-parity", "Compare non-spherical GPU captures with native reference samples (requires a GPU session)");
+    parity_step.dependOn(&parity_run.step);
+
     const run_worlds = b.addRunArtifact(worlds_exe);
     run_worlds.step.dependOn(spirv_steps.worlds);
     run_worlds.addPassthruArgs();
@@ -301,6 +327,17 @@ fn addTests(
         }),
     });
     test_step.dependOn(&b.addRunArtifact(module_surface_tests).step);
+
+    const runtime_expression_tests = b.addTest(.{
+        .name = "zmath-runtime-expression",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/tests/runtime_expression.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "zmath", .module = modules.zmath }},
+        }),
+    });
+    test_step.dependOn(&b.addRunArtifact(runtime_expression_tests).step);
 
     const spherical_game_scene_tests = b.addTest(.{
         .name = "zmath-demo-spherical-game",

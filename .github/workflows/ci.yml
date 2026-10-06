@@ -42,7 +42,7 @@ jobs:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}-shaders
           restore-prefixes-first-match: nix-${{ runner.os }}-
       - name: Shader validation and graphics builds
-        run: nix develop .#ci -c zig build spirv-vga spirv-raw spirv-check spirv-worlds demo-worlds-build demo-spherical-build -Doptimize=fast --summary all
+        run: nix develop .#ci -c zig build spirv-vga spirv-raw spirv-check spirv-worlds demo-worlds-build demo-spherical-build demo-worlds-parity-check -Doptimize=fast --summary all
 
   test:
     runs-on: ubuntu-latest

@@ -42,8 +42,8 @@ fn scalarOneOf(comptime M: type) FullOf(M) {
 }
 
 /// Bulk dual `u★ = ũ ⦑ 𝟙`: the (right) metric dual, the complement of the
-/// bulk (metric) components. Reduces to the Hodge star on non-degenerate
-/// metrics; in degenerate metrics the null-axis component contributes zero.
+/// bulk (metric) components, with RGA sign conventions rather than a general
+/// hodgeDual() identity. In degenerate metrics null-axis content contributes zero.
 pub fn bulkDual(mv: anytype) @TypeOf(mv.reverse().gp(pseudoscalarOf(@TypeOf(mv)))) {
     return mv.reverse().gp(pseudoscalarOf(@TypeOf(mv)));
 }
@@ -55,8 +55,9 @@ pub fn weightDual(mv: anytype) @TypeOf(mv.reverse().antiGeometric(scalarOneOf(@T
     return mv.reverse().antiGeometric(scalarOneOf(@TypeOf(mv)));
 }
 
-/// Bulk contraction `a ∨ b★`. For same-grade operands this is the metric
-/// scalar product `a • b` (equals the grade-0 part of `b̃ a`).
+/// Bulk contraction `a ∨ b★`. For Euclidean vectors the reversed scalar
+/// product acquires the double-complement sign (-1)^(n-1). Indefinite metrics
+/// have additional bulk/weight sign differences; see docs/ga-conventions.md.
 pub fn bulkContraction(a: anytype, b: anytype) @TypeOf(a.antiWedge(bulkDual(b))) {
     return a.antiWedge(bulkDual(b));
 }
@@ -66,8 +67,8 @@ pub fn weightContraction(a: anytype, b: anytype) @TypeOf(a.antiWedge(weightDual(
     return a.antiWedge(weightDual(b));
 }
 
-/// Bulk expansion `a ∧ b★`. For same-grade operands this is
-/// `(a • b) ∧ 𝟙`, the metric scalar product lifted to the pseudoscalar.
+/// Bulk expansion `a ∧ b★`. For Euclidean vectors this agrees with the
+/// scalar product lifted to the pseudoscalar; other content follows the formula.
 pub fn bulkExpansion(a: anytype, b: anytype) @TypeOf(a.wedge(bulkDual(b))) {
     return a.wedge(bulkDual(b));
 }

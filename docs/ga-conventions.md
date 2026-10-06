@@ -77,7 +77,8 @@ over generic multivector carriers:
   and expansions `a ∧ b★` (`bulkExpansion`) / `a ∧ b☆` (`weightExpansion`)
   are the antiwedge/wedge products against the corresponding duals.
 - `project(a, b) = b ∨ (a ∧ b☆)` and `antiproject(a, b) = b ∧ (a ∨ b☆)` are
-  the orthogonal projection and antiprojection.
+  raw projection/antiprojection combinators, not general orthogonal projections
+  of arbitrary carrier values.
 
 Signature caveats (all pinned by tests):
 
@@ -138,6 +139,35 @@ returns `error.UndefinedHodgeDual` for unsupported Hodge use, including constant
 operands; comptime compilation reports the same restriction as a diagnostic.
 Ordinary arithmetic and complement duality remain available in projective
 metrics. Unsupported Hodge nodes are rejected before evaluation.
+
+### Runtime input contract
+
+`ga.expression.compileRuntime()` (also used by `evaluateRuntime()` and
+`evaluateRuntimeAs()`) applies these defaults:
+
+- Source length: at most **64 KiB**.
+- Created nodes: at most **4096**, including nodes discarded by folding.
+- Parsing recursion and retained evaluation-tree depth: at most **128** each.
+
+Exceeded size/node limits return `error.ExpressionTooLarge`; exceeded depth
+limits return `error.ExpressionTooDeep`. Flat placeholder chains are checked
+for evaluation depth even when their parsing depth is small. Comptime
+expressions retain their separate compiler/storage constraints.
+
+`compileRuntimeUnbounded()` explicitly opts out of these resource limits for
+trusted input. It still checks syntax and reports allocation errors; the caller
+must control memory and stack use. Neither API checks every arithmetic operation:
+integer overflow, floating-point non-finite results, and dense high-dimensional
+algebra costs are not made safe by parser limits. The algebra, naming options,
+and evaluation arguments remain caller-controlled. Do not mutate compiled
+node/root fields or assume arbitrary dimensions fit a given stack/memory budget.
+
+Operators use ASCII or the documented UTF-8 spellings; malformed bytes outside
+placeholders return syntax errors. Placeholder names are opaque trimmed byte
+strings, not UTF-8-validated identifiers; use slot evaluation for arbitrary names.
+Compilation owns its source and storage, and `deinit()` releases them. Retained
+tests inject allocation failures on both successful and rejected compilation.
+Normal `fuzz-expr` runs are bounded smoke checks, not sustained fuzz campaigns.
 
 ## PGA model
 

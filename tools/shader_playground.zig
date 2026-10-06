@@ -1886,7 +1886,8 @@ const App = struct {
         try vkCheck(c.vkMapMemory(self.device, self.capture_buffer_memory, 0, self.captureSize(), 0, &mapped));
         defer c.vkUnmapMemory(self.device, self.capture_buffer_memory);
         const pixels = @as([*]const u8, @ptrCast(mapped.?))[0..self.captureSize()];
-        const png = try png_capture.encode(self.allocator, self.swapchain_extent.width, self.swapchain_extent.height, pixels, bgra);
+        const srgb = self.swapchain_image_format == c.VK_FORMAT_B8G8R8A8_SRGB or self.swapchain_image_format == c.VK_FORMAT_R8G8B8A8_SRGB;
+        const png = try png_capture.encode(self.allocator, self.swapchain_extent.width, self.swapchain_extent.height, pixels, bgra, srgb);
         defer self.allocator.free(png);
         try std.Io.Dir.cwd().writeFile(self.io, .{ .sub_path = self.capture_path.?, .data = png });
     }

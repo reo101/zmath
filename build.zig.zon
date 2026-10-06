@@ -9,6 +9,7 @@
             .hash = "translate_c-0.0.0-Q_BUWoFOBwAhz77Zd15HCVuhTKzdUKc94kezmCeJ7IC_",
         },
     },
+    // Demo assets are intentionally checkout-only; packages expose the library.
     .paths = .{
         "build.zig",
         "build_spirv.zig",

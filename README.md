@@ -6,15 +6,16 @@
 [zmath](https://github.com/reo101/zmath) is a Zig library for
 compile-time-specialized geometric algebra and Clifford algebra.
 
-Describe an algebra in the type system, keep its multivectors sparse, and let
-`comptime` erase the generic machinery. The result is type-directed products
-and carriers without paying for the whole algebra when an operation cannot
-produce it.
+Describe an algebra in the type system and specialize direct products around
+possible blade support. Sparse carriers avoid storing the whole algebra;
+higher-level expression evaluation still uses full-carrier intermediates.
+Generated-code cost depends on the operation, target, and optimizer.
 
 ## Requirements
 
-Zig 0.17.0 or newer. `nix develop` provides the pinned compiler and a
-0.17-compatible ZLS development revision.
+Tested with the Zig 0.17.0 revision pinned by `nix develop`, which also provides
+a matching ZLS development revision. Other compiler revisions, including later
+0.17 builds, are not a compatibility guarantee.
 
 ## Install
 
@@ -80,7 +81,7 @@ Signatures can use `.euclidean(n)` or explicit `.{ .p, .q, .r }` values for
 ## Surfaces
 
 - `zmath.ga`: algebra factories, sparse multivectors, products, duals, rotors,
-  RGA operations, PGA helpers, and the comptime expression compiler.
+  RGA operations, PGA helpers, and comptime/runtime expression compilers.
 - `zmath.ga.pga`: semantic `Cl(3,0,1)` helpers. `pga.extend(Base)` adds planes,
   points, lines, motors, direct motor composition, and prepared point/direction
   transforms while retaining the sparse base carriers.
@@ -120,14 +121,14 @@ at runtime; comptime operations use scalar/array paths. `Storage` and `coeffs`
 are arrays on both native and SPIR-V targets. `storageView()` returns independent
 raw-vector and named value snapshots, not a type-punning union.
 
-Typed shader interfaces such as `@extern(*addrspace(.output) Vec(4), ...)`
-remain supported through this project's SPIR-V build steps. The postpass repairs
-Zig's `Position` decoration into a float4 interface-block member, converting
-between the carrier's array and the interface vector. Every shader is checked
-with `spirv-val`. This preserves the carrier wrapper, not type
-identity with a raw SPIR-V vector. Direct loads, stores, and member accesses are
-supported; passing the interface pointer to other functions is not covered by
-the workaround.
+The SPIR-V build steps retain a tested typed float4 vertex `Position` path,
+including direct loads, stores, and coefficient member access. The postpass
+repairs this compiler-specific interface into a float4 block member, converting
+between the carrier's array and the interface vector. Project shader build
+steps require `spirv-val`; compiling shaders directly bypasses that validation.
+This is not general typed-interface support: pointer escape/passing and arbitrary
+non-Position member writes are outside the tested workaround. Carrier wrappers
+are preserved, not made identical to raw SPIR-V vectors.
 
 ## Conventions
 
@@ -145,8 +146,12 @@ pose/frame construction, geometric input validation, and trusted kernels.
 
 ## Build and test
 
+Developer commands assume a repository checkout; the suite includes
+asset-dependent mesh fixtures. Fetched-package consumers import library modules
+rather than run this package's demo/test steps.
+
 ```sh
-zig build test                         # all tests
+zig build test                         # native and compile-fail suite
 zig build run                          # usage example
 zig build bench-simd                   # full fast-mode micro-benchmark suite
 zig build bench-simd -- vec3           # one benchmark case
@@ -155,13 +160,23 @@ zig build bench-simd -- rotor3
 zig build bench-simd -- pga-compose
 zig build bench-simd -- pga-point
 zig build fuzz-expr                    # expression parser/evaluator smoke fuzz
-zig build fuzz-ga                      # GA algebra-law fuzz target
+zig build fuzz-expr --fuzz=10K          # bounded coverage-guided campaign
+zig build fuzz-ga                      # GA algebra-law fuzz smoke
 ```
 
 ## Demos and shaders
 
-The graphical tooling is optional. Run it from the Nix devshell so Vulkan,
-GLFW and `spirv-opt` are available. A Vulkan 1.2-capable driver is required.
+Graphical tooling and asset-dependent demo checks are **checkout-only**.
+Fetched Zig packages advertise the library modules, not runnable demos; assets
+are intentionally excluded from `build.zig.zon`. Run demo commands from the
+repository root in the Nix devshell so the relative JSON asset and
+`zig-out/shaders` paths resolve, and Vulkan, GLFW, and SPIR-V tools are available.
+Binaries are not standalone resource bundles. A Vulkan 1.2-capable host driver
+is required; the devshell does not pin that driver.
+
+The native suite does not run GPU parity, shader validation, or sustained fuzzing.
+CI runs shader validation separately. See [demo architecture](docs/demo-architecture.md)
+for verification scope and host graphics compatibility.
 
 ```sh
 zig build demo-spherical-build         # build the Vulkan S³ scene
@@ -170,11 +185,13 @@ zig build demo-spherical-check         # headless S³ geometry checks
 zig build demo-worlds-build            # build the Vulkan four-space demo
 zig build demo-worlds                  # run it, keys 1–4/Tab switch spaces
 zig build demo-worlds-check            # headless worlds/camera/capture checks
+zig build demo-worlds-parity-check     # native reference build + comparator self-check
+zig build demo-worlds-parity           # opt-in non-spherical CPU/GPU pixel comparison
 zig build spirv-worlds                 # validate shaders for all four spaces
 zig build spirv-vga                    # build GA SPIR-V shaders
 zig build spirv-raw                    # build raw-SPIR-V baselines
 zig build spirv-compare                # compare shader sizes
-zig build spirv-check                  # validate typed vector interface operations
+zig build spirv-check                  # validate typed Position interface fixture
 zig build spirv-spherical              # build Zig-authored S³ shaders
 zig build shader-playground-build      # build the Vulkan shader playground
 zig build shader-playground            # run raw shaders

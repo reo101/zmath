@@ -37,6 +37,15 @@ normals, and bounds. Face normals and bound centers must be unit length; bound
 cosines must lie in `[-1, 1]`; transforms must satisfy the complete rotor identity.
 These checks happen during file validation, not in every geometry operation.
 
+## Checkout and package boundary
+
+Demos and asset-dependent checks require a repository checkout and execution
+from its root. The published Zig package intentionally excludes `assets` and
+the Nix flake; it advertises library modules, not runnable graphical tools.
+Relative `assets/spherical/world.s3obj.json` and `zig-out/shaders` paths are part
+of this checkout-only tooling contract. Built executables are not standalone
+installations. Fetching the library does not require a window or GPU.
+
 ## Vulkan renderer
 
 `tools/shader_playground.zig` creates the S³ mesh once from
@@ -81,8 +90,9 @@ near-pole guard collapses invalid chart vertices to the homogeneous origin,
 degenerating unsafe primitives instead of letting them cover the frame.
 
 The mesh fragment shader reconstructs the ray direction and uses its interpolated
-great-sphere plane to write exact S³ depth. Ground and mesh shaders both retain
-the unit-disc viewport mask. Window dimensions come from the live swapchain
+great-sphere plane to write analytic S³ depth, subject to floating-point
+roundoff and only where mesh primitives rasterize. Ground and mesh shaders
+both retain the unit-disc viewport mask. Window dimensions come from the live swapchain
 extent, so the spherical screen fills the current framebuffer.
 
 ## Tests and checks
@@ -103,9 +113,10 @@ Headless CI runs Debug/fast native tests and expression smoke in parallel, plus
 an independent SPIR-V validation and graphics executable build job. The aggregate
 `test` check requires all verification jobs to succeed. No GPU session is required.
 
-The CPU tracer remains deliberately richer than the raster path. It validates
-scene geometry and occlusion; the renderer validates mesh coverage and exact
-fragment depth over representative camera poses.
+The CPU tracer remains deliberately richer than the raster path. Headless
+checks cover selected scene geometry and occlusion cases, plus sampled mesh
+coverage/depth. They do not establish exhaustive CPU/GPU parity or full-image
+raster coverage.
 
 ## `demo-worlds`
 
@@ -138,4 +149,52 @@ runs a frame benchmark. `ZMATH_DEMO_WORLD`, `ZMATH_DEMO_FRAMES`, and the capture
 variables `ZMATH_DEMO_CAPTURE`, `ZMATH_DEMO_WALK`, and `ZMATH_DEMO_PITCH` remain
 available. PNG capture reads back the rendered swapchain image, not a CPU tracer
 frame. `--pose WALK YAW PITCH` overrides the capture pose. Both frontends support
-`ZMATH_DEMO_CAPTURE` for same-pose rendering comparisons.
+`ZMATH_DEMO_CAPTURE` for same-pose rendering comparisons. Capture bytes retain
+the actual swapchain encoding: PNG metadata marks sRGB formats with `sRGB`,
+and linear UNORM formats with file gamma 1.
+
+### Maintained framebuffer parity check
+
+From the checkout root:
+
+```sh
+nix develop .#ci -c zig build demo-worlds-parity-check -Doptimize=fast
+nix develop -c zig build demo-worlds-parity -Doptimize=debug
+nix develop -c zig build demo-worlds-parity -Doptimize=fast
+```
+
+The first command builds the native reference and tests PNG integrity/color
+encoding and an injected pixel mismatch without opening a window; CI includes
+it in the shader/build job. The latter commands require a working graphical
+session and Vulkan driver. Failures are reported, not silently skipped.
+
+Each GPU run captures Euclidean, isometric, and hyperbolic worlds at two fixed
+poses, comparing 81 pixel centers per capture with native f32 reference values.
+The comparator applies the capture's linear/sRGB transfer function and permits
+at most one RGB byte of difference. Every mode must exercise cube and ground
+hits across the sampled poses; selectors are identified separately.
+
+The reference reuses shared shading mathematics, so this detects execution,
+frame packing, and presentation drift, not independent mathematical correctness.
+Spherical rendering is deliberately excluded: tracer/raster coverage agreement
+is a separate measured boundary, not established by these sampled checks.
+Captures are temporary and removed after the run.
+
+### Host graphics compatibility
+
+The flake pins the build compiler and user-space dependencies, not the host
+Vulkan ICD, Mesa/LLVM, compositor, or their loaded library versions. A supported
+Vulkan 1.2 driver can still fail to load when the process mixes incompatible
+library generations.
+
+A known NixOS failure combines GLFW-transitive glibc 2.42 libm with host
+Mesa/LLVM requiring `GLIBC_2.44`. An older compositor session can outlive a
+system update. A Debug run succeeding does not establish fast-mode compatibility:
+library load order differs. After a graphics/system update, retest from a fresh
+login/compositor session before changing dependency pins. Do not add global
+`LD_PRELOAD` overrides; a process-local preload is diagnostic evidence only.
+
+For loader diagnostics, set `VK_LOADER_DEBUG=error,warn` for the demo process
+and inspect missing symbol/version messages. In a fresh session, the fast parity
+command above must run without an ad hoc preload. If it still fails, compare
+host-driver and project dependency closures before choosing an alignment fix.

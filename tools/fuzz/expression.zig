@@ -123,17 +123,16 @@ fn fuzzRuntimeExpressionCorpusCase(case: anytype, smith: *std.testing.Smith) !vo
     try std.testing.expect(actual.eql(expected));
 }
 
-fn fuzzRandomRuntimeExpression(smith: *std.testing.Smith) !void {
-    const sig = comptime blades.MetricSignature.euclidean(3);
+fn fuzzRandomRuntimeExpression(comptime sig: blades.MetricSignature, smith: *std.testing.Smith, raw_bytes: bool) !void {
     const E3 = ga.Algebra(sig).Instantiate(f32);
-    const options = blade_parsing.SignedBladeNamingOptions.euclidean(3);
+    const options = blade_parsing.SignedBladeNamingOptions.fromSignature(sig);
     const Full = E3.Full;
     const alphabet = "e0123456789_[](){}+-*^. ,abcsv";
 
     var buf: [192]u8 = undefined;
     const len = smith.slice(&buf);
-    for (buf[0..len]) |*byte| {
-        byte.* = alphabet[byte.* % alphabet.len];
+    if (!raw_bytes) {
+        for (buf[0..len]) |*byte| byte.* = alphabet[byte.* % alphabet.len];
     }
 
     var compiled = expression.compileRuntime(f32, sig, options, std.testing.allocator, buf[0..len]) catch |err| switch (err) {
@@ -153,6 +152,8 @@ fn fuzzRandomRuntimeExpression(smith: *std.testing.Smith) !void {
         error.UndefinedInverse,
         error.UndefinedHodgeDual,
         error.InvalidNumericLiteral,
+        error.ExpressionTooLarge,
+        error.ExpressionTooDeep,
         => return,
         error.OutOfMemory => return err,
     };
@@ -187,7 +188,15 @@ test "expression fuzz: runtime parser and evaluator stay consistent" {
 
             while (!smith.eosWeightedSimple(31, 1)) {
                 try fuzzRuntimeExpressionCorpusCase(smith.value(Case), smith);
-                try fuzzRandomRuntimeExpression(smith);
+                try fuzzRandomRuntimeExpression(.{ .p = 3 }, smith, false);
+                inline for (.{
+                    blades.MetricSignature{ .p = 3 },
+                    blades.MetricSignature{ .p = 2, .q = 1 },
+                    blades.MetricSignature{ .p = 2, .r = 1 },
+                    blades.MetricSignature{ .p = 1, .q = 1, .r = 1 },
+                }) |metric| {
+                    try fuzzRandomRuntimeExpression(metric, smith, true);
+                }
             }
         }
     }.testOne, .{});

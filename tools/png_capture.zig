@@ -1,7 +1,7 @@
 //! Opaque framebuffer PNG capture, using stored DEFLATE blocks.
 const std = @import("std");
 
-pub fn encode(allocator: std.mem.Allocator, width: u32, height: u32, pixels: []const u8, bgra: bool) ![]u8 {
+pub fn encode(allocator: std.mem.Allocator, width: u32, height: u32, pixels: []const u8, bgra: bool, srgb: bool) ![]u8 {
     if (width == 0 or height == 0 or pixels.len != @as(usize, width) * height * 4) return error.InvalidFrameSize;
     var rows: std.ArrayList(u8) = .empty;
     defer rows.deinit(allocator);
@@ -41,6 +41,12 @@ pub fn encode(allocator: std.mem.Allocator, width: u32, height: u32, pixels: []c
     header[8] = 8;
     header[9] = 6;
     try appendChunk(&png, allocator, "IHDR", &header);
+    if (srgb) {
+        try appendChunk(&png, allocator, "sRGB", &.{0});
+    } else {
+        // UNORM framebuffer bytes encode linear light, with file gamma 1.
+        try appendChunk(&png, allocator, "gAMA", &.{ 0, 1, 134, 160 });
+    }
     try appendChunk(&png, allocator, "IDAT", compressed.items);
     try appendChunk(&png, allocator, "IEND", &.{});
     return png.toOwnedSlice(allocator);
@@ -61,11 +67,16 @@ fn appendChunk(bytes: *std.ArrayList(u8), allocator: std.mem.Allocator, name: *c
 }
 
 test "PNG capture encodes BGRA as an opaque RGBA row" {
-    try std.testing.expectError(error.InvalidFrameSize, encode(std.testing.allocator, 0, 1, &.{}, false));
-    try std.testing.expectError(error.InvalidFrameSize, encode(std.testing.allocator, 1, 1, &.{ 10, 20, 30 }, false));
-    const png = try encode(std.testing.allocator, 1, 1, &.{ 10, 20, 30, 40 }, true);
-    defer std.testing.allocator.free(png);
-    try std.testing.expectEqual(@as(usize, 73), png.len);
-    try std.testing.expectEqualSlices(u8, &.{ 137, 80, 78, 71, 13, 10, 26, 10 }, png[0..8]);
-    try std.testing.expectEqualSlices(u8, &.{ 0, 30, 20, 10, 255 }, png[48..53]);
+    try std.testing.expectError(error.InvalidFrameSize, encode(std.testing.allocator, 0, 1, &.{}, false, false));
+    try std.testing.expectError(error.InvalidFrameSize, encode(std.testing.allocator, 1, 1, &.{ 10, 20, 30 }, false, false));
+    inline for (.{ false, true }) |srgb| {
+        const png = try encode(std.testing.allocator, 1, 1, &.{ 10, 20, 30, 40 }, true, srgb);
+        defer std.testing.allocator.free(png);
+        const metadata_length: usize = if (srgb) 13 else 16;
+        try std.testing.expectEqual(@as(usize, 73) + metadata_length, png.len);
+        try std.testing.expectEqualSlices(u8, &.{ 137, 80, 78, 71, 13, 10, 26, 10 }, png[0..8]);
+        try std.testing.expectEqualSlices(u8, if (srgb) "sRGB" else "gAMA", png[37..41]);
+        try std.testing.expectEqualSlices(u8, if (srgb) &.{0} else &.{ 0, 1, 134, 160 }, png[41 .. 41 + metadata_length - 12]);
+        try std.testing.expectEqualSlices(u8, &.{ 0, 30, 20, 10, 255 }, png[48 + metadata_length .. 53 + metadata_length]);
+    }
 }

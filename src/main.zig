@@ -26,8 +26,8 @@ pub fn main(init: std.process.Init) !void {
 
     // 2. Comptime Expression Compiler
     // -------------------------------------------------------------------------
-    // The `expr` function compiles the string at comptime into optimal Zig code.
-    // It verifies operator precedence and resource bounds before execution.
+    // `expr` parses and folds the string at comptime, with full-carrier
+    // evaluation intermediates. Generated-code cost depends on optimization.
     const result = Cl3.expr("{v} ^ e12 + 5", .{
         .v = v,
     });
@@ -47,8 +47,8 @@ pub fn main(init: std.process.Init) !void {
 
     // 4. Proactive Validation
     // -------------------------------------------------------------------------
-    // All signatures and operations are checked for consistency.
-    // Invalid basis names or dimensions mismatches result in compile errors.
+    // Invalid basis names and incompatible binary carrier metrics/dimensions
+    // produce compile errors. Raw coefficients still require geometric care.
     const e123 = Cl3.signedBlade("e123");
     try stdout.print("Pseudoscalar e123: {any}\n", .{e123.named()});
 
