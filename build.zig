@@ -432,6 +432,19 @@ fn addTests(
         test_step.dependOn(&compile_fail_exponential.step);
     }
 
+    // The assertion is intentionally Debug-only, including in fast test runs.
+    const compile_fail_rotor = b.addObject(.{
+        .name = "zmath-compile-fail-rotor-invariant",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/compile_fail/rotor_invariant.zig"),
+            .target = target,
+            .optimize = .debug,
+            .imports = &.{.{ .name = "ga", .module = modules.ga }},
+        }),
+    });
+    compile_fail_rotor.expect_errors = .{ .contains = "reached unreachable code" };
+    test_step.dependOn(&compile_fail_rotor.step);
+
     const MetricMismatchOperation = enum {
         add,
         sub,

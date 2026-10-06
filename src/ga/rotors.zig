@@ -20,6 +20,9 @@ fn defaultTolerance(comptime T: type) T {
 
 pub const RotorError = error{
     ZeroVector,
+    NonFiniteInput,
+    NonFiniteNorm,
+    UnrepresentableResult,
 };
 
 fn assertFloatVector(comptime M: type) void {
@@ -187,16 +190,20 @@ pub fn hodgeDual(mv: anytype) @TypeOf(mv.hodgeDual()) {
     return mv.hodgeDual();
 }
 
-/// Returns the normalized version of a multivector.
+/// Scales by sqrt(abs(scalarNormSquared())). Near-zero magnitude retains the
+/// input, including nonzero null vectors. This unchecked helper does not
+/// validate finite coefficients, grades, or geometric membership.
 pub fn normalized(mv: anytype) @TypeOf(mv) {
     const magnitude = norm(mv);
     if (nearlyEqual(magnitude, 0, defaultTolerance(@TypeOf(mv).Coefficient))) {
-        return mv; // Or panic/error if zero vector is not allowed
+        return mv;
     }
     return mv.scale(1.0 / magnitude);
 }
 
-/// Returns a rotor normalized via `R * ~R`, which stays stable for bivector-heavy rotors.
+/// Scales an even carrier by sqrt(abs(<R * ~R>_0)). Near-zero or non-finite
+/// scalar denominators retain the input. Nonscalar product terms are ignored;
+/// negative denominators yield scalar -1, not +1. This is not a versor validator.
 pub fn normalizedRotor(rotor: anytype) @TypeOf(rotor) {
     const RotorType = @TypeOf(rotor);
     comptime assertFloatRotor(RotorType);
@@ -209,16 +216,30 @@ pub fn normalizedRotor(rotor: anytype) @TypeOf(rotor) {
     return rotor.scale(1.0 / @sqrt(@abs(magnitude_squared)));
 }
 
-/// Returns the normalized version of a 2D grade-1 vector, or `error.ZeroVector`.
+/// Normalizes a floating grade-1 vector by its absolute metric magnitude.
+/// Rejects non-finite coefficients/norms and near-zero magnitude (including
+/// nonzero null vectors). Scaled results must have a representable unit absolute
+/// metric squared norm. Timelike inputs retain scalar norm squared -1.
 pub fn normalize(vector: anytype) RotorError!@TypeOf(vector) {
     const Vector = @TypeOf(vector);
     comptime assertFloatVector(Vector);
 
+    for (vector.coeffsArray()) |coefficient| {
+        if (!std.math.isFinite(coefficient)) return error.NonFiniteInput;
+    }
     const magnitude = norm(vector);
+    if (!std.math.isFinite(magnitude)) return error.NonFiniteNorm;
     if (nearlyEqual(magnitude, 0, defaultTolerance(Vector.Coefficient))) {
         return error.ZeroVector;
     }
-    return vector.divide(magnitude);
+    const result = vector.divide(magnitude);
+    for (result.coeffsArray()) |coefficient| {
+        if (!std.math.isFinite(coefficient)) return error.UnrepresentableResult;
+    }
+    const result_norm_squared = result.scalarNormSquared();
+    if (!std.math.isFinite(result_norm_squared)) return error.NonFiniteNorm;
+    if (!nearlyEqual(@abs(result_norm_squared), 1, defaultTolerance(Vector.Coefficient))) return error.UnrepresentableResult;
+    return result;
 }
 
 /// Returns whether two scalars differ by at most `epsilon`.
@@ -231,7 +252,8 @@ pub fn nearlyEqual(lhs: anytype, rhs: @TypeOf(lhs), epsilon: @TypeOf(lhs)) bool 
     return @abs(lhs - rhs) <= epsilon * @max(1, scale);
 }
 
-/// Verifies the rotor normalization invariant in debug builds.
+/// Debug-only assertion that the complete R * reverse(R) is finite identity.
+/// Release modes perform no validation.
 pub fn debugAssertRotor(rotor: anytype, epsilon: @TypeOf(rotor).Coefficient) void {
     const RotorType = @TypeOf(rotor);
     comptime assertFloatRotor(RotorType);
@@ -239,18 +261,19 @@ pub fn debugAssertRotor(rotor: anytype, epsilon: @TypeOf(rotor).Coefficient) voi
     if (@import("builtin").mode != .debug) return;
 
     const identity = rotor.gp(rotor.reverse());
-    inline for (RotorType.blades) |mask| {
+    inline for (@TypeOf(identity).blades) |mask| {
         const coeff = identity.coeff(mask);
         if (comptime mask.bitset.mask == 0) {
-            std.debug.assert(nearlyEqual(coeff, 1, epsilon));
+            std.debug.assert(std.math.isFinite(coeff) and nearlyEqual(coeff, 1, epsilon));
         } else {
-            std.debug.assert(nearlyEqual(coeff, 0, epsilon));
+            std.debug.assert(std.math.isFinite(coeff) and nearlyEqual(coeff, 0, epsilon));
         }
     }
 }
 
-/// Returns the unit rotor for a counter-clockwise 2D rotation.
-pub fn planarRotor(comptime T: type, angle_radians: T) multivector.Rotor(T, euclidean2) {
+/// Constructs the unit rotor for a finite counter-clockwise 2D angle.
+pub fn planarRotor(comptime T: type, angle_radians: T) RotorError!multivector.Rotor(T, euclidean2) {
+    if (!std.math.isFinite(angle_radians)) return error.NonFiniteInput;
     const half_angle = angle_radians / 2;
     const rotor = multivector.Rotor(T, euclidean2).init(.{
         @cos(half_angle),
@@ -260,12 +283,14 @@ pub fn planarRotor(comptime T: type, angle_radians: T) multivector.Rotor(T, eucl
     return rotor;
 }
 
-/// Returns the rotor that takes `from` onto `to` in 2D VGA.
-pub fn rotorFromTo(from: anytype, to: anytype) @TypeOf(from).EvenType {
-    return tryRotorFromTo(from, to) catch unreachable;
+/// Constructs the 2D VGA rotor aligning finite nonzero vector directions.
+/// Uses the same checked normalization and errors as tryRotorFromTo().
+pub fn rotorFromTo(from: anytype, to: anytype) RotorError!@TypeOf(from).EvenType {
+    return tryRotorFromTo(from, to);
 }
 
-/// Returns the rotor that takes `from` onto `to` in 2D VGA, or `error.ZeroVector`.
+/// Checked from/to construction; antiparallel inputs choose the canonical
+/// e12 half-turn rotor. Zero, null, and non-finite normalization is rejected.
 pub fn tryRotorFromTo(from: anytype, to: anytype) RotorError!@TypeOf(from).EvenType {
     const Vector = @TypeOf(from);
     const ToVector = @TypeOf(to);
@@ -288,7 +313,7 @@ pub fn tryRotorFromTo(from: anytype, to: anytype) RotorError!@TypeOf(from).EvenT
     const magnitude = @sqrt(scalar * scalar + bivector * bivector);
 
     if (nearlyEqual(magnitude, 0, epsilon)) {
-        // Antiparallel vectors admit infinitely many 180° rotors in 2D.
+        // The two rotor signs encode the same 2D half-turn.
         // Pick the canonical +e12 rotor to produce a deterministic result.
         return RotorType.init(.{ 0, 1 });
     }
@@ -307,6 +332,9 @@ pub fn tryRotorFromTo(from: anytype, to: anytype) RotorError!@TypeOf(from).EvenT
 /// - `vector` is grade-1,
 /// - `rotor` has even parity blades,
 /// - both share coefficient type, dimensions, and metric signature.
+///
+/// These are carrier checks, not unit-versor checks. Arbitrary even inputs
+/// retain grade-projected sandwich semantics, not necessarily an isometry.
 pub fn rotated(vector: anytype, rotor: anytype) @TypeOf(vector).VectorType {
     const Vector = @TypeOf(vector);
     const RotorType = @TypeOf(rotor);
@@ -374,7 +402,7 @@ test "2D rotors rotate vectors in the expected orientation" {
     try std.testing.expect(nearlyEqual(quarter_turn.coeffNamed("e1"), 0, 1e-12));
     try std.testing.expect(nearlyEqual(quarter_turn.coeffNamed("e2"), e2.coeffNamed("e2"), 1e-12));
 
-    const diagonal = rotorFromTo(e1.add(e2.scale(5)), e2);
+    const diagonal = try rotorFromTo(e1.add(e2.scale(5)), e2);
     const diagonal_result = rotated(e1.add(e2.scale(5)), diagonal);
     try std.testing.expect(nearlyEqual(diagonal_result.coeffNamed("e1"), 0, 1e-12));
     try std.testing.expect(nearlyEqual(diagonal_result.coeffNamed("e2"), @sqrt(26.0), 1e-12));
@@ -386,7 +414,7 @@ test "rotatedAs preserves custom vector carriers with aliases" {
     }), .{ "x", "y" });
     const E2 = multivector.BasisWithNamingOptions(f64, euclidean2, naming);
     const CustomVec2 = E2.Vector;
-    const quarter_turn = planarRotor(f64, -std.math.pi / 2.0);
+    const quarter_turn = try planarRotor(f64, -std.math.pi / 2.0);
 
     const preserved = rotated(CustomVec2.init(.{ 3.0, 4.0 }), quarter_turn);
     const tangent = rotatedAs(CustomVec2, CustomVec2.init(.{ 3.0, 4.0 }), quarter_turn);
@@ -402,7 +430,7 @@ test "rotorFromTo handles antiparallel vectors" {
     const E2 = multivector.Basis(f64, euclidean2);
     const e1 = E2.e(1);
 
-    const rotor = rotorFromTo(e1, e1.negate());
+    const rotor = try rotorFromTo(e1, e1.negate());
     const rotated_e1 = rotated(e1, rotor);
 
     try std.testing.expect(nearlyEqual(rotated_e1.coeffNamed("e1"), -1.0, 1e-12));
@@ -428,9 +456,50 @@ test "safe rotor helpers return ZeroVector on invalid input" {
     try std.testing.expectError(error.ZeroVector, tryRotorFromTo(e1, zero));
 }
 
+test "checked rotor construction rejects non-finite and null inputs" {
+    const E2 = multivector.Basis(f32, euclidean2);
+    const from = E2.Vector.init(.{ 1, 0 });
+    for ([_]f32{ std.math.nan(f32), std.math.inf(f32), -std.math.inf(f32) }) |value| {
+        inline for (0..2) |index| {
+            var coefficients = [2]f32{ 1, 0 };
+            coefficients[index] = value;
+            const invalid = E2.Vector.init(coefficients);
+            try std.testing.expectError(error.NonFiniteInput, normalize(invalid));
+            try std.testing.expectError(error.NonFiniteInput, rotorFromTo(invalid, from));
+            try std.testing.expectError(error.NonFiniteInput, rotorFromTo(from, invalid));
+            try std.testing.expectError(error.NonFiniteInput, tryRotorFromTo(invalid, from));
+        }
+        try std.testing.expectError(error.NonFiniteInput, planarRotor(f32, value));
+    }
+    try std.testing.expectError(error.NonFiniteNorm, normalize(E2.Vector.init(.{ std.math.floatMax(f32), 0 })));
+    const Mixed = multivector.Basis(f32, .{ .p = 1, .q = 1 });
+    try std.testing.expectError(error.ZeroVector, normalize(Mixed.Vector.init(.{ 1, 1 })));
+    const timelike = try normalize(Mixed.Vector.init(.{ 0, 2 }));
+    try std.testing.expectEqual(@as(f32, -1), timelike.scalarNormSquared());
+    try std.testing.expectError(error.UnrepresentableResult, normalize(Mixed.Vector.init(.{ 2, 1.9995 })));
+    const Projective = multivector.Vector(f32, .{ .p = 1, .r = 1 });
+    try std.testing.expectError(error.NonFiniteNorm, normalize(Projective.init(.{ 1e-5, 1e15 })));
+}
+
+test "normalization fallbacks do not certify geometric invariants" {
+    const Mixed = multivector.Basis(f32, .{ .p = 1, .q = 1 });
+    const null_vector = Mixed.Vector.init(.{ 1, 1 });
+    try std.testing.expect(normalized(null_vector).eql(null_vector));
+    const negative = normalizedRotor(Mixed.Full.EvenType.init(.{ 0, 1 }));
+    try std.testing.expectEqual(@as(f32, -1), negative.gp(negative.reverse()).scalarCoeff());
+    const E4 = multivector.Basis(f32, .euclidean(4));
+    const nonversor = E4.Scalar.init(.{1}).add(E4.signedBlade("e1234")).scale(1.0 / @sqrt(@as(f32, 2))).cast(E4.Full.EvenType);
+    const scaled = normalizedRotor(nonversor);
+    try std.testing.expect(@abs(scaled.gp(scaled.reverse()).coeffNamed("e1234")) > 0.9);
+    const zero = E4.Full.EvenType.zero();
+    try std.testing.expect(normalizedRotor(zero).eql(zero));
+    const invalid = E4.Scalar.init(.{std.math.inf(f32)}).cast(E4.Full.EvenType);
+    try std.testing.expect(normalizedRotor(invalid).eql(invalid));
+}
+
 test "planar rotor stays normalized for multiple angles" {
     inline for ([_]f64{ 0.0, std.math.pi / 3.0, -std.math.pi / 2.0, std.math.pi }) |angle| {
-        const rotor = planarRotor(f64, angle);
+        const rotor = try planarRotor(f64, angle);
         const identity = rotor.gp(rotor.reverse());
         try std.testing.expect(nearlyEqual(identity.scalarCoeff(), 1.0, 1e-12));
         try std.testing.expect(nearlyEqual(identity.coeffNamed("e12"), 0.0, 1e-12));
@@ -442,7 +511,7 @@ test "rotorFromTo maps normalized direction and preserves norm" {
     const from = E2.e(1).add(E2.e(2));
     const to = E2.e(2).sub(E2.e(1));
 
-    const rotor = rotorFromTo(from, to);
+    const rotor = try rotorFromTo(from, to);
     const rotated_from = rotated(from, rotor);
     const from_unit = try normalize(from);
     const to_unit = try normalize(to);

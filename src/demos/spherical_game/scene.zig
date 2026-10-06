@@ -261,7 +261,8 @@ pub const GroundPose = struct {
     }
 
     pub fn camera(self: GroundPose) Pose {
-        const lift = sg.rotorBetween(self.position, worldUp(), self.eye_height / self.radius);
+        // Demo state supplies finite scene radii and internally generated frames.
+        const lift = sg.rotorBetween(self.position, worldUp(), self.eye_height / self.radius) catch unreachable;
         const pose = Pose{
             .position = sg.rotate(self.position, lift),
             .right = sg.rotate(self.right, lift),
@@ -269,7 +270,7 @@ pub const GroundPose = struct {
             .forward = sg.rotate(self.forward, lift),
             .radius = self.radius,
         };
-        return pose.pitch(self.pitch_angle);
+        return pose.pitch(self.pitch_angle) catch unreachable;
     }
 
     pub fn moveForward(self: GroundPose, distance: f32) GroundPose {
@@ -281,7 +282,7 @@ pub const GroundPose = struct {
     }
 
     pub fn yaw(self: GroundPose, angle: f32) GroundPose {
-        return self.applied(sg.rotorBetween(self.right, self.forward, angle));
+        return self.applied(sg.rotorBetween(self.right, self.forward, angle) catch unreachable);
     }
 
     pub fn pitch(self: GroundPose, angle: f32) GroundPose {
@@ -293,7 +294,7 @@ pub const GroundPose = struct {
     }
 
     fn moved(self: GroundPose, axis: Direction, distance: f32) GroundPose {
-        return self.applied(sg.rotorBetween(self.position, axis, distance / self.radius));
+        return self.applied(sg.rotorBetween(self.position, axis, distance / self.radius) catch unreachable);
     }
 
     fn applied(self: GroundPose, rotor: sg.Rotor) GroundPose {
@@ -318,7 +319,7 @@ pub const Cube = struct {
     planes: [6]Plane,
 
     pub fn grounded(frame: GroundPose, half_extent: f32) Cube {
-        const lift = sg.rotorBetween(frame.position, worldUp(), half_extent / frame.radius);
+        const lift = sg.rotorBetween(frame.position, worldUp(), half_extent / frame.radius) catch unreachable;
         const center = sg.rotate(frame.position, lift);
         const right = sg.rotate(frame.right, lift);
         const up = sg.rotate(worldUp(), lift);
@@ -1136,7 +1137,7 @@ test "cube planes enclose the center and share face edges" {
     const a = cube.half_extent / cube.radius;
     const beta = std.math.atan(@sqrt(2.0) * std.math.tan(a));
     const diagonal = cube.right.scale(-1.0).add(cube.forward.scale(-1.0));
-    const edge = sg.expMap(cube.center, sg.normalize(diagonal).?.scale(beta * cube.radius), cube.radius);
+    const edge = try sg.expMap(cube.center, sg.normalize(diagonal).?.scale(beta * cube.radius), cube.radius);
 
     for (cube.planes) |plane| {
         const side = sg.dot(edge, plane.inward_normal);
@@ -1243,7 +1244,7 @@ test "fence planks flip through their edges when circling the ring" {
     const ground = scene.fence.pole.scale(@sin(eps))
         .add(scene.fence.anchor.scale(@cos(stand_theta) * @cos(eps)))
         .add(scene.fence.axis.scale(@sin(stand_theta) * @cos(eps)));
-    const lift = sg.rotorBetween(ground, worldUp(), default_eye_height / default_radius);
+    const lift = try sg.rotorBetween(ground, worldUp(), default_eye_height / default_radius);
     const pose = sg.Pose{
         .position = sg.rotate(ground, lift),
         .right = sg.rotate(ground, lift),

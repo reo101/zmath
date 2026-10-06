@@ -99,16 +99,18 @@ const P3 = zmath.ga.pga.extend(RawP3);
 
 pub fn main() !void {
     const motor = P3.compose(
-        P3.translator(.{ 1, 0, 0 }),
+        try P3.translator(.{ 1, 0, 0 }),
         try P3.rotation(.{ 0, 0, 1 }, std.math.pi / 2),
     );
-    const transformed = P3.transformPoint(P3.point(.{ 1, 0, 0 }), motor);
+    const transformed = P3.transformPoint(try P3.point(.{ 1, 0, 0 }), motor);
     _ = transformed;
 }
 ```
 
 Use `P3.prepare(motor)` when applying one motor to a batch of points or
-directions.
+directions. Geometric constructors reject invalid inputs with named errors;
+carrier aliases and direct coefficient initialization do not prove unit or
+geometric invariants.
 
 ## Carrier storage
 
@@ -137,7 +139,9 @@ the workaround.
 - `hodgeDual()` is the metric-aware dual and requires a non-degenerate metric.
 
 See [GA conventions](docs/ga-conventions.md) for products, duality, expression
-syntax, RGA operations, and the PGA model.
+syntax, normalization/inverse limits, RGA operations, and the PGA model.
+See [geometry construction contracts](docs/geometry-contracts.md) for fallible
+pose/frame construction, geometric input validation, and trusted kernels.
 
 ## Build and test
 

@@ -43,6 +43,8 @@ pub const Vec4 = struct {
     }
 };
 
+/// Ambient orthonormal camera frame. Direct field initialization is unchecked;
+/// use frameFromChart() or frameFromProjectiveChart() for checked construction.
 pub const Frame = struct {
     metric: Metric,
     radius: f32,
@@ -51,6 +53,13 @@ pub const Frame = struct {
     up: Vec4,
     forward: Vec4,
 };
+
+fn checkedModelPoint(metric: Metric, point: Vec4) ?Vec4 {
+    const expected: f32 = if (metric == .spherical) 1 else -1;
+    const norm_squared = dot(metric, point, point);
+    if (!std.math.isFinite(norm_squared) or @abs(norm_squared - expected) > 1e-3) return null;
+    return point;
+}
 
 pub const ViewSample = struct {
     x: f32,
@@ -83,19 +92,20 @@ fn homogeneousPointCoords(comptime H: type, p: anytype) [4]f32 {
     inline for (0..4) |i| {
         v[i] = dual.coeff(H.Vector.blades[i]);
     }
-    // Reorder to [w, x, y, z] and normalize the sign on w.
-    var coords = [4]f32{ v[3], v[0], v[1], v[2] };
-    if (coords[0] < 0.0) {
-        for (&coords) |*c| c.* = -c.*;
-    }
-    return coords;
+    // Preserve ambient orientation: forcing w positive would replace a
+    // spherical point beyond the chart equator with its antipode.
+    return .{ v[3], v[0], v[1], v[2] };
 }
 
+/// Embeds finite chart coordinates at a finite positive radius. Returns null
+/// outside the hyperbolic ball, for non-finite intermediate arithmetic, or
+/// when the model's signed unit squared norm cannot be represented within 1e-3.
 pub fn embedConformal(metric: Metric, radius: f32, chart: Vec3) ?Vec4 {
-    if (radius <= 0.0) return null;
-    const scaled = chart.scale(1.0 / radius);
+    if (!std.math.isFinite(radius) or radius <= 0.0) return null;
+    const scaled = Vec3{ .x = chart.x / radius, .y = chart.y / radius, .z = chart.z / radius };
     const r2 = scaled.x * scaled.x + scaled.y * scaled.y + scaled.z * scaled.z;
-    return switch (metric) {
+    if (!std.math.isFinite(r2)) return null;
+    const ambient: Vec4 = switch (metric) {
         .spherical => blk: {
             const denom = 1.0 + r2;
             break :blk .{
@@ -116,6 +126,7 @@ pub fn embedConformal(metric: Metric, radius: f32, chart: Vec3) ?Vec4 {
             };
         },
     };
+    return checkedModelPoint(metric, ambient);
 }
 
 /// Same embedding as `embedConformal`, but materialized through the GA
@@ -135,11 +146,13 @@ pub fn embedConformalGa(metric: Metric, radius: f32, chart: Vec3) ?Vec4 {
     };
 }
 
+/// Projective counterpart of embedConformal(), with the same input rejection.
 pub fn embedProjective(metric: Metric, radius: f32, chart: Vec3) ?Vec4 {
-    if (radius <= 0.0) return null;
-    const scaled = chart.scale(1.0 / radius);
+    if (!std.math.isFinite(radius) or radius <= 0.0) return null;
+    const scaled = Vec3{ .x = chart.x / radius, .y = chart.y / radius, .z = chart.z / radius };
     const r2 = scaled.x * scaled.x + scaled.y * scaled.y + scaled.z * scaled.z;
-    return switch (metric) {
+    if (!std.math.isFinite(r2)) return null;
+    const ambient: Vec4 = switch (metric) {
         .spherical => blk: {
             const inv = 1.0 / @sqrt(1.0 + r2);
             break :blk .{ .w = inv, .x = scaled.x * inv, .y = scaled.y * inv, .z = scaled.z * inv };
@@ -150,28 +163,21 @@ pub fn embedProjective(metric: Metric, radius: f32, chart: Vec3) ?Vec4 {
             break :blk .{ .w = inv, .x = scaled.x * inv, .y = scaled.y * inv, .z = scaled.z * inv };
         },
     };
+    return checkedModelPoint(metric, ambient);
 }
 
+/// Checked projective embedding materialized through the GA point helpers.
 pub fn embedProjectiveGa(metric: Metric, radius: f32, chart: Vec3) ?Vec4 {
-    if (radius <= 0.0) return null;
-    const scaled = chart.scale(1.0 / radius);
-    const r2 = scaled.x * scaled.x + scaled.y * scaled.y + scaled.z * scaled.z;
+    const ambient = embedProjective(metric, radius, chart) orelse return null;
     return switch (metric) {
-        .spherical => blk: {
-            const inv = 1.0 / @sqrt(1.0 + r2);
-            break :blk fromArray(homogeneousPointCoords(
-                EllipticH,
-                pointFromHomogeneous(EllipticH, inv, .{ scaled.x * inv, scaled.y * inv, scaled.z * inv }),
-            ));
-        },
-        .hyperbolic => blk: {
-            if (r2 >= 1.0) return null;
-            const inv = 1.0 / @sqrt(1.0 - r2);
-            break :blk fromArray(homogeneousPointCoords(
-                HyperbolicH,
-                pointFromHomogeneous(HyperbolicH, inv, .{ scaled.x * inv, scaled.y * inv, scaled.z * inv }),
-            ));
-        },
+        .spherical => fromArray(homogeneousPointCoords(
+            EllipticH,
+            pointFromHomogeneous(EllipticH, ambient.w, .{ ambient.x, ambient.y, ambient.z }),
+        )),
+        .hyperbolic => fromArray(homogeneousPointCoords(
+            HyperbolicH,
+            pointFromHomogeneous(HyperbolicH, ambient.w, .{ ambient.x, ambient.y, ambient.z }),
+        )),
     };
 }
 
@@ -182,6 +188,8 @@ pub fn dot(metric: Metric, a: Vec4, b: Vec4) f32 {
     };
 }
 
+/// Constructs a tangent orthonormal frame, or null for invalid chart/angle
+/// inputs or a numerically degenerate tangent basis.
 pub fn frameFromChart(metric: Metric, radius: f32, position: Vec3, yaw: f32, pitch: f32) ?Frame {
     return frameFromEmbedding(metric, radius, position, yaw, pitch, .conformal);
 }
@@ -193,6 +201,7 @@ pub fn frameFromProjectiveChart(metric: Metric, radius: f32, position: Vec3, yaw
 const ChartModel = enum { conformal, projective };
 
 fn frameFromEmbedding(metric: Metric, radius: f32, position: Vec3, yaw: f32, pitch: f32, chart_model: ChartModel) ?Frame {
+    if (!std.math.isFinite(yaw) or !std.math.isFinite(pitch)) return null;
     const origin = embedGa(metric, radius, position, chart_model) orelse return null;
     const flat = flatCameraBasis(yaw, pitch);
 
@@ -208,6 +217,14 @@ fn frameFromEmbedding(metric: Metric, radius: f32, position: Vec3, yaw: f32, pit
     up = rejectSpacelike(metric, up, forward);
     up = normalizeSpacelike(metric, up) orelse return null;
 
+    const basis = [_]Vec4{ origin, right, up, forward };
+    for (basis, 0..) |a, i| {
+        for (basis[i..], i..) |other, j| {
+            const expected: f32 = if (i != j) 0 else if (i == 0 and metric == .hyperbolic) -1 else 1;
+            const product = dot(metric, a, other);
+            if (!std.math.isFinite(product) or @abs(product - expected) > 1e-3) return null;
+        }
+    }
     return .{
         .metric = metric,
         .radius = radius,
@@ -218,6 +235,8 @@ fn frameFromEmbedding(metric: Metric, radius: f32, position: Vec3, yaw: f32, pit
     };
 }
 
+/// Samples a model point using a valid frame. Inputs must belong to the same
+/// metric model; this projection kernel does not validate those invariants.
 pub fn samplePoint(frame: Frame, point: Vec4) ?ViewSample {
     const z = dot(frame.metric, point, frame.forward);
     if (z <= 1e-4 or !std.math.isFinite(z)) return null;
@@ -231,6 +250,7 @@ pub fn samplePoint(frame: Frame, point: Vec4) ?ViewSample {
         .hyperbolic => acosh(@max(-dot(.hyperbolic, frame.origin, point), 1.0)) * frame.radius,
     };
 
+    if (!std.math.isFinite(distance)) return null;
     return .{ .x = x, .y = y, .z = z, .distance = distance };
 }
 
@@ -295,6 +315,32 @@ fn expectVec4ApproxEq(expected: Vec4, actual: Vec4, tolerance: f32) !void {
     }
 }
 
+test "chart construction rejects non-finite and unrepresentable inputs" {
+    const valid = Vec3{ .x = 0.2, .y = -0.3, .z = 0.4 };
+    inline for (.{ Metric.spherical, Metric.hyperbolic }) |metric| {
+        inline for (.{ embedConformal, embedConformalGa, embedProjective, embedProjectiveGa }) |embed| {
+            for ([_]f32{ 0, -1, std.math.nan(f32), std.math.inf(f32), -std.math.inf(f32) }) |radius| {
+                try std.testing.expect(embed(metric, radius, valid) == null);
+            }
+            for ([_]f32{ std.math.nan(f32), std.math.inf(f32), -std.math.inf(f32), std.math.floatMax(f32) }) |value| {
+                try std.testing.expect(embed(metric, 1, .{ .x = value, .y = 0, .z = 0 }) == null);
+            }
+            try std.testing.expect(embed(metric, std.math.floatMin(f32), valid) == null);
+        }
+        inline for (.{ frameFromChart, frameFromProjectiveChart }) |construct_frame| {
+            for ([_]f32{ std.math.nan(f32), std.math.inf(f32), -std.math.inf(f32) }) |angle| {
+                try std.testing.expect(construct_frame(metric, 1, valid, angle, 0) == null);
+                try std.testing.expect(construct_frame(metric, 1, valid, 0, angle) == null);
+            }
+        }
+    }
+    inline for (.{ embedConformal, embedConformalGa, embedProjective, embedProjectiveGa }) |embed| {
+        try std.testing.expect(embed(.hyperbolic, 1, .{ .x = 1, .y = 0, .z = 0 }) == null);
+    }
+    const near_boundary: f32 = 1 - std.math.floatEps(f32);
+    try std.testing.expect(embedConformal(.hyperbolic, 1, .{ .x = near_boundary, .y = 0, .z = 0 }) == null);
+}
+
 test "conformal embeddings lie on spherical and hyperbolic models" {
     const sphere = embedConformal(.spherical, 7.0, .{ .x = 0.4, .y = -0.7, .z = 1.2 }).?;
     const hyper = embedConformal(.hyperbolic, 7.0, .{ .x = 0.4, .y = -0.7, .z = 1.2 }).?;
@@ -314,6 +360,14 @@ test "conformal embeddings round-trip through the GA homogeneous point helpers" 
         try expectVec4ApproxEq(embedConformal(.spherical, 5.0, sample).?, embedConformalGa(.spherical, 5.0, sample).?, 1e-6);
         try expectVec4ApproxEq(embedConformal(.hyperbolic, 5.0, sample).?, embedConformalGa(.hyperbolic, 5.0, sample).?, 1e-6);
     }
+}
+
+test "spherical GA embedding preserves ambient point orientation" {
+    const chart = Vec3{ .x = 2, .y = 0, .z = 0 };
+    const expected = Vec4{ .w = -0.6, .x = 0.8, .y = 0, .z = 0 };
+    try expectVec4ApproxEq(expected, embedConformal(.spherical, 1, chart).?, 1e-6);
+    try expectVec4ApproxEq(expected, embedConformalGa(.spherical, 1, chart).?, 1e-6);
+    try std.testing.expect(frameFromChart(.spherical, 1, chart, 0.2, 0.1) != null);
 }
 
 test "projective embeddings match the GA proper point helpers" {

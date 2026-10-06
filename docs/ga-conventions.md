@@ -26,6 +26,43 @@ Prefer `complementDual()` or `hodgeDual()` in public examples. Use bare
 - `dot()` is the Hestenes dot product.
 - `leftContraction()` and `rightContraction()` are explicit contractions.
 
+## Representations and normalization
+
+Carrier types establish coefficient type, metric signature, and possible blade
+support, not geometric membership. `Rotor` is an even carrier; PGA `Motor` is
+`base.Even`, and PGA `Point`/`Direction` are the same trivector type. Raw
+`init()`, casts, and field writes do not prove unit norm, zero homogeneous
+weight, decomposability, or the rotor/Study identities.
+
+| Helper | Contract |
+| --- | --- |
+| `normalize(v)` | Checked floating grade-1 normalization by absolute metric magnitude. Non-finite inputs/norms, near-zero/null magnitude, and unrepresentable normalized results fail. Timelike vectors retain scalar norm squared -1. |
+| `normalized(mv)` | Unchecked scaling by `sqrt(abs(scalarNormSquared()))`; near-zero/null magnitude retains the input. No finite-value or geometric validation. |
+| `normalizedRotor(r)` | Scales by `sqrt(abs(<r * reverse(r)>_0))`. Near-zero/non-finite scalar denominators retain the input. Nonscalar terms are ignored; negative denominators produce scalar -1, not +1. This does not turn arbitrary even values into rotors. |
+| `debugAssertRotor(r, epsilon)` | Asserts finite identity for the complete `r * reverse(r)` only in Debug; release modes do nothing. |
+
+Near-zero thresholds are 5e-3 for f16, 1e-6 for f32, and 1e-12 for other floating
+coefficient types. Successful scalar-magnitude normalization is not proof of
+versor membership. A nonzero null vector cannot be normalized by its metric
+magnitude; coefficient-space length is a different quantity.
+
+`planarRotor()` and `rotorFromTo()` now return named errors. The planar helper
+requires a finite angle; from/to helpers require finite nonzero 2D Euclidean
+vectors with representable normalization. `tryRotorFromTo()` retains the same
+checked contract. Antiparallel inputs choose the canonical e12 half-turn.
+`rotated()` checks carrier compatibility, not unit-versor membership; arbitrary
+even values retain grade-projected sandwich semantics rather than an isometry.
+
+## Restricted inverse
+
+`inverse()` uses `reverse(A) / <A * reverse(A)>_0`, not a general multivector
+inverse algorithm. Inputs and the nonzero denominator must be finite; every
+nonscalar denominator coefficient must be **exactly zero**. Non-finite results
+are rejected. Null can mean an unsupported denominator, numerical
+underflow/overflow, or a singular value; it does not prove that a general
+algebraic inverse is absent. Coefficients are divided directly to avoid an
+unrepresentable reciprocal when the final inverse is representable.
+
 ## RGA interior products and projections
 
 `ga.rga` (also forwarded on every instantiated namespace) ships the rigid
@@ -136,9 +173,22 @@ Planes are vectors:
 
 `P3` names the semantic sparse carriers as `Plane`, `Line`, `Point`,
 `Direction`, and `Motor`; the underlying general algebra remains available as
-`P3.base`. `P3.rotation(axis, angle)` and `P3.translator(.{ dx, dy, dz })`
-construct unit motors, `P3.compose(lhs, rhs)` applies `rhs` then `lhs`, and
-`P3.transformPoint(point, motor)` applies the sandwich. Motor composition and
+`P3.base`. The geometric constructors return named errors:
+
+- `point(position)` requires finite coordinates and sets homogeneous weight 1.
+  Signed integer coordinates must also permit the complement's sign changes;
+  an unrepresentable negation returns `error.UnrepresentableResult`.
+- `direction(vector)` requires finite nonzero coordinates and sets weight 0;
+  it does not normalize Euclidean length. Zero returns `error.ZeroDirection`.
+- `rotation(axis, angle)` requires a finite nonzero axis and finite angle.
+  Maximum-component scaling avoids squared-axis-norm overflow/underflow.
+- `translator(displacement)` requires finite displacement; zero returns identity.
+
+Rotation/translation constructors produce unit motors up to floating-point
+roundoff, not invariant-bearing types. `P3.compose(lhs, rhs)` applies `rhs` then
+`lhs`, and `P3.transformPoint(point, motor)` applies the sandwich. A rigid
+isometry requires a genuine unit motor; arbitrary even values retain the
+algebraic action. Motor composition and
 point/direction actions use the dual-quaternion basis of the same `Even`
 subalgebra internally, so they retain general PGA product semantics for
 non-unit motors without materializing intermediate multivectors. For batches,
@@ -149,7 +199,8 @@ So for PGA, `wedge()`/`meet()` is the direct incidence product and
 `join()` is the regressive product built through complement duality.
 The same representation (with a positive or negative homogeneous axis)
 is what the constant-curvature kernel uses for its EPGA/HPGA round-trip
-helpers.
+helpers. See [geometry construction contracts](geometry-contracts.md) for
+checked spherical/constant-curvature entry points and trusted projection kernels.
 
 ## Runtime blade indices
 

@@ -108,7 +108,7 @@ fn benchmarkRotor2(io: std.Io, iterations: usize) u64 {
     var i: usize = 0;
     while (i < iterations) : (i += 1) {
         angle += 0.0009;
-        const r = ga.rotors.planarRotor(f32, angle);
+        const r = ga.rotors.planarRotor(f32, angle) catch unreachable;
         v = ga.rotors.rotated(v, r);
     }
     const end = timestampNow(io);
@@ -178,8 +178,8 @@ fn benchmarkRotor3(io: std.Io, iterations: usize) u64 {
 fn benchmarkGenericPgaMotorComposition(io: std.Io, iterations: usize) u64 {
     const axis: @Vector(3, f32) = .{ 0.2, -0.5, 0.46904158 };
     const displacement: @Vector(3, f32) = .{ 0.01, -0.02, 0.005 };
-    const delta = P3.compose(P3.translator(displacement), P3.rotation(axis, 0.0009) catch unreachable);
-    var motor = P3.compose(P3.translator(.{ 0.3, -0.2, 0.1 }), P3.rotation(axis, 0.7) catch unreachable);
+    const delta = P3.compose(P3.translator(displacement) catch unreachable, P3.rotation(axis, 0.0009) catch unreachable);
+    var motor = P3.compose(P3.translator(.{ 0.3, -0.2, 0.1 }) catch unreachable, P3.rotation(axis, 0.7) catch unreachable);
 
     const start = timestampNow(io);
     var i: usize = 0;
@@ -193,8 +193,8 @@ fn benchmarkGenericPgaMotorComposition(io: std.Io, iterations: usize) u64 {
 fn benchmarkPgaMotorComposition(io: std.Io, iterations: usize) u64 {
     const axis: @Vector(3, f32) = .{ 0.2, -0.5, 0.46904158 };
     const displacement: @Vector(3, f32) = .{ 0.01, -0.02, 0.005 };
-    const delta = P3.compose(P3.translator(displacement), P3.rotation(axis, 0.0009) catch unreachable);
-    var motor = P3.compose(P3.translator(.{ 0.3, -0.2, 0.1 }), P3.rotation(axis, 0.7) catch unreachable);
+    const delta = P3.compose(P3.translator(displacement) catch unreachable, P3.rotation(axis, 0.0009) catch unreachable);
+    var motor = P3.compose(P3.translator(.{ 0.3, -0.2, 0.1 }) catch unreachable, P3.rotation(axis, 0.7) catch unreachable);
 
     const start = timestampNow(io);
     var i: usize = 0;
@@ -221,8 +221,8 @@ fn benchmarkDualQuaternionComposition(io: std.Io, iterations: usize) u64 {
 
 fn benchmarkGenericPgaMotorPoint(io: std.Io, iterations: usize) u64 {
     const axis: @Vector(3, f32) = .{ 0.2, -0.5, 0.46904158 };
-    const motor = P3.compose(P3.translator(.{ 0.01, -0.02, 0.005 }), P3.rotation(axis, 0.0009) catch unreachable);
-    var point = P3.point(.{ 1.0, 0.5, -0.25 });
+    const motor = P3.compose(P3.translator(.{ 0.01, -0.02, 0.005 }) catch unreachable, P3.rotation(axis, 0.0009) catch unreachable);
+    var point = P3.point(.{ 1.0, 0.5, -0.25 }) catch unreachable;
 
     const start = timestampNow(io);
     var i: usize = 0;
@@ -235,8 +235,8 @@ fn benchmarkGenericPgaMotorPoint(io: std.Io, iterations: usize) u64 {
 
 fn benchmarkPgaMotorPoint(io: std.Io, iterations: usize) u64 {
     const axis: @Vector(3, f32) = .{ 0.2, -0.5, 0.46904158 };
-    const motor = P3.compose(P3.translator(.{ 0.01, -0.02, 0.005 }), P3.rotation(axis, 0.0009) catch unreachable);
-    var point = P3.point(.{ 1.0, 0.5, -0.25 });
+    const motor = P3.compose(P3.translator(.{ 0.01, -0.02, 0.005 }) catch unreachable, P3.rotation(axis, 0.0009) catch unreachable);
+    var point = P3.point(.{ 1.0, 0.5, -0.25 }) catch unreachable;
 
     const start = timestampNow(io);
     var i: usize = 0;
@@ -249,9 +249,9 @@ fn benchmarkPgaMotorPoint(io: std.Io, iterations: usize) u64 {
 
 fn benchmarkPreparedPgaMotorPoint(io: std.Io, iterations: usize) u64 {
     const axis: @Vector(3, f32) = .{ 0.2, -0.5, 0.46904158 };
-    const motor = P3.compose(P3.translator(.{ 0.01, -0.02, 0.005 }), P3.rotation(axis, 0.0009) catch unreachable);
+    const motor = P3.compose(P3.translator(.{ 0.01, -0.02, 0.005 }) catch unreachable, P3.rotation(axis, 0.0009) catch unreachable);
     const action = P3.prepare(motor);
-    var point = P3.point(.{ 1.0, 0.5, -0.25 });
+    var point = P3.point(.{ 1.0, 0.5, -0.25 }) catch unreachable;
 
     const start = timestampNow(io);
     var i: usize = 0;
@@ -279,10 +279,10 @@ fn benchmarkDualQuaternionPoint(io: std.Io, iterations: usize) u64 {
 fn assertPgaMotorMatchesDualQuaternion() void {
     const axis: @Vector(3, f32) = .{ 0.2, -0.5, 0.46904158 };
     const translation: @Vector(3, f32) = .{ 0.3, -0.2, 0.1 };
-    const motor = P3.compose(P3.translator(translation), P3.rotation(axis, 0.7) catch unreachable);
+    const motor = P3.compose(P3.translator(translation) catch unreachable, P3.rotation(axis, 0.7) catch unreachable);
     const dual_quaternion = dualQuaternionFromRotationTranslation(axis, 0.7, translation);
-    const transformed = P3.transformPoint(P3.point(.{ 1.0, 0.5, -0.25 }), motor);
-    const expected = P3.point(transformPointByDualQuaternion(.{ 1.0, 0.5, -0.25 }, dual_quaternion));
+    const transformed = P3.transformPoint(P3.point(.{ 1.0, 0.5, -0.25 }) catch unreachable, motor);
+    const expected = P3.point(transformPointByDualQuaternion(.{ 1.0, 0.5, -0.25 }, dual_quaternion)) catch unreachable;
 
     inline for (P3.Point.blades) |mask| {
         if (@abs(transformed.coeff(mask) - expected.coeff(mask)) > 1e-5) {

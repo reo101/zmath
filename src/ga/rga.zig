@@ -77,14 +77,16 @@ pub fn weightExpansion(a: anytype, b: anytype) @TypeOf(a.wedge(weightDual(b))) {
     return a.wedge(weightDual(b));
 }
 
-/// Orthogonal RGA projection of `a` onto `b`: `b ∨ (a ∧ b☆)`, where the
-/// parenthesized part is the weight expansion of `a` into `b`.
+/// Raw RGA projection combinator `b ∨ (a ∧ b☆)`, where the parenthesized
+/// part is the weight expansion. Geometric interpretation requires the mixed
+/// bulk/weight representation; this does not normalize or validate either input.
 pub fn project(a: anytype, b: anytype) @TypeOf(b.antiWedge(a.wedge(weightDual(b)))) {
     return b.antiWedge(a.wedge(weightDual(b)));
 }
 
-/// Orthogonal RGA antiprojection of `a` onto `b`: `b ∧ (a ∨ b☆)`, where the
-/// parenthesized part is the weight contraction of `a` with `b`.
+/// Raw RGA antiprojection combinator `b ∧ (a ∨ b☆)`, where the parenthesized
+/// part is the weight contraction. As with project(), neither normalization nor
+/// representation invariants are established by this operation.
 pub fn antiproject(a: anytype, b: anytype) @TypeOf(b.wedge(a.antiWedge(weightDual(b)))) {
     return b.wedge(a.antiWedge(weightDual(b)));
 }

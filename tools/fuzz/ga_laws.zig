@@ -186,7 +186,7 @@ fn checkRotorFromToRoundtrip(rand: std.Random) !void {
     // Avoid near-antipodal pairs where the 2D rotor is ambiguous.
     if (from_unit.add(to_unit).scalarNormSquared() < 1e-3) to_unit = to_unit.negate();
 
-    const rotor = rotors.rotorFromTo(from_unit, to_unit);
+    const rotor = try rotors.rotorFromTo(from_unit, to_unit);
     try expectNear(rotors.rotated(from_unit, rotor), to_unit, 1e-7);
 }
 

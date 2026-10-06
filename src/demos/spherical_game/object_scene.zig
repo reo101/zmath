@@ -114,7 +114,7 @@ pub fn parse(allocator: std.mem.Allocator, source: []const u8) !std.json.Parsed(
 }
 
 test "S3 object transforms use GA rotors" {
-    const rotor = sg.rotorBetween(
+    const rotor = try sg.rotorBetween(
         sg.Point.init(.{ 1, 0, 0, 0 }),
         sg.Point.init(.{ 0, 0, 0, 1 }),
         std.math.pi / 2.0,
@@ -236,12 +236,12 @@ test "scene validation requires the Spin4 rotor identity" {
     objects[0].transform = .{ std.math.inf(f32), 0, 0, 0, 0, 0, 0, 0 };
     try std.testing.expectError(error.NonUnitRotor, file.validate());
 
-    const first = sg.rotorBetween(
+    const first = try sg.rotorBetween(
         sg.Point.init(.{ 1, 0, 0, 0 }),
         sg.Point.init(.{ 0, 1, 0, 0 }),
         0.7,
     );
-    const second = sg.rotorBetween(
+    const second = try sg.rotorBetween(
         sg.Point.init(.{ 0, 0, 1, 0 }),
         sg.Point.init(.{ 0, 0, 0, 1 }),
         -0.4,

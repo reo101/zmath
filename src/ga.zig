@@ -166,7 +166,7 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
                 pub const Odd = Self.OddMultivector(T);
                 /// Pseudoscalar type bound to `T`.
                 pub const Pseudoscalar = Self.Pseudoscalar(T);
-                /// Rotor type bound to `T`.
+                /// Even carrier bound to `T`; no unit-versor invariant is enforced.
                 pub const Rotor = Self.Rotor(T);
                 /// Basis helper providing named basis vectors, bound to `T`.
                 pub const Basis = Self.Basis(T);
@@ -216,17 +216,18 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
                     return rotors.normSquared(mv);
                 }
 
-                /// Normalizes a multivector to unit magnitude.
+                /// Checked absolute metric normalization of a floating grade-1 vector.
                 pub fn normalize(mv: anytype) rotors.RotorError!@TypeOf(mv) {
                     return rotors.normalize(mv);
                 }
 
-                /// Normalizes a multivector, returning it as is if zero.
+                /// Unchecked magnitude scaling; near-zero/null inputs remain unchanged.
                 pub fn normalized(mv: anytype) @TypeOf(mv) {
                     return rotors.normalized(mv);
                 }
 
-                /// Normalizes a rotor, returning it as is if zero.
+                /// Scalar-denominator scaling of an even carrier, not versor validation.
+                /// Near-zero/non-finite denominators retain the input.
                 pub fn normalizedRotor(rotor: anytype) @TypeOf(rotor) {
                     return rotors.normalizedRotor(rotor);
                 }
@@ -379,7 +380,8 @@ pub fn AlgebraWithNamingOptions(comptime sig: blades.MetricSignature, comptime n
                     return mv.cliffordConjugate();
                 }
 
-                /// Returns the multiplicative inverse if defined.
+                /// Reverse-based inverse for a finite nonzero purely scalar denominator;
+                /// null does not imply that no general algebraic inverse exists.
                 pub fn inverse(mv: anytype) @TypeOf(mv.inverse()) {
                     return mv.inverse();
                 }
@@ -411,7 +413,7 @@ test "ga facade exposes canonical family and rotor surface" {
 
     const E2 = Algebra(.euclidean(2)).Basis(f64);
     const e1 = E2.e(1);
-    const half_turn = rotors.planarRotor(f64, std.math.pi);
+    const half_turn = try rotors.planarRotor(f64, std.math.pi);
     const rotated_e1 = rotors.rotated(e1, half_turn);
     try std.testing.expect(rotors.nearlyEqual(rotated_e1.coeffNamed("e1"), -1.0, 1e-12));
     try std.testing.expect(rotors.nearlyEqual(rotated_e1.coeffNamed("e2"), 0.0, 1e-12));
@@ -425,34 +427,34 @@ test "PGA extension provides motors and homogeneous transforms" {
     try std.testing.expectEqual(RawP3.Even, P3.Motor);
     try std.testing.expectEqual(RawP3.Trivector, P3.Point);
 
-    const translation = P3.translator(.{ 1.0, -2.0, 0.5 });
-    const moved_origin = P3.transformPoint(P3.point(.{ 0.0, 0.0, 0.0 }), translation);
-    const moved_direction = P3.transformDirection(P3.direction(.{ 1.0, 2.0, 3.0 }), translation);
-    const composed = P3.compose(P3.translator(.{ 1.0, 0.0, 0.0 }), P3.translator(.{ 0.0, 2.0, 0.0 }));
+    const translation = try P3.translator(.{ 1.0, -2.0, 0.5 });
+    const moved_origin = P3.transformPoint(try P3.point(.{ 0.0, 0.0, 0.0 }), translation);
+    const moved_direction = P3.transformDirection(try P3.direction(.{ 1.0, 2.0, 3.0 }), translation);
+    const composed = P3.compose(try P3.translator(.{ 1.0, 0.0, 0.0 }), try P3.translator(.{ 0.0, 2.0, 0.0 }));
     const quarter_turn = try P3.rotation(.{ 0.0, 0.0, 1.0 }, std.math.pi / 2.0);
-    const rotated_e1 = P3.transformPoint(P3.point(.{ 1.0, 0.0, 0.0 }), quarter_turn);
+    const rotated_e1 = P3.transformPoint(try P3.point(.{ 1.0, 0.0, 0.0 }), quarter_turn);
 
-    try std.testing.expect(moved_origin.eql(P3.point(.{ 1.0, -2.0, 0.5 })));
-    try std.testing.expect(moved_direction.eql(P3.direction(.{ 1.0, 2.0, 3.0 })));
-    try std.testing.expect(P3.transformPoint(P3.point(.{ 0.0, 0.0, 0.0 }), composed).eql(P3.point(.{ 1.0, 2.0, 0.0 })));
+    try std.testing.expect(moved_origin.eql(try P3.point(.{ 1.0, -2.0, 0.5 })));
+    try std.testing.expect(moved_direction.eql(try P3.direction(.{ 1.0, 2.0, 3.0 })));
+    try std.testing.expect(P3.transformPoint(try P3.point(.{ 0.0, 0.0, 0.0 }), composed).eql(try P3.point(.{ 1.0, 2.0, 0.0 })));
     inline for (P3.Point.blades) |mask| {
-        try std.testing.expectApproxEqAbs(P3.point(.{ 0.0, 1.0, 0.0 }).coeff(mask), rotated_e1.coeff(mask), 1e-12);
+        try std.testing.expectApproxEqAbs((try P3.point(.{ 0.0, 1.0, 0.0 })).coeff(mask), rotated_e1.coeff(mask), 1e-12);
     }
     const arbitrary_lhs = P3.compose(
-        P3.translator(.{ 0.3, -0.1, 0.2 }),
+        try P3.translator(.{ 0.3, -0.1, 0.2 }),
         try P3.rotation(.{ 1.0, 2.0, -1.0 }, 0.7),
     ).add(P3.compose(
-        P3.translator(.{ -0.2, 0.4, 0.1 }),
+        try P3.translator(.{ -0.2, 0.4, 0.1 }),
         try P3.rotation(.{ -1.0, 0.5, 2.0 }, -0.3),
     )).cast(P3.Motor);
     const arbitrary_rhs = P3.compose(
-        P3.translator(.{ -0.4, 0.2, 0.3 }),
+        try P3.translator(.{ -0.4, 0.2, 0.3 }),
         try P3.rotation(.{ 2.0, -1.0, 0.5 }, 0.4),
     );
     const generic_composed = arbitrary_lhs.gp(arbitrary_rhs);
     const optimized_composed = P3.compose(arbitrary_lhs, arbitrary_rhs);
-    const sample_point = P3.point(.{ 0.2, -0.3, 0.7 });
-    const sample_direction = P3.direction(.{ -0.5, 0.4, 0.1 });
+    const sample_point = try P3.point(.{ 0.2, -0.3, 0.7 });
+    const sample_direction = try P3.direction(.{ -0.5, 0.4, 0.1 });
     const generic_point = arbitrary_lhs.sandwichGrade(sample_point, 3).cast(P3.Point);
     const generic_direction = arbitrary_lhs.sandwichGrade(sample_direction, 3).cast(P3.Direction);
 
@@ -465,6 +467,54 @@ test "PGA extension provides motors and homogeneous transforms" {
         try std.testing.expectApproxEqAbs(generic_point.coeff(mask), P3.prepare(arbitrary_lhs).transformPoint(sample_point).coeff(mask), 1e-12);
     }
     try std.testing.expectError(error.ZeroAxis, P3.rotation(.{ 0.0, 0.0, 0.0 }, 1.0));
+}
+
+test "PGA constructors reject invalid coordinates axes and angles" {
+    const P3 = pga.extend(Algebra(.{ .p = 3, .r = 1 }).Instantiate(f32));
+    for ([_]f32{ std.math.nan(f32), std.math.inf(f32), -std.math.inf(f32) }) |value| {
+        inline for (0..3) |index| {
+            var coordinates: @Vector(3, f32) = .{ 1, 2, 3 };
+            coordinates[index] = value;
+            try std.testing.expectError(error.NonFiniteInput, P3.point(coordinates));
+            try std.testing.expectError(error.NonFiniteInput, P3.direction(coordinates));
+            try std.testing.expectError(error.NonFiniteInput, P3.translator(coordinates));
+            try std.testing.expectError(error.NonFiniteInput, P3.rotation(coordinates, 1));
+        }
+        try std.testing.expectError(error.NonFiniteInput, P3.rotation(.{ 1, 0, 0 }, value));
+    }
+    try std.testing.expectError(error.ZeroDirection, P3.direction(.{ 0, 0, 0 }));
+    try std.testing.expectError(error.ZeroAxis, P3.rotation(.{ 0, 0, 0 }, 1));
+    for ([_]f32{ std.math.floatMax(f32), std.math.floatMin(f32), 1e-30 }) |scale| {
+        const motor = try P3.rotation(.{ scale, 0, 0 }, 1);
+        try std.testing.expectApproxEqAbs(@as(f32, 1), motor.gp(motor.reverse()).scalarCoeff(), 1e-6);
+    }
+    const identity = try P3.translator(.{ 0, 0, 0 });
+    try std.testing.expectEqual(@as(f32, 1), identity.gp(identity.reverse()).scalarCoeff());
+    _ = try P3.point(.{ 0, 0, 0 });
+    const P3Integer = pga.extend(Algebra(.{ .p = 3, .r = 1 }).Instantiate(i32));
+    _ = try P3Integer.point(.{ 1, 2, 3 });
+    _ = try P3Integer.direction(.{ 1, 0, 0 });
+    try std.testing.expectError(error.UnrepresentableResult, P3Integer.point(.{ 0, std.math.minInt(i32), 0 }));
+    try std.testing.expectError(error.UnrepresentableResult, P3Integer.direction(.{ 0, std.math.minInt(i32), 0 }));
+    _ = try P3Integer.point(.{ std.math.minInt(i32), 0, std.math.minInt(i32) });
+}
+
+test "checked PGA rotations retain floating coefficient types" {
+    inline for (.{ f16, f32, f64, f80, f128 }) |T| {
+        const P3 = pga.extend(Algebra(.{ .p = 3, .r = 1 }).Instantiate(T));
+        var angle: T = 0.7;
+        std.mem.doNotOptimizeAway(&angle);
+        for ([_]T{ std.math.floatMax(T), std.math.floatMin(T) }) |scale| {
+            var axis: @Vector(3, T) = .{ scale, -scale, scale };
+            std.mem.doNotOptimizeAway(&axis);
+            const motor = try P3.rotation(axis, angle);
+            const identity = motor.gp(motor.reverse());
+            inline for (@TypeOf(identity).blades) |mask| {
+                const expected: T = if (mask.toInt() == 0) 1 else 0;
+                try std.testing.expectApproxEqAbs(expected, identity.coeff(mask), 16 * std.math.floatEps(T));
+            }
+        }
+    }
 }
 
 test "signature-baked algebra namespace drives metric-dependent products" {

@@ -4,7 +4,7 @@ pub const constant_curvature = @import("geometry/constant_curvature.zig");
 pub const spherical_game = @import("geometry/spherical_game.zig");
 
 test "spherical game module links" {
-    _ = spherical_game.Pose.north(1.0);
+    _ = try spherical_game.Pose.north(1.0);
     try std.testing.expect(true);
 }
 

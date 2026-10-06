@@ -3,6 +3,7 @@
 //! Use `extend()` with an instantiated algebra namespace. The resulting
 //! namespace keeps the raw algebra under `.base` and adds PGA names and motion
 //! helpers without changing the underlying sparse carrier types.
+const std = @import("std");
 const blades = @import("blades.zig");
 
 fn bladeMask(comptime name: []const u8) blades.BladeMask {
@@ -71,18 +72,42 @@ pub fn extend(comptime Base: type) type {
         pub const base = Base;
         pub const Coefficient = Base.Coefficient;
 
-        /// A plane `ax + by + cz + d = 0`.
+        /// Raw plane carrier for `ax + by + cz + d = 0`; no unit-normal check.
         pub const Plane = Base.Vector;
-        /// A Plücker line.
+        /// Raw bivector carrier; decomposability/Plücker constraints are unchecked.
         pub const Line = Base.Bivector;
-        /// A homogeneous finite or ideal point.
+        /// Raw homogeneous point carrier; zero/non-finite values are unchecked.
         pub const Point = Base.Trivector;
-        /// An ideal point representing a Euclidean direction.
+        /// Same carrier as Point; the type does not enforce zero weight or unit length.
         pub const Direction = Point;
-        /// An even multivector representing a rigid Euclidean motion.
+        /// Raw even carrier. Unit motor and Study constraints are not type invariants.
         pub const Motor = Base.Even;
 
-        pub const MotorError = error{ZeroAxis};
+        pub const MotorError = error{ ZeroAxis, NonFiniteInput };
+
+        fn validateCoordinates(coordinates: @Vector(3, Coefficient)) error{NonFiniteInput}!void {
+            if (comptime switch (@typeInfo(Coefficient)) {
+                .float, .comptime_float => true,
+                else => false,
+            }) {
+                inline for (0..3) |index| {
+                    if (!std.math.isFinite(coordinates[index])) return error.NonFiniteInput;
+                }
+            }
+        }
+
+        fn validatePointCoordinates(coordinates: @Vector(3, Coefficient)) error{ NonFiniteInput, UnrepresentableResult }!void {
+            try validateCoordinates(coordinates);
+            switch (@typeInfo(Coefficient)) {
+                .int => |integer| {
+                    // Complement duality negates the e2 coordinate in Cl(3,0,1).
+                    if (comptime integer.signedness == .signed) {
+                        if (coordinates[1] == std.math.minInt(Coefficient)) return error.UnrepresentableResult;
+                    }
+                },
+                else => {},
+            }
+        }
 
         const Quaternion = @Vector(4, Coefficient);
 
@@ -194,7 +219,8 @@ pub fn extend(comptime Base: type) type {
                 return transformed.complementDual().cast(Point);
             }
 
-            /// Applies this prepared motor to an ideal direction.
+            /// Applies this prepared motor to an ideal direction. The caller
+            /// must supply zero homogeneous weight; the alias does not enforce it.
             pub fn transformDirection(self: PreparedMotor, direction_value: Direction) Direction {
                 const homogeneous = direction_value.complementDual().cast(Plane);
                 var x: Coefficient = undefined;
@@ -228,33 +254,45 @@ pub fn extend(comptime Base: type) type {
             };
         }
 
-        /// Constructs the finite point at `position`.
-        pub fn point(position: @Vector(3, Coefficient)) Point {
+        /// Constructs a weight-one point from finite coordinates, without
+        /// imposing Euclidean unit length.
+        pub fn point(position: @Vector(3, Coefficient)) error{ NonFiniteInput, UnrepresentableResult }!Point {
+            try validatePointCoordinates(position);
             const homogeneous = Plane.init(.{ position[0], position[1], position[2], 1 });
             return homogeneous.complementDual().cast(Point);
         }
 
-        /// Constructs the ideal point representing `vector`.
-        pub fn direction(vector: @Vector(3, Coefficient)) Direction {
+        /// Constructs a nonzero weight-zero point from finite coordinates.
+        /// The direction is not normalized.
+        pub fn direction(vector: @Vector(3, Coefficient)) error{ NonFiniteInput, ZeroDirection, UnrepresentableResult }!Direction {
+            try validatePointCoordinates(vector);
+            if (@reduce(.And, vector == @as(@Vector(3, Coefficient), @splat(0)))) return error.ZeroDirection;
             const homogeneous = Plane.init(.{ vector[0], vector[1], vector[2], 0 });
             return homogeneous.complementDual().cast(Direction);
         }
 
-        /// Constructs the unit motor for an axis-angle rotation.
+        /// Constructs a unit motor from a finite nonzero axis and finite angle.
+        /// Maximum-component scaling avoids squared-norm overflow/underflow.
         pub fn rotation(axis: @Vector(3, Coefficient), angle_radians: Coefficient) MotorError!Motor {
-            const axis_norm_squared = @reduce(.Add, axis * axis);
-            if (axis_norm_squared == 0) return error.ZeroAxis;
+            try validateCoordinates(axis);
+            if (!std.math.isFinite(angle_radians)) return error.NonFiniteInput;
+            const maximum = @reduce(.Max, @abs(axis));
+            if (maximum == 0) return error.ZeroAxis;
+            const scaled_axis = axis / @as(@Vector(3, Coefficient), @splat(maximum));
+            const axis_norm_squared = @reduce(.Add, scaled_axis * scaled_axis);
 
             const half_angle = angle_radians / 2;
             const scale = @sin(half_angle) / @sqrt(axis_norm_squared);
-            const bivector = Base.basisBlade(e12).scale(-axis[2] * scale)
-                .add(Base.basisBlade(e13).scale(axis[1] * scale))
-                .add(Base.basisBlade(e23).scale(-axis[0] * scale));
+            const bivector = Base.basisBlade(e12).scale(-scaled_axis[2] * scale)
+                .add(Base.basisBlade(e13).scale(scaled_axis[1] * scale))
+                .add(Base.basisBlade(e23).scale(-scaled_axis[0] * scale));
             return Base.Scalar.init(.{@cos(half_angle)}).add(bivector).cast(Motor);
         }
 
-        /// Constructs the motor that translates by `displacement`.
-        pub fn translator(displacement: @Vector(3, Coefficient)) Motor {
+        /// Constructs a unit translation motor from finite displacement.
+        /// Zero displacement is valid and returns the identity motor.
+        pub fn translator(displacement: @Vector(3, Coefficient)) error{NonFiniteInput}!Motor {
+            try validateCoordinates(displacement);
             const displacement_plane = Plane.init(.{ displacement[0], displacement[1], displacement[2], 0 });
             const null_axis = Base.basisVector(4);
             const generator = displacement_plane.wedge(null_axis).scale(0.5);
@@ -279,7 +317,8 @@ pub fn extend(comptime Base: type) type {
             return prepare(motor).transformPoint(point_value);
         }
 
-        /// Applies a motor sandwich to an ideal direction.
+        /// Applies a motor sandwich to a weight-zero ideal direction. This
+        /// trusted kernel does not validate the input's homogeneous weight.
         pub fn transformDirection(direction_value: Direction, motor: Motor) Direction {
             return prepare(motor).transformDirection(direction_value);
         }

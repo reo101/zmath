@@ -1419,11 +1419,16 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
             return a_dual.dot(b_dual).dual();
         }
 
-        /// Returns the multiplicative inverse of this multivector if it exists.
-        /// Only valid for elements where self.gp(self.reverse()) is a non-zero scalar.
+        /// Reverse-based inverse, not a general multivector inverse. Requires
+        /// finite coefficients and a finite nonzero purely scalar self * reverse(self).
+        /// Returns null for unsupported values or non-finite output coefficients;
+        /// nonscalar denominator terms are rejected exactly, without tolerance.
         pub fn inverse(self: Self) ?Self {
             if (comptime !isFloatType(T)) {
                 @compileError("inverse() currently requires floating-point coefficients");
+            }
+            for (self.coeffsArray()) |coefficient| {
+                if (!std.math.isFinite(coefficient)) return null;
             }
             const rev = self.reverse();
             const denominator_mv = self.gp(rev);
@@ -1438,8 +1443,13 @@ pub fn MultivectorWithNaming(comptime T: type, comptime blade_masks: []const Bla
                 }
             }
 
-            if (denominator == 0) return null;
-            return rev.scale(@as(T, 1) / denominator);
+            if (!std.math.isFinite(denominator) or denominator == 0) return null;
+            var result_coefficients = rev.coeffsArray();
+            for (&result_coefficients) |*coefficient| {
+                coefficient.* /= denominator;
+                if (!std.math.isFinite(coefficient.*)) return null;
+            }
+            return Self.init(result_coefficients);
         }
 
         /// Returns exp(B) as an even multivector for finite bivectors with a
@@ -1806,7 +1816,34 @@ pub fn Pseudoscalar(comptime T: type, comptime sig: MetricSignature) type {
     return KVector(T, sig.dimensions(), sig);
 }
 
-/// Even multivector carrier commonly used for rotors.
+test "reverse-based inverse rejects non-finite inputs and denominators" {
+    const S = Scalar(f32, .euclidean(1));
+    for ([_]f32{ std.math.nan(f32), std.math.inf(f32), -std.math.inf(f32), std.math.floatMax(f32), 0 }) |value| {
+        try std.testing.expect(S.init(.{value}).inverse() == null);
+    }
+    const E4 = Basis(f32, .euclidean(4));
+    const nonscalar_denominator = E4.Scalar.init(.{2}).add(E4.signedBlade("e1234"));
+    try std.testing.expect(nonscalar_denominator.inverse() == null);
+    // A general inverse exists, even though the reverse-based helper rejects it.
+    const general_inverse = E4.Scalar.init(.{2}).sub(E4.signedBlade("e1234")).scale(1.0 / 3.0);
+    const product = nonscalar_denominator.gp(general_inverse);
+    inline for (@TypeOf(product).blades) |mask| {
+        try std.testing.expectApproxEqAbs(@as(f32, if (mask.toInt() == 0) 1 else 0), product.coeff(mask), 1e-6);
+    }
+    const inverse = S.init(.{2}).inverse().?;
+    try std.testing.expectEqual(@as(f32, 0.5), inverse.scalarCoeff());
+    const small_inverse = S.init(.{1e-20}).inverse().?;
+    try std.testing.expectApproxEqRel(@as(f32, 1e20), small_inverse.scalarCoeff(), 1e-4);
+    try std.testing.expect(S.init(.{std.math.floatMin(f32)}).inverse() == null);
+    const masks = comptime [_]BladeMask{ .init(1), .init(4), .init(2) };
+    const Mixed = Multivector(f32, &masks, .{ .p = 2, .q = 1 });
+    const unrepresentable_inverse = Mixed.init(.{ 1e10, 1e10, 1e-20 });
+    try std.testing.expect(unrepresentable_inverse.gp(unrepresentable_inverse.reverse()).scalarCoeff() > 0);
+    try std.testing.expect(unrepresentable_inverse.inverse() == null);
+}
+
+/// Even multivector carrier commonly used for rotors. Neither unit norm nor
+/// versor/Spin-group membership is enforced by this type.
 pub fn Rotor(comptime T: type, comptime sig: MetricSignature) type {
     return EvenMultivector(T, sig);
 }
