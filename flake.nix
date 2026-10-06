@@ -78,14 +78,15 @@
               };
             };
 
-            # CI shell: what the workflow actually executes, minus zls and the
-            # vulkan/spirv tooling (kept out so the runner never builds them
-            # from source). Kept in sync with devShells.default by hand.
+            # Headless CI tooling, without zls or interactive Vulkan utilities.
+            # Kept in sync with the workflow by hand.
             devShells.ci = pkgs.mkShell {
               packages = [
                 zig
                 pkgs.pkg-config
                 pkgs.nushell
+                pkgs.spirv-tools
+                pkgs.python3
               ];
               buildInputs = nativeGraphicsInputs;
 

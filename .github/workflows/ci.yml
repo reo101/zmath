@@ -6,8 +6,12 @@ on:
   pull_request:
 
 jobs:
-  test:
+  native:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        optimize: [debug, fast]
     steps:
       - uses: actions/checkout@v7
       - uses: cachix/install-nix-action@v31
@@ -19,7 +23,32 @@ jobs:
       # silversquirl/zig-flake) and the whole toolchain every run.
       - uses: nix-community/cache-nix-action@v7
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}-native-${{ matrix.optimize }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
-      - name: Unit and geometry tests
-        run: nix develop .#ci -c zig build test --summary all
+      - name: Native tests and expression smoke
+        run: nix develop .#ci -c zig build test fuzz-expr -Doptimize=${{ matrix.optimize }} --summary all
+
+  shaders:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            extra-substituters = https://nix-community.cachix.org
+            extra-trusted-public-keys = nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}-shaders
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+      - name: Shader validation and graphics builds
+        run: nix develop .#ci -c zig build spirv-vga spirv-raw spirv-check spirv-worlds demo-worlds-build demo-spherical-build -Doptimize=fast --summary all
+
+  test:
+    runs-on: ubuntu-latest
+    needs: [native, shaders]
+    if: always()
+    steps:
+      - name: Require all verification jobs
+        if: needs.native.result != 'success' || needs.shaders.result != 'success'
+        run: exit 1

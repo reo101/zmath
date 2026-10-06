@@ -99,6 +99,10 @@ extent, so the spherical screen fills the current framebuffer.
   regression checks.
 - `zig build demo-spherical -- --benchmark N`: Vulkan renderer benchmark.
 
+Headless CI runs Debug/fast native tests and expression smoke in parallel, plus
+an independent SPIR-V validation and graphics executable build job. The aggregate
+`test` check requires all verification jobs to succeed. No GPU session is required.
+
 The CPU tracer remains deliberately richer than the raster path. It validates
 scene geometry and occlusion; the renderer validates mesh coverage and exact
 fragment depth over representative camera poses.
