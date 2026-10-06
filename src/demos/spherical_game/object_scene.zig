@@ -58,15 +58,21 @@ pub const File = struct {
 
     pub fn validate(self: File) !void {
         if (self.version != 1) return error.UnsupportedVersion;
-        if (!(self.radius > 0.0)) return error.InvalidRadius;
+        if (!std.math.isFinite(self.radius) or !(self.radius > 0.0)) return error.InvalidRadius;
         if (self.materials.len == 0) return error.NoMaterials;
+        for (self.materials) |material| {
+            for (material.color) |coefficient| {
+                if (!std.math.isFinite(coefficient)) return error.InvalidMaterial;
+            }
+            if (!std.math.isFinite(material.tone)) return error.InvalidMaterial;
+        }
         for (self.objects) |object| {
             if (object.faces.len == 0 or object.faces.len > 6) return error.InvalidFaceCount;
             if (object.bound) |bound| {
                 var center_norm_sq: f32 = 0.0;
                 for (bound.center) |coefficient| center_norm_sq += coefficient * coefficient;
-                if (@abs(center_norm_sq - 1.0) > 1e-3) return error.NonUnitBoundCenter;
-                if (bound.cos_radius < -1.0 or bound.cos_radius > 1.0) return error.InvalidBoundRadius;
+                if (!std.math.isFinite(center_norm_sq) or @abs(center_norm_sq - 1.0) > 1e-3) return error.NonUnitBoundCenter;
+                if (!std.math.isFinite(bound.cos_radius) or bound.cos_radius < -1.0 or bound.cos_radius > 1.0) return error.InvalidBoundRadius;
             }
             if (object.transform) |coefficients| {
                 const rotor = sg.Rotor.init(coefficients);
@@ -83,7 +89,7 @@ pub const File = struct {
                         face.normal[2] * face.normal[2] +
                         face.normal[3] * face.normal[3],
                 );
-                if (@abs(length - 1.0) > 1e-3) return error.NonUnitFaceNormal;
+                if (!std.math.isFinite(length) or @abs(length - 1.0) > 1e-3) return error.NonUnitFaceNormal;
                 if (face.material >= self.materials.len) return error.InvalidMaterial;
             }
         }
@@ -170,6 +176,39 @@ test "parses a data-defined triangular prism" {
     defer parsed.deinit();
     try std.testing.expectEqual(@as(usize, 1), parsed.value.objects.len);
     try std.testing.expectEqual(@as(usize, 5), parsed.value.objects[0].faces.len);
+}
+
+test "scene validation rejects nonfinite external values" {
+    var materials = [_]Material{.{ .name = "material", .color = .{ 1, 1, 1, 1 } }};
+    var faces = [_]Face{.{ .normal = .{ 1, 0, 0, 0 } }};
+    var objects = [_]Object{.{
+        .name = "object",
+        .kind = .halfspaces,
+        .faces = &faces,
+        .bound = .{ .center = .{ 1, 0, 0, 0 }, .cos_radius = 0.9 },
+    }};
+    var file = File{ .version = 1, .space = .spherical, .radius = 6, .materials = &materials, .objects = &objects };
+    for ([_]f32{ std.math.inf(f32), -std.math.inf(f32), std.math.nan(f32) }) |invalid| {
+        file.radius = invalid;
+        try std.testing.expectError(error.InvalidRadius, file.validate());
+        file.radius = 6;
+        materials[0].color[2] = invalid;
+        try std.testing.expectError(error.InvalidMaterial, file.validate());
+        materials[0].color[2] = 1;
+        materials[0].tone = invalid;
+        try std.testing.expectError(error.InvalidMaterial, file.validate());
+        materials[0].tone = 1;
+        objects[0].bound.?.center[1] = invalid;
+        try std.testing.expectError(error.NonUnitBoundCenter, file.validate());
+        objects[0].bound.?.center[1] = 0;
+        objects[0].bound.?.cos_radius = invalid;
+        try std.testing.expectError(error.InvalidBoundRadius, file.validate());
+        objects[0].bound.?.cos_radius = 0.9;
+        faces[0].normal[1] = invalid;
+        try std.testing.expectError(error.NonUnitFaceNormal, file.validate());
+        faces[0].normal[1] = 0;
+        try file.validate();
+    }
 }
 
 test "scene validation requires the Spin4 rotor identity" {

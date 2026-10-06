@@ -32,6 +32,11 @@ S³ is the unit sphere in `Cl(4,0)`. Spatial data uses zmath `Point`,
 `scene.zig` retains an exact CPU first-hit tracer. It is the geometry oracle and
 test reference, not the graphical rendering path.
 
+The data-defined scene boundary rejects non-finite radii, material values, face
+normals, and bounds. Face normals and bound centers must be unit length; bound
+cosines must lie in `[-1, 1]`; transforms must satisfy the complete rotor identity.
+These checks happen during file validation, not in every geometry operation.
+
 ## Vulkan renderer
 
 `tools/shader_playground.zig` creates the S³ mesh once from
